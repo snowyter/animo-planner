@@ -14,8 +14,8 @@ use crate::core::ipc_types::CaptureSummary;
 use crate::core::parser::{parse_results_table, CourseContext, SelectorConfig};
 use axum::body::Bytes;
 use axum::extract::State;
-use axum::http::header::AUTHORIZATION;
-use axum::http::{HeaderMap, StatusCode};
+use axum::http::header::{self, AUTHORIZATION};
+use axum::http::{HeaderMap, HeaderValue, StatusCode};
 use axum::response::{IntoResponse, Response};
 use axum::routing::post;
 use axum::{Json, Router};
@@ -109,7 +109,7 @@ impl CaptureListener {
             token: token.clone(),
         };
         let app = Router::new()
-            .route("/capture", post(handle_capture::<E>))
+            .route("/capture", post(handle_capture::<E>).options(handle_preflight))
             .with_state(state);
         Ok((
             CaptureListener { addr, token },
@@ -183,6 +183,50 @@ fn tokens_match(expected: &str, actual: &str) -> bool {
         == 0
 }
 
+/// The `Origin` header of a request, if one was sent.
+fn request_origin(headers: &HeaderMap) -> Option<HeaderValue> {
+    headers.get(header::ORIGIN).cloned()
+}
+
+/// Adds the CORS headers a cross-origin fetch needs to read the response.
+/// The origin is echoed (with `Vary: Origin`); the bearer token is the only
+/// authorization boundary, so reflecting the origin grants nothing.
+fn with_cors(mut response: Response, origin: Option<HeaderValue>) -> Response {
+    if let Some(origin) = origin {
+        let headers = response.headers_mut();
+        headers.insert(header::ACCESS_CONTROL_ALLOW_ORIGIN, origin);
+        headers.insert(header::VARY, HeaderValue::from_static("origin"));
+    }
+    response
+}
+
+/// Answers the browser's CORS preflight for the capture POST. The injected
+/// script runs on `https://archershub.dlsu.edu.ph` while the listener is on
+/// `127.0.0.1:<random-port>`, so every post is cross-origin and preflighted
+/// (Authorization header + JSON content type). No token is required for
+/// OPTIONS — preflights never carry headers, and the answer reveals nothing.
+async fn handle_preflight(headers: HeaderMap) -> Response {
+    let mut response = StatusCode::NO_CONTENT.into_response();
+    if let Some(origin) = request_origin(&headers) {
+        let cors = response.headers_mut();
+        cors.insert(header::ACCESS_CONTROL_ALLOW_ORIGIN, origin);
+        cors.insert(header::VARY, HeaderValue::from_static("origin"));
+        cors.insert(
+            header::ACCESS_CONTROL_ALLOW_METHODS,
+            HeaderValue::from_static("POST, OPTIONS"),
+        );
+        cors.insert(
+            header::ACCESS_CONTROL_ALLOW_HEADERS,
+            HeaderValue::from_static("authorization, content-type"),
+        );
+        cors.insert(
+            header::ACCESS_CONTROL_MAX_AGE,
+            HeaderValue::from_static("86400"),
+        );
+    }
+    response
+}
+
 fn now_iso() -> String {
     chrono::Utc::now().to_rfc3339_opts(chrono::SecondsFormat::Millis, true)
 }
@@ -190,11 +234,15 @@ fn now_iso() -> String {
 /// Rejects the request with a diagnostic body and announces the failure.
 fn reject<E: CaptureEvents>(
     state: &ListenerState<E>,
+    origin: Option<HeaderValue>,
     status: StatusCode,
     message: String,
 ) -> Response {
     state.events.capture_failed(message.clone());
-    (status, Json(serde_json::json!({ "error": message }))).into_response()
+    with_cors(
+        (status, Json(serde_json::json!({ "error": message }))).into_response(),
+        origin,
+    )
 }
 
 /// The one write route: authenticate, parse, store. Anything malformed or
@@ -205,9 +253,11 @@ async fn handle_capture<E: CaptureEvents>(
     headers: HeaderMap,
     body: Bytes,
 ) -> Response {
+    let origin = request_origin(&headers);
+
     match bearer_token(&headers) {
         Some(token) if tokens_match(&state.token, token) => {}
-        _ => return StatusCode::UNAUTHORIZED.into_response(),
+        _ => return with_cors(StatusCode::UNAUTHORIZED.into_response(), origin),
     }
 
     let payload: CapturePayload = match serde_json::from_slice(&body) {
@@ -215,6 +265,7 @@ async fn handle_capture<E: CaptureEvents>(
         Err(err) => {
             return reject(
                 &state,
+                origin,
                 StatusCode::BAD_REQUEST,
                 format!("malformed capture payload: {err}"),
             );
@@ -231,6 +282,7 @@ async fn handle_capture<E: CaptureEvents>(
         Err(err) => {
             return reject(
                 &state,
+                origin,
                 StatusCode::UNPROCESSABLE_ENTITY,
                 format!("unparseable capture payload: {err}"),
             );
@@ -249,6 +301,7 @@ async fn handle_capture<E: CaptureEvents>(
             .unwrap_or_else(|| "no section parsed".to_string());
         return reject(
             &state,
+            origin,
             StatusCode::UNPROCESSABLE_ENTITY,
             format!("capture produced no sections: {detail}"),
         );
@@ -263,6 +316,7 @@ async fn handle_capture<E: CaptureEvents>(
         if let Err(err) = store.record_capture(&scope, &parsed.sections, &now_iso()) {
             return reject(
                 &state,
+                origin,
                 StatusCode::INTERNAL_SERVER_ERROR,
                 format!("capture could not be stored: {err}"),
             );
@@ -272,6 +326,7 @@ async fn handle_capture<E: CaptureEvents>(
             Err(err) => {
                 return reject(
                     &state,
+                    origin,
                     StatusCode::INTERNAL_SERVER_ERROR,
                     format!("capture summary unavailable: {err}"),
                 );
@@ -279,7 +334,7 @@ async fn handle_capture<E: CaptureEvents>(
         }
     };
     state.events.capture_updated(summary);
-    StatusCode::NO_CONTENT.into_response()
+    with_cors(StatusCode::NO_CONTENT.into_response(), origin)
 }
 
 #[cfg(test)]
@@ -362,6 +417,19 @@ mod tests {
         headers: &[(&str, &str)],
         body: &[u8],
     ) -> (u16, String) {
+        let (status, _, body) = raw_request_full(port, method, path, headers, body).await;
+        (status, body)
+    }
+
+    /// Like [`raw_request`] but also returns the response headers, lowercased
+    /// for case-insensitive lookup.
+    async fn raw_request_full(
+        port: u16,
+        method: &str,
+        path: &str,
+        headers: &[(&str, &str)],
+        body: &[u8],
+    ) -> (u16, Vec<(String, String)>, String) {
         let mut stream = TcpStream::connect(("127.0.0.1", port))
             .await
             .expect("listener must accept a connection");
@@ -397,8 +465,17 @@ mod tests {
             .expect("status line must have a code")
             .parse()
             .expect("status code must be numeric");
+        let response_headers: Vec<(String, String)> = head
+            .lines()
+            .skip(1)
+            .filter_map(|line| {
+                let (name, value) = line.split_once(':')?;
+                Some((name.trim().to_ascii_lowercase(), value.trim().to_string()))
+            })
+            .collect();
         (
             status,
+            response_headers,
             String::from_utf8_lossy(&response[head_end + 4..]).into_owned(),
         )
     }
@@ -699,6 +776,127 @@ mod tests {
 
         assert_ne!(a.token(), b.token(), "each launch mints its own token");
         assert_ne!(a.port(), b.port(), "each launch binds its own random port");
+    }
+
+    // ---------- cross-origin capture from the popup (ticket 10) ----------
+    //
+    // The injected script fetches the loopback endpoint from
+    // https://archershub.dlsu.edu.ph, so every fetch is cross-origin: the
+    // browser preflights the POST (Authorization + JSON content type) and
+    // requires CORS headers on the real response. The token remains the
+    // only authorization boundary.
+
+    const HUB_ORIGIN: &str = "https://archershub.dlsu.edu.ph";
+
+    fn response_header<'a>(headers: &'a [(String, String)], name: &str) -> Option<&'a str> {
+        headers
+            .iter()
+            .find(|(key, _)| key.eq_ignore_ascii_case(name))
+            .map(|(_, value)| value.as_str())
+    }
+
+    #[tokio::test]
+    async fn preflight_from_the_popup_is_answered() {
+        let store = in_memory_store();
+        let (listener, server) = bind(store, RecordingEvents::default());
+        spawn(server);
+
+        let (status, headers, _) = raw_request_full(
+            listener.port(),
+            "OPTIONS",
+            "/capture",
+            &[
+                ("Origin", HUB_ORIGIN),
+                ("Access-Control-Request-Method", "POST"),
+                (
+                    "Access-Control-Request-Headers",
+                    "authorization, content-type",
+                ),
+            ],
+            b"",
+        )
+        .await;
+
+        assert_eq!(status, 204, "the preflight is answered with an empty 204");
+        assert_eq!(
+            response_header(&headers, "access-control-allow-origin"),
+            Some(HUB_ORIGIN),
+            "the popup origin is allowed: {headers:?}"
+        );
+        let methods = response_header(&headers, "access-control-allow-methods")
+            .expect("preflight must allow methods");
+        assert!(methods.contains("POST"), "methods: {methods}");
+        let allowed = response_header(&headers, "access-control-allow-headers")
+            .expect("preflight must allow headers")
+            .to_ascii_lowercase();
+        assert!(
+            allowed.contains("authorization"),
+            "the bearer header must be allowed: {allowed}"
+        );
+        assert!(
+            allowed.contains("content-type"),
+            "the JSON content type must be allowed: {allowed}"
+        );
+    }
+
+    #[tokio::test]
+    async fn post_responses_echo_the_origin_so_the_script_can_read_them() {
+        let store = in_memory_store();
+        let events = RecordingEvents::default();
+        let (listener, server) = bind(store.clone(), events.clone());
+        spawn(server);
+
+        let (status, headers, _) = raw_request_full(
+            listener.port(),
+            "POST",
+            "/capture",
+            &[
+                ("Origin", HUB_ORIGIN),
+                ("Authorization", &auth(listener.token())),
+            ],
+            csintsy_payload().as_bytes(),
+        )
+        .await;
+        assert_eq!(status, 204);
+        assert_eq!(
+            response_header(&headers, "access-control-allow-origin"),
+            Some(HUB_ORIGIN),
+            "a successful post must carry the allow-origin header: {headers:?}"
+        );
+
+        let (rejected_status, rejected_headers, _) = raw_request_full(
+            listener.port(),
+            "POST",
+            "/capture",
+            &[("Origin", HUB_ORIGIN)],
+            csintsy_payload().as_bytes(),
+        )
+        .await;
+        assert_eq!(rejected_status, 401, "an untokenized post is still rejected");
+        assert_eq!(
+            response_header(&rejected_headers, "access-control-allow-origin"),
+            Some(HUB_ORIGIN),
+            "rejections are also readable by the script: {rejected_headers:?}"
+        );
+    }
+
+    #[tokio::test]
+    async fn preflight_grants_no_routes_beyond_the_capture_write() {
+        let store = in_memory_store();
+        let (listener, server) = bind(store, RecordingEvents::default());
+        spawn(server);
+
+        for path in ["/", "/health", "/capture/summary"] {
+            let (status, _, _) = raw_request_full(
+                listener.port(),
+                "OPTIONS",
+                path,
+                &[("Origin", HUB_ORIGIN)],
+                b"",
+            )
+            .await;
+            assert_eq!(status, 404, "no preflight route at {path}");
+        }
     }
 }
 
