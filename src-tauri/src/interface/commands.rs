@@ -1,17 +1,21 @@
 //! Tauri command stubs — the Rust half of the IPC seam.
 //!
 //! Every command the v1 app will ever call is declared here with its final
-//! name, arguments, and return type, and registered in `lib.rs`. The bodies
-//! deliberately fail loudly: a stub never returns empty or plausible-looking
-//! data, so no UI ticket can be declared finished against a command that does
-//! nothing.
+//! name, arguments, and return type, and registered in `lib.rs`. Until their
+//! tickets land, the bodies deliberately fail loudly: a stub never returns
+//! empty or plausible-looking data, so no UI ticket can be declared finished
+//! against a command that does nothing. `seed_sample_plan` is implemented
+//! (ticket 07); the rest remain stubs.
 //!
 //! Amendment protocol: `docs/ipc-contract.md` is the single source of truth.
 //! A signature change updates this file and `src/adapters/ipc/` in the same
 //! commit and names the change in its PR description.
 
+use crate::adapters::sample_seed;
+use crate::adapters::store::{self, Store};
 use crate::core::ipc_types::*;
 use serde::Deserialize;
+use tauri::Manager;
 
 pub mod events {
     pub const CAPTURE_UPDATED: &str = "capture:updated";
@@ -132,9 +136,18 @@ pub fn get_plan(_args: PlanIdArgs) -> Result<Plan, String> {
     Err(unimplemented("get_plan"))
 }
 
+/// Seeds the sample-data plan (ticket 07): the bundled fixtures go through
+/// the real parser and storage layer into a plan marked `is_sample`. Runs
+/// entirely offline — the fixtures are embedded at compile time.
+/// Idempotent: a repeat call returns the existing sample plan untouched.
 #[tauri::command]
-pub fn seed_sample_plan() -> Result<PlanSummary, String> {
-    Err(unimplemented("seed_sample_plan"))
+pub fn seed_sample_plan<R: tauri::Runtime>(app: tauri::AppHandle<R>) -> Result<PlanSummary, String> {
+    let data_dir = app.path().app_data_dir().map_err(|err| err.to_string())?;
+    std::fs::create_dir_all(&data_dir)
+        .map_err(|err| format!("failed to create the app data directory: {err}"))?;
+    let mut store = Store::open(&data_dir.join(store::DB_FILE_NAME)).map_err(|err| err.to_string())?;
+    let captured_at = chrono::Utc::now().to_rfc3339_opts(chrono::SecondsFormat::Secs, true);
+    sample_seed::seed_sample_plan(&mut store, &captured_at).map_err(|err| err.to_string())
 }
 
 #[tauri::command]
@@ -277,6 +290,9 @@ mod tests {
         SectionInPlanArgs { plan_id: "p1".into(), course_id: 2923, section_id: 384 }
     }
 
+    /// Every command that is still a stub fails loudly and identifiably.
+    /// `seed_sample_plan` is implemented (ticket 07) and is not asserted
+    /// here; its behavior is covered by the store and sample-seed tests.
     #[test]
     fn every_command_fails_loudly_and_identifiably() {
         expect_unimplemented("get_campus_options", get_campus_options());
@@ -288,7 +304,6 @@ mod tests {
         }));
         expect_unimplemented("delete_plan", delete_plan(simple_args()));
         expect_unimplemented("get_plan", get_plan(simple_args()));
-        expect_unimplemented("seed_sample_plan", seed_sample_plan());
         expect_unimplemented("list_captured_courses", list_captured_courses(scope_args()));
         expect_unimplemented("list_captured_sections", list_captured_sections(CapturedSectionsArgs {
             campus_id: 7, session_id: 155, course_id: 2923,
