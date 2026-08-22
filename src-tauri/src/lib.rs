@@ -20,7 +20,9 @@ pub fn run() {
             // restarts; the loopback capture listener is minted per launch.
             let data_dir = app.path().app_data_dir()?;
             std::fs::create_dir_all(&data_dir)?;
-            let store = adapters::store::Store::open(&data_dir.join("animo-plan.db"))
+            let store = adapters::store::Store::open(
+                &data_dir.join(adapters::store::DB_FILE_NAME),
+            )
                 .map_err(|err| format!("failed to open the local store: {err}"))?;
             let store: adapters::store::StoreHandle = std::sync::Arc::new(std::sync::Mutex::new(store));
             app.manage(store.clone());

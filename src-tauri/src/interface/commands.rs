@@ -13,10 +13,10 @@
 
 use crate::adapters::capture::CaptureEvents;
 use crate::adapters::sample_seed;
-use crate::adapters::store::{self, CaptureScope, Store, StoreHandle};
+use crate::adapters::store::{CaptureScope, StoreHandle};
 use crate::core::ipc_types::*;
 use serde::Deserialize;
-use tauri::{Emitter, Manager};
+use tauri::Emitter;
 
 pub mod events {
     pub const CAPTURE_UPDATED: &str = "capture:updated";
@@ -164,12 +164,13 @@ pub fn get_plan(_args: PlanIdArgs) -> Result<Plan, String> {
 /// the real parser and storage layer into a plan marked `is_sample`. Runs
 /// entirely offline — the fixtures are embedded at compile time.
 /// Idempotent: a repeat call returns the existing sample plan untouched.
+///
+/// The seed writes through the shared store handle, never its own
+/// connection: the loopback capture listener holds the same handle, and a
+/// second connection to the same file would write outside that mutex.
 #[tauri::command]
-pub fn seed_sample_plan<R: tauri::Runtime>(app: tauri::AppHandle<R>) -> Result<PlanSummary, String> {
-    let data_dir = app.path().app_data_dir().map_err(|err| err.to_string())?;
-    std::fs::create_dir_all(&data_dir)
-        .map_err(|err| format!("failed to create the app data directory: {err}"))?;
-    let mut store = Store::open(&data_dir.join(store::DB_FILE_NAME)).map_err(|err| err.to_string())?;
+pub fn seed_sample_plan(store: tauri::State<'_, StoreHandle>) -> Result<PlanSummary, String> {
+    let mut store = store.lock().unwrap_or_else(|poisoned| poisoned.into_inner());
     let captured_at = chrono::Utc::now().to_rfc3339_opts(chrono::SecondsFormat::Secs, true);
     sample_seed::seed_sample_plan(&mut store, &captured_at).map_err(|err| err.to_string())
 }
