@@ -1,0 +1,4 @@
+.env
+.env.local
+.scratch/**/tmp/
+BOOTSTRAP.md
