@@ -10,13 +10,39 @@
 //! A signature change updates this file and `src/adapters/ipc/` in the same
 //! commit and names the change in its PR description.
 
+use crate::adapters::capture::CaptureEvents;
+use crate::adapters::store::{CaptureScope, StoreHandle};
 use crate::core::ipc_types::*;
 use serde::Deserialize;
+use tauri::Emitter;
 
 pub mod events {
     pub const CAPTURE_UPDATED: &str = "capture:updated";
     pub const CAPTURE_FAILED: &str = "capture:failed";
     pub const REFRESH_PROGRESS: &str = "refresh:progress";
+}
+
+/// Announces capture outcomes as Tauri events for the main window: the
+/// running counter listens to `capture:updated`, failure notices to
+/// `capture:failed` (ticket 12).
+#[derive(Clone)]
+pub struct AppHandleEvents(pub tauri::AppHandle);
+
+impl CaptureEvents for AppHandleEvents {
+    fn capture_updated(&self, summary: CaptureSummary) {
+        let _ = self.0.emit(events::CAPTURE_UPDATED, summary);
+    }
+
+    fn capture_failed(&self, error: String) {
+        let _ = self.0.emit(events::CAPTURE_FAILED, serde_json::json!({ "error": error }));
+    }
+}
+
+fn capture_scope(args: &CampusSessionArgs) -> CaptureScope {
+    CaptureScope {
+        campus_id: args.campus_id,
+        session_id: args.session_id,
+    }
 }
 
 fn unimplemented(command: &str) -> String {
@@ -178,13 +204,26 @@ pub fn open_capture_window(_args: CampusSessionArgs) -> Result<(), String> {
 }
 
 #[tauri::command]
-pub fn get_capture_summary(_args: CampusSessionArgs) -> Result<CaptureSummary, String> {
-    Err(unimplemented("get_capture_summary"))
+pub fn get_capture_summary(
+    args: CampusSessionArgs,
+    store: tauri::State<'_, StoreHandle>,
+) -> Result<CaptureSummary, String> {
+    let store = store.lock().unwrap_or_else(|poisoned| poisoned.into_inner());
+    store
+        .capture_summary(&capture_scope(&args))
+        .map_err(|err| err.to_string())
 }
 
 #[tauri::command]
-pub fn undo_last_capture(_args: CampusSessionArgs) -> Result<CaptureSummary, String> {
-    Err(unimplemented("undo_last_capture"))
+pub fn undo_last_capture(
+    args: CampusSessionArgs,
+    store: tauri::State<'_, StoreHandle>,
+) -> Result<CaptureSummary, String> {
+    let mut store = store.lock().unwrap_or_else(|poisoned| poisoned.into_inner());
+    store.undo_last_capture().map_err(|err| err.to_string())?;
+    store
+        .capture_summary(&capture_scope(&args))
+        .map_err(|err| err.to_string())
 }
 
 #[tauri::command]
@@ -304,8 +343,6 @@ mod tests {
             sections: vec![SectionRef { course_id: 2923, section_id: 384 }],
         }));
         expect_unimplemented("open_capture_window", open_capture_window(scope_args()));
-        expect_unimplemented("get_capture_summary", get_capture_summary(scope_args()));
-        expect_unimplemented("undo_last_capture", undo_last_capture(scope_args()));
         expect_unimplemented("clear_browser_session", clear_browser_session());
         expect_unimplemented("solve_plan", block_on(solve_plan(SolvePlanArgs {
             plan_id: "p1".into(),
