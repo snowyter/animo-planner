@@ -39,10 +39,28 @@ pub struct CaptureScope {
     pub session_id: i64,
 }
 
+/// File name of the app database inside the app data directory.
+pub const DB_FILE_NAME: &str = "animo-plan.db";
+
+/// One plan row plus its section count — the fields the UI shows as a
+/// [`crate::core::ipc_types::PlanSummary`], minus the campus/session names
+/// this storage layer does not know.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct PlanSummaryRow {
+    pub id: String,
+    pub name: String,
+    pub campus_id: i64,
+    pub session_id: i64,
+    pub created_at: String,
+    pub is_sample: bool,
+    pub section_count: i64,
+}
+
 #[derive(Debug)]
 pub enum StoreError {
     Sql(rusqlite::Error),
     PlanNotFound { plan_id: String },
+    PlanExists { plan_id: String },
     SectionNotFound { course_id: i64, section_id: i64 },
     /// A plan is hard-scoped to one `(campus, session)`; linking a section
     /// captured under a different scope is rejected here, at the storage
@@ -61,6 +79,9 @@ impl std::fmt::Display for StoreError {
         match self {
             StoreError::Sql(err) => write!(f, "sqlite error: {err}"),
             StoreError::PlanNotFound { plan_id } => write!(f, "plan {plan_id:?} not found"),
+            StoreError::PlanExists { plan_id } => {
+                write!(f, "a plan with id {plan_id:?} already exists")
+            }
             StoreError::SectionNotFound {
                 course_id,
                 section_id,
@@ -153,7 +174,14 @@ CREATE TABLE plan_sections (
 ) STRICT;
 "#;
 
-const MIGRATIONS: &[&str] = &[MIGRATION_V1];
+/// Migration 2 (ticket 07): plans gain a sample-data marker so the seeded
+/// "Explore with sample data" plan is distinguishable from a plan the
+/// student captured themselves. Plans created before v2 default to `0`.
+const MIGRATION_V2: &str = r#"
+ALTER TABLE plans ADD COLUMN is_sample INTEGER NOT NULL DEFAULT 0 CHECK (is_sample IN (0, 1));
+"#;
+
+const MIGRATIONS: &[&str] = &[MIGRATION_V1, MIGRATION_V2];
 
 /// Runs every migration not yet applied, tracked by `PRAGMA user_version`.
 /// Idempotent: safe to run on a fresh database and on an existing one.
@@ -175,7 +203,9 @@ pub fn migrate(conn: &Connection) -> Result<(), StoreError> {
 /// Owns the connection and all write paths. No section row is ever removed;
 /// see `record_capture` and `add_section_to_plan`.
 pub struct Store {
-    conn: Connection,
+    /// Crate-visible so adapter modules and their tests can inspect rows;
+    /// all writes go through `Store` methods.
+    pub(crate) conn: Connection,
 }
 
 fn day_to_db(day: Day) -> &'static str {
@@ -218,12 +248,7 @@ impl Store {
         captured_at: &str,
     ) -> Result<(), StoreError> {
         let tx = self.conn.transaction()?;
-        for section in sections {
-            upsert_course(&tx, scope, section)?;
-            let section_fk = upsert_section(&tx, scope, section, captured_at)?;
-            replace_blocks(&tx, section_fk, section)?;
-            append_snapshot(&tx, section_fk, section, captured_at)?;
-        }
+        record_capture_tx(&tx, scope, sections, captured_at)?;
         tx.commit()?;
         Ok(())
     }
@@ -234,12 +259,11 @@ impl Store {
         name: &str,
         scope: &CaptureScope,
         created_at: &str,
+        is_sample: bool,
     ) -> Result<(), StoreError> {
-        self.conn.execute(
-            "INSERT INTO plans (id, name, campus_id, session_id, created_at)
-             VALUES (?1, ?2, ?3, ?4, ?5)",
-            rusqlite::params![id, name, scope.campus_id, scope.session_id, created_at],
-        )?;
+        let tx = self.conn.transaction()?;
+        insert_plan_tx(&tx, id, name, scope, created_at, is_sample)?;
+        tx.commit()?;
         Ok(())
     }
 
@@ -253,62 +277,190 @@ impl Store {
         section_id: i64,
     ) -> Result<(), StoreError> {
         let tx = self.conn.transaction()?;
-        let (plan_campus, plan_session) = tx
-            .query_row(
-                "SELECT campus_id, session_id FROM plans WHERE id = ?1",
-                [plan_id],
-                |row| Ok((row.get(0)?, row.get(1)?)),
-            )
-            .optional()?
-            .ok_or_else(|| StoreError::PlanNotFound {
-                plan_id: plan_id.to_string(),
-            })?;
-
-        let scoped = tx
-            .query_row(
-                "SELECT id FROM sections
-                 WHERE campus_id = ?1 AND session_id = ?2 AND course_id = ?3 AND section_id = ?4",
-                rusqlite::params![plan_campus, plan_session, course_id, section_id],
-                |row| row.get::<_, i64>(0),
-            )
-            .optional()?;
-        let section_fk = match scoped {
-            Some(section_fk) => section_fk,
-            None => {
-                // Distinguish "captured under another scope" from "never
-                // captured": both fail, but the error names the real cause.
-                let elsewhere = tx
-                    .query_row(
-                        "SELECT campus_id, session_id FROM sections
-                         WHERE course_id = ?1 AND section_id = ?2",
-                        rusqlite::params![course_id, section_id],
-                        |row| Ok((row.get(0)?, row.get(1)?)),
-                    )
-                    .optional()?;
-                return match elsewhere {
-                    Some((section_campus, section_session)) => Err(StoreError::ScopeMismatch {
-                        plan_id: plan_id.to_string(),
-                        plan_campus_id: plan_campus,
-                        plan_session_id: plan_session,
-                        section_campus_id: section_campus,
-                        section_session_id: section_session,
-                    }),
-                    None => Err(StoreError::SectionNotFound {
-                        course_id,
-                        section_id,
-                    }),
-                };
-            }
-        };
-
-        tx.execute(
-            "INSERT INTO plan_sections (plan_id, section_fk, pinned) VALUES (?1, ?2, 0)
-             ON CONFLICT (plan_id, section_fk) DO NOTHING",
-            rusqlite::params![plan_id, section_fk],
-        )?;
+        add_section_tx(&tx, plan_id, course_id, section_id)?;
         tx.commit()?;
         Ok(())
     }
+
+    /// Seeds the sample-data plan (ticket 07) in one transaction: records
+    /// each capture, creates the plan flagged as sample data, and links
+    /// every section into it. Idempotent — if the sample plan already
+    /// exists, nothing is written and the existing plan is returned, so a
+    /// repeat run never doubles sections or appends snapshots.
+    ///
+    /// The sample plan is an ordinary plan row distinguished only by
+    /// `is_sample`, so it deletes like any other plan.
+    pub fn seed_sample_plan(
+        &mut self,
+        scope: &CaptureScope,
+        plan_id: &str,
+        plan_name: &str,
+        captures: &[&[ParsedSection]],
+        captured_at: &str,
+    ) -> Result<PlanSummaryRow, StoreError> {
+        if let Some(existing_id) = find_sample_plan_id(&self.conn)? {
+            return plan_summary_row(&self.conn, &existing_id);
+        }
+
+        let tx = self.conn.transaction()?;
+        for capture in captures {
+            record_capture_tx(&tx, scope, capture, captured_at)?;
+        }
+        insert_plan_tx(&tx, plan_id, plan_name, scope, captured_at, true)?;
+        for section in captures.iter().flat_map(|capture| capture.iter()) {
+            add_section_tx(&tx, plan_id, section.course_id, section.section_id)?;
+        }
+        tx.commit()?;
+
+        plan_summary_row(&self.conn, plan_id)
+    }
+}
+
+fn record_capture_tx(
+    tx: &Transaction<'_>,
+    scope: &CaptureScope,
+    sections: &[ParsedSection],
+    captured_at: &str,
+) -> Result<(), StoreError> {
+    for section in sections {
+        upsert_course(tx, scope, section)?;
+        let section_fk = upsert_section(tx, scope, section, captured_at)?;
+        replace_blocks(tx, section_fk, section)?;
+        append_snapshot(tx, section_fk, section, captured_at)?;
+    }
+    Ok(())
+}
+
+fn insert_plan_tx(
+    tx: &Transaction<'_>,
+    id: &str,
+    name: &str,
+    scope: &CaptureScope,
+    created_at: &str,
+    is_sample: bool,
+) -> Result<(), StoreError> {
+    let exists: bool = tx.query_row(
+        "SELECT EXISTS(SELECT 1 FROM plans WHERE id = ?1)",
+        [id],
+        |row| row.get(0),
+    )?;
+    if exists {
+        return Err(StoreError::PlanExists {
+            plan_id: id.to_string(),
+        });
+    }
+    tx.execute(
+        "INSERT INTO plans (id, name, campus_id, session_id, created_at, is_sample)
+         VALUES (?1, ?2, ?3, ?4, ?5, ?6)",
+        rusqlite::params![
+            id,
+            name,
+            scope.campus_id,
+            scope.session_id,
+            created_at,
+            is_sample as i64,
+        ],
+    )?;
+    Ok(())
+}
+
+fn add_section_tx(
+    tx: &Transaction<'_>,
+    plan_id: &str,
+    course_id: i64,
+    section_id: i64,
+) -> Result<(), StoreError> {
+    let (plan_campus, plan_session) = tx
+        .query_row(
+            "SELECT campus_id, session_id FROM plans WHERE id = ?1",
+            [plan_id],
+            |row| Ok((row.get(0)?, row.get(1)?)),
+        )
+        .optional()?
+        .ok_or_else(|| StoreError::PlanNotFound {
+            plan_id: plan_id.to_string(),
+        })?;
+
+    let scoped = tx
+        .query_row(
+            "SELECT id FROM sections
+             WHERE campus_id = ?1 AND session_id = ?2 AND course_id = ?3 AND section_id = ?4",
+            rusqlite::params![plan_campus, plan_session, course_id, section_id],
+            |row| row.get::<_, i64>(0),
+        )
+        .optional()?;
+    let section_fk = match scoped {
+        Some(section_fk) => section_fk,
+        None => {
+            // Distinguish "captured under another scope" from "never
+            // captured": both fail, but the error names the real cause.
+            let elsewhere = tx
+                .query_row(
+                    "SELECT campus_id, session_id FROM sections
+                     WHERE course_id = ?1 AND section_id = ?2",
+                    rusqlite::params![course_id, section_id],
+                    |row| Ok((row.get(0)?, row.get(1)?)),
+                )
+                .optional()?;
+            return match elsewhere {
+                Some((section_campus, section_session)) => Err(StoreError::ScopeMismatch {
+                    plan_id: plan_id.to_string(),
+                    plan_campus_id: plan_campus,
+                    plan_session_id: plan_session,
+                    section_campus_id: section_campus,
+                    section_session_id: section_session,
+                }),
+                None => Err(StoreError::SectionNotFound {
+                    course_id,
+                    section_id,
+                }),
+            };
+        }
+    };
+
+    tx.execute(
+        "INSERT INTO plan_sections (plan_id, section_fk, pinned) VALUES (?1, ?2, 0)
+         ON CONFLICT (plan_id, section_fk) DO NOTHING",
+        rusqlite::params![plan_id, section_fk],
+    )?;
+    Ok(())
+}
+
+/// The id of the existing sample plan, if any. At most one is ever seeded
+/// (the seed uses a reserved id), but the query stays deterministic anyway.
+fn find_sample_plan_id(conn: &Connection) -> Result<Option<String>, StoreError> {
+    conn.query_row(
+        "SELECT id FROM plans WHERE is_sample = 1 ORDER BY created_at LIMIT 1",
+        [],
+        |row| row.get(0),
+    )
+    .optional()
+    .map_err(StoreError::from)
+}
+
+/// Reads one plan row plus its section count.
+fn plan_summary_row(conn: &Connection, plan_id: &str) -> Result<PlanSummaryRow, StoreError> {
+    conn.query_row(
+        "SELECT p.id, p.name, p.campus_id, p.session_id, p.created_at, p.is_sample,
+                (SELECT COUNT(*) FROM plan_sections ps WHERE ps.plan_id = p.id)
+         FROM plans p WHERE p.id = ?1",
+        [plan_id],
+        |row| {
+            Ok(PlanSummaryRow {
+                id: row.get(0)?,
+                name: row.get(1)?,
+                campus_id: row.get(2)?,
+                session_id: row.get(3)?,
+                created_at: row.get(4)?,
+                is_sample: row.get::<_, i64>(5)? != 0,
+                section_count: row.get(6)?,
+            })
+        },
+    )
+    .optional()?
+    .ok_or_else(|| StoreError::PlanNotFound {
+        plan_id: plan_id.to_string(),
+    })
 }
 
 fn upsert_course(
@@ -638,7 +790,7 @@ mod tests {
             .conn
             .query_row("PRAGMA user_version", [], |row| row.get(0))
             .expect("user_version must be readable");
-        assert_eq!(version, 1);
+        assert_eq!(version, 2, "both migrations apply exactly once");
     }
 
     #[test]
@@ -701,7 +853,7 @@ mod tests {
             ),
             (
                 "plans",
-                &["id", "name", "campus_id", "session_id", "created_at"],
+                &["id", "name", "campus_id", "session_id", "created_at", "is_sample"],
             ),
             (
                 "plan_sections",
@@ -881,7 +1033,7 @@ mod tests {
     fn a_plan_cannot_link_a_section_outside_its_campus_and_session() {
         let mut store = store();
         store
-            .create_plan("p1", "T1 load", &SCOPE, T1)
+            .create_plan("p1", "T1 load", &SCOPE, T1, false)
             .expect("plan must be created");
         store
             .record_capture(
@@ -942,7 +1094,7 @@ mod tests {
     fn linking_an_unknown_section_to_a_plan_is_a_section_error() {
         let mut store = store();
         store
-            .create_plan("p1", "T1 load", &SCOPE, T1)
+            .create_plan("p1", "T1 load", &SCOPE, T1, false)
             .expect("plan must be created");
         let err = store
             .add_section_to_plan("p1", 2923, 4242)
@@ -994,7 +1146,7 @@ mod tests {
     fn mixed_scope_plan_rejection_happens_before_any_row_is_written() {
         let mut store = store();
         store
-            .create_plan("p1", "T1 load", &SCOPE, T1)
+            .create_plan("p1", "T1 load", &SCOPE, T1, false)
             .expect("plan must be created");
         let err = store
             .add_section_to_plan("p1", 2923, 4242)
@@ -1076,5 +1228,121 @@ mod tests {
         // same derivation the parser uses.
         assert_eq!(room_block(Day::Mon, 450, 540, "A1103").modality(), Some(BlockModality::F2F));
         assert_eq!(online_block(Day::Mon, 450, 540).modality(), Some(BlockModality::Online));
+    }
+
+    // ---------- sample-data seed (ticket 07) ----------
+
+    #[test]
+    fn migration_two_adds_the_is_sample_flag_to_plans() {
+        let store = store();
+        let version: i64 = store
+            .conn
+            .query_row("PRAGMA user_version", [], |row| row.get(0))
+            .expect("user_version must be readable");
+        assert_eq!(version, 2, "a fresh database runs both migrations");
+        assert!(
+            column_names(&store.conn, "plans").contains(&"is_sample".to_string()),
+            "plans must carry the sample-data marker"
+        );
+    }
+
+    #[test]
+    fn upgrading_a_version_one_database_defaults_is_sample_off() {
+        let conn = Connection::open_in_memory().expect("in-memory connection");
+        conn.execute_batch(MIGRATION_V1).expect("v1 schema must apply");
+        conn.pragma_update(None, "user_version", 1).expect("user_version");
+        conn.execute(
+            "INSERT INTO plans (id, name, campus_id, session_id, created_at)
+             VALUES ('p1', 'T1', 7, 155, 't')",
+            [],
+        )
+        .expect("a v1 plan row");
+
+        migrate(&conn).expect("v2 migration must run on the existing database");
+
+        let version: i64 = conn
+            .query_row("PRAGMA user_version", [], |row| row.get(0))
+            .expect("user_version");
+        assert_eq!(version, 2);
+        let is_sample: i64 = conn
+            .query_row("SELECT is_sample FROM plans WHERE id = 'p1'", [], |row| row.get(0))
+            .expect("is_sample must be readable");
+        assert_eq!(is_sample, 0, "plans created before v2 are student plans, not sample data");
+    }
+
+    #[test]
+    fn create_plan_marks_sample_plans_explicitly() {
+        let mut store = store();
+        store.create_plan("normal", "Normal", &SCOPE, T1, false).expect("normal plan");
+        store.create_plan("sample", "Sample", &SCOPE, T1, true).expect("sample plan");
+
+        let mut stmt = store
+            .conn
+            .prepare("SELECT id, is_sample FROM plans ORDER BY id")
+            .expect("prepare");
+        let flags: Vec<(String, i64)> = stmt
+            .query_map([], |row| Ok((row.get(0)?, row.get(1)?)))
+            .expect("query")
+            .map(|row| row.expect("row"))
+            .collect();
+        assert_eq!(
+            flags,
+            vec![("normal".to_string(), 0), ("sample".to_string(), 1)],
+            "only the seeded plan carries the sample marker"
+        );
+    }
+
+    #[test]
+    fn seeding_a_sample_plan_is_transactional_and_idempotent() {
+        let mut store = store();
+        let sections = [
+            parsed_section(2923, 384, "S01", None, Some(10), vec![online_block(Day::Mon, 450, 540)]),
+            parsed_section(564, 737, "Y11", None, Some(10), vec![
+                room_block(Day::Tue, 870, 960, "L226"),
+                online_block(Day::Fri, 870, 960),
+            ]),
+        ];
+
+        let first = store
+            .seed_sample_plan(&SCOPE, "sample-plan", "Sample data", &[&sections[..]], T1)
+            .expect("first seed");
+        assert!(first.is_sample, "the seeded plan is visibly marked as sample data");
+        assert_eq!(first.section_count, 2);
+
+        // Running the seed again must change nothing: no duplicate sections,
+        // no extra snapshots, no second plan.
+        let again = store
+            .seed_sample_plan(&SCOPE, "sample-plan", "Sample data", &[&sections[..]], T2)
+            .expect("second seed must not fail");
+        assert_eq!(again.id, first.id, "the second seed returns the existing plan");
+        assert_eq!(count(&store.conn, "SELECT COUNT(*) FROM plans"), 1);
+        assert_eq!(count(&store.conn, "SELECT COUNT(*) FROM sections"), 2);
+        assert_eq!(count(&store.conn, "SELECT COUNT(*) FROM plan_sections"), 2);
+        assert_eq!(
+            count(&store.conn, "SELECT COUNT(*) FROM snapshots"),
+            2,
+            "a repeat seed must not re-capture"
+        );
+    }
+
+    #[test]
+    fn a_failed_seed_leaves_no_partial_plan() {
+        let mut store = store();
+        let sections = [parsed_section(2923, 384, "S01", None, Some(10), vec![])];
+        // A plan with the reserved id already exists: the seed's create step
+        // fails, and nothing from the seed may remain behind.
+        store.create_plan("sample-plan", "taken", &SCOPE, T1, false).expect("existing plan");
+
+        let err = store
+            .seed_sample_plan(&SCOPE, "sample-plan", "Sample data", &[&sections[..]], T2)
+            .expect_err("a taken plan id must fail the seed");
+        assert!(!matches!(err, StoreError::Sql(_)), "got {err:?}");
+        assert_eq!(count(&store.conn, "SELECT COUNT(*) FROM sections"), 0);
+        assert_eq!(count(&store.conn, "SELECT COUNT(*) FROM snapshots"), 0);
+        assert_eq!(
+            count(&store.conn, "SELECT COUNT(*) FROM plans"),
+            1,
+            "the existing plan is the only plan"
+        );
     }
 }

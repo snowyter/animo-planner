@@ -237,6 +237,8 @@ pub struct ParseResult {
 pub enum ParseError {
     ResultsTableNotFound,
     InvalidSelector { selector: String, detail: String },
+    CourseDropdownNotFound,
+    SelectedCourseUnreadable { detail: String },
 }
 
 impl fmt::Display for ParseError {
@@ -247,6 +249,12 @@ impl fmt::Display for ParseError {
             }
             ParseError::InvalidSelector { selector, detail } => {
                 write!(f, "invalid selector {selector:?}: {detail}")
+            }
+            ParseError::CourseDropdownNotFound => {
+                write!(f, "course dropdown not found in the given HTML")
+            }
+            ParseError::SelectedCourseUnreadable { detail } => {
+                write!(f, "selected course cannot be read from the dropdown: {detail}")
             }
         }
     }
@@ -792,6 +800,80 @@ pub fn parse_results_table(
     Ok(ParseResult {
         sections,
         diagnostics,
+    })
+}
+
+/// Reads the course identity from a rendered Course Finder page the way the
+/// capture script does: from the selected option of the course dropdown,
+/// never from the results table, which has no course code column (SPEC §2).
+///
+/// The page renders select2 over the dropdown, and the selection shows up in
+/// the select2 container (`select2-<select id>-container`) rather than as a
+/// `selected` attribute on the option. The container text is read first and
+/// matched against the dropdown options; when no container is present the
+/// option carrying the `selected` attribute is used instead. Either way an
+/// unreadable selection is an error — the caller must not guess an identity
+/// and orphan the parsed sections.
+pub fn course_context_from_html(
+    html: &str,
+    config: &SelectorConfig,
+) -> Result<CourseContext, ParseError> {
+    fn selector(raw: &str) -> Result<Selector, ParseError> {
+        Selector::parse(raw).map_err(|detail| ParseError::InvalidSelector {
+            selector: raw.to_string(),
+            detail: detail.to_string(),
+        })
+    }
+
+    let dropdown_selector = selector(&config.course_dropdown)?;
+    let document = Html::parse_document(html);
+    let dropdown = document
+        .select(&dropdown_selector)
+        .next()
+        .ok_or(ParseError::CourseDropdownNotFound)?;
+
+    // select2 names its rendered container after the select id.
+    let select_id = config.course_dropdown.trim_start_matches('#');
+    let container_id = format!("select2-{select_id}-container");
+    let selected_text: Option<String> = document
+        .select(&selector(&format!("#{container_id}"))?)
+        .next()
+        .map(|element| element.text().collect::<String>().trim().to_string())
+        .filter(|text| !text.is_empty());
+
+    let option_selector = selector("option")?;
+    let option = match selected_text {
+        Some(text) => dropdown
+            .select(&option_selector)
+            .find(|option| option.text().collect::<String>().trim() == text),
+        None => dropdown
+            .select(&option_selector)
+            .find(|option| option.value().attr("selected").is_some()),
+    }
+    .ok_or_else(|| ParseError::SelectedCourseUnreadable {
+        detail: "no selected course option found".to_string(),
+    })?;
+
+    let course_id = option
+        .value()
+        .attr("value")
+        .and_then(|value| value.trim().parse::<i64>().ok())
+        .ok_or_else(|| ParseError::SelectedCourseUnreadable {
+            detail: "the selected option carries no numeric course id".to_string(),
+        })?;
+
+    let text: String = option.text().collect();
+    let (code, title) = text
+        .trim()
+        .split_once(" - ")
+        .ok_or_else(|| ParseError::SelectedCourseUnreadable {
+            detail: format!("option text {text:?} does not match the CODE - TITLE grammar"),
+        })?;
+
+    Ok(CourseContext {
+        course_id,
+        code: code.trim().to_string(),
+        title: title.trim().to_string(),
     })
 }
 
@@ -1466,6 +1548,69 @@ mod tests {
         assert_eq!(config, parsed);
         assert_eq!(parsed.results_table, "#tblCourseSelection");
         assert_eq!(parsed.day_names.saturday, "SATURDAY");
+    }
+
+    // ---------- course identity from the page ----------
+
+    #[test]
+    fn course_context_reads_identity_from_the_dropdown_not_the_table() {
+        let csintsy = course_context_from_html(CSINTSY_FIXTURE, &SelectorConfig::default())
+            .expect("the fixture must carry a readable course dropdown");
+        assert_eq!(csintsy.course_id, 2923);
+        assert_eq!(csintsy.code, "CSINTSY");
+        assert_eq!(csintsy.title, "INTRODUCTION TO INTELLIGENT SYSTEMS");
+
+        let geartap = course_context_from_html(GEARTAP_FIXTURE, &SelectorConfig::default())
+            .expect("the fixture must carry a readable course dropdown");
+        assert_eq!(geartap.course_id, 564);
+        assert_eq!(geartap.code, "GEARTAP");
+        assert_eq!(geartap.title, "ART APPRECIATION");
+    }
+
+    #[test]
+    fn course_context_falls_back_to_the_selected_attribute_without_select2() {
+        let html = "<html><body>\
+            <select id=\"ddlSelectCourse\">\
+              <option value=\"0\">Please select</option>\
+              <option value=\"2923\" selected>CSINTSY - INTRODUCTION TO INTELLIGENT SYSTEMS</option>\
+            </select></body></html>";
+        let context = course_context_from_html(html, &SelectorConfig::default())
+            .expect("a selected option must be readable without a select2 container");
+        assert_eq!(context.course_id, 2923);
+        assert_eq!(context.code, "CSINTSY");
+        assert_eq!(context.title, "INTRODUCTION TO INTELLIGENT SYSTEMS");
+    }
+
+    #[test]
+    fn an_unreadable_course_identity_is_an_error_not_a_guess() {
+        let missing = course_context_from_html(
+            "<html><body><p>nothing</p></body></html>",
+            &SelectorConfig::default(),
+        )
+        .expect_err("a page without the dropdown must error");
+        assert_eq!(missing, ParseError::CourseDropdownNotFound);
+
+        let unselected = "<html><body>\
+            <select id=\"ddlSelectCourse\"><option value=\"0\">Please select</option></select>\
+            </body></html>";
+        let err = course_context_from_html(unselected, &SelectorConfig::default())
+            .expect_err("a dropdown without a selection must error");
+        assert!(matches!(err, ParseError::SelectedCourseUnreadable { .. }), "got {err:?}");
+
+        let non_numeric = "<html><body>\
+            <select id=\"ddlSelectCourse\">\
+              <option value=\"abc\" selected>CSINTSY - INTRODUCTION TO INTELLIGENT SYSTEMS</option>\
+            </select></body></html>";
+        let err = course_context_from_html(non_numeric, &SelectorConfig::default())
+            .expect_err("a non-numeric course id must error");
+        assert!(matches!(err, ParseError::SelectedCourseUnreadable { .. }), "got {err:?}");
+
+        let no_title = "<html><body>\
+            <select id=\"ddlSelectCourse\"><option value=\"2923\" selected>CSINTSY</option></select>\
+            </body></html>";
+        let err = course_context_from_html(no_title, &SelectorConfig::default())
+            .expect_err("an option text without CODE - TITLE must error");
+        assert!(matches!(err, ParseError::SelectedCourseUnreadable { .. }), "got {err:?}");
     }
 
     // ---------- no student-identifying data is read ----------
