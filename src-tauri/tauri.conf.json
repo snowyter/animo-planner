@@ -24,6 +24,7 @@
   "bundle": {
     "active": true,
     "targets": "all",
+    "createUpdaterArtifacts": true,
     "icon": [
       "icons/32x32.png",
       "icons/128x128.png",
@@ -31,5 +32,13 @@
       "icons/icon.icns",
       "icons/icon.ico"
     ]
+  },
+  "plugins": {
+    "updater": {
+      "pubkey": "dW50cnVzdGVkIGNvbW1lbnQ6IG1pbmlzaWduIHB1YmxpYyBrZXk6IDc4RTFGMjEwN0YwMjlBNDkKUldSSm1nSi9FUExoZUZLUEVVUEhJNHZjNkd1dHBkKzU2TU5Fa3V5d3lEMXFtbXJ6dXpNdG9zOHYK",
+      "endpoints": [
+        "https://github.com/snowyter/animo-planner/releases/latest/download/latest.json"
+      ]
+    }
   }
 }

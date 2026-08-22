@@ -18,3 +18,8 @@ src-tauri/target
 # Raw Archer's Hub DOM captures - contain student ID / IP / MAC address.
 # Never commit these. Ticket 01 commits scrubbed fixtures only.
 docs/ArchersHub-Course-Finder-*.html
+
+# Update signing keys. The private key must never enter the repo.
+# Public key lives in src-tauri/tauri.conf.json (plugins.updater.pubkey).
+*.key
+*.key.pub

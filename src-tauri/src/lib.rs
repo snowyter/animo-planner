@@ -1,12 +1,18 @@
 pub mod core;
 pub mod interface;
 
+pub const UPDATER_ENABLED: bool = cfg!(feature = "updater");
+
 use interface::commands::*;
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
-    tauri::Builder::default()
-        .plugin(tauri_plugin_opener::init())
+    let builder = tauri::Builder::default().plugin(tauri_plugin_opener::init());
+
+    #[cfg(feature = "updater")]
+    let builder = builder.plugin(tauri_plugin_updater::Builder::new().build());
+
+    builder
         .invoke_handler(tauri::generate_handler![
             get_campus_options,
             get_session_options,
@@ -34,7 +40,8 @@ pub fn run() {
             resume_refresh,
             get_missing_sections,
             export_plan_ics,
-            build_capture_report
+            build_capture_report,
+            interface::version::get_app_version
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");
@@ -42,8 +49,71 @@ pub fn run() {
 
 #[cfg(test)]
 mod tests {
+    use crate::UPDATER_ENABLED;
+
     #[test]
     fn smoke_test() {
         assert_eq!(2 + 2, 4);
+    }
+
+    #[test]
+    fn updater_feature_flag_matches_compile_time_config() {
+        assert_eq!(UPDATER_ENABLED, cfg!(feature = "updater"));
+    }
+
+    #[test]
+    fn app_version_is_synced_between_cargo_toml_and_tauri_conf() {
+        assert_eq!(cargo_package_version(), tauri_conf_version());
+    }
+
+    #[test]
+    fn updater_endpoints_target_github_releases_latest_json() {
+        let conf = read_tauri_conf();
+        let endpoints = conf["plugins"]["updater"]["endpoints"]
+            .as_array()
+            .expect("plugins.updater.endpoints must be an array");
+        assert!(
+            endpoints.iter().any(|endpoint| {
+                let endpoint = endpoint.as_str().unwrap_or_default();
+                endpoint.contains("github.com")
+                    && endpoint.ends_with("/releases/latest/download/latest.json")
+            }),
+            "at least one updater endpoint must be a GitHub Releases latest.json URL, got: {endpoints:?}"
+        );
+    }
+
+    fn read_tauri_conf() -> serde_json::Value {
+        let raw = std::fs::read_to_string("tauri.conf.json")
+            .expect("tauri.conf.json must be readable from the package root");
+        serde_json::from_str(&raw).expect("tauri.conf.json must be valid JSON")
+    }
+
+    fn tauri_conf_version() -> String {
+        read_tauri_conf()["version"]
+            .as_str()
+            .expect("tauri.conf.json must have a version string")
+            .to_string()
+    }
+
+    fn cargo_package_version() -> String {
+        let raw = std::fs::read_to_string("Cargo.toml")
+            .expect("Cargo.toml must be readable from the package root");
+        let mut in_package = false;
+        for line in raw.lines() {
+            let line = line.trim();
+            if line == "[package]" {
+                in_package = true;
+                continue;
+            }
+            if in_package {
+                if line.starts_with('[') {
+                    break;
+                }
+                if let Some(version) = line.strip_prefix("version = ") {
+                    return version.trim_matches('"').to_string();
+                }
+            }
+        }
+        panic!("no version key found in the [package] section of Cargo.toml");
     }
 }
