@@ -1,4 +1,16 @@
 .env
 .env.local
 .scratch/**/tmp/
-BOOTSTRAP.md
+
+
+# Node & Tauri
+node_modules
+dist
+dist-ssr
+src-tauri/target
+*.local
+.vscode/*
+!.vscode/extensions.json
+.idea
+.DS_Store
+
