@@ -1,51 +1,137 @@
 import { useState } from "react";
-import reactLogo from "./assets/react.svg";
-import { invoke } from "@tauri-apps/api/core";
+import { AppHeader } from "./components/AppHeader";
+import { PlanList } from "./components/PlanList";
+import { CreatePlanDialog } from "./components/CreatePlanDialog";
+import { PlanWorkspace } from "./components/PlanWorkspace";
+import { usePlans } from "./components/usePlans";
+import { useOptions } from "./components/useOptions";
+import { usePlanDetail } from "./components/usePlanDetail";
+import type { PlanSummary } from "./adapters/ipc/types";
 import "./App.css";
 
-function App() {
-  const [greetMsg, setGreetMsg] = useState("");
-  const [name, setName] = useState("");
+function AppContent() {
+  const [activePlanSummary, setActivePlanSummary] = useState<PlanSummary | null>(null);
+  const [isCreateOpen, setIsCreateOpen] = useState(false);
+  const [createError, setCreateError] = useState<string | null>(null);
 
-  async function greet() {
-    // Learn more about Tauri commands at https://tauri.app/develop/calling-rust/
-    setGreetMsg(await invoke("greet", { name }));
-  }
+  const {
+    plans,
+    isLoading: isPlansLoading,
+    error: plansError,
+    fetchPlans,
+    handleCreatePlan,
+    handleDeletePlan,
+    handleSeedSample,
+  } = usePlans();
+
+  const {
+    campusOptions,
+    sessionOptions,
+  } = useOptions();
+
+  // If a plan is active, fetch its details
+  const {
+    plan: activePlanDetail,
+    isLoading: isPlanDetailLoading,
+    error: planDetailError,
+    refreshPlan,
+  } = usePlanDetail(activePlanSummary?.id ?? "");
+
+  const onOpenPlan = (plan: PlanSummary) => {
+    setActivePlanSummary(plan);
+  };
+
+  const onBackToPlans = () => {
+    setActivePlanSummary(null);
+    fetchPlans();
+  };
+
+  const onHandleCreate = async (args: { name: string; campusId: number; sessionId: number }) => {
+    setCreateError(null);
+    try {
+      const created = await handleCreatePlan(args);
+      setIsCreateOpen(false);
+      setActivePlanSummary(created);
+    } catch (err: unknown) {
+      if (typeof err === "string") {
+        setCreateError(err);
+      } else if (err instanceof Error) {
+        setCreateError(err.message);
+      } else {
+        setCreateError("Failed to create plan");
+      }
+    }
+  };
+
+  const onHandleSeedSample = async () => {
+    try {
+      const sample = await handleSeedSample();
+      setActivePlanSummary(sample);
+    } catch {
+      // Error is captured in usePlans.error
+    }
+  };
+
+  const onHandleDeletePlan = async (planId: string) => {
+    if (activePlanSummary?.id === planId) {
+      setActivePlanSummary(null);
+    }
+    await handleDeletePlan(planId);
+  };
 
   return (
-    <main className="container">
-      <h1>Welcome to Tauri + React</h1>
+    <div className="min-h-screen bg-slate-50 text-slate-900 flex flex-col font-sans">
+      <AppHeader
+        activePlan={activePlanSummary}
+        onBackToPlans={onBackToPlans}
+      />
 
-      <div className="row">
-        <a href="https://vite.dev" target="_blank">
-          <img src="/vite.svg" className="logo vite" alt="Vite logo" />
-        </a>
-        <a href="https://tauri.app" target="_blank">
-          <img src="/tauri.svg" className="logo tauri" alt="Tauri logo" />
-        </a>
-        <a href="https://react.dev" target="_blank">
-          <img src={reactLogo} className="logo react" alt="React logo" />
-        </a>
-      </div>
-      <p>Click on the Tauri, Vite, and React logos to learn more.</p>
+      <main className="flex-1">
+        {activePlanSummary ? (
+          <PlanWorkspace
+            planSummary={activePlanSummary}
+            plan={activePlanDetail}
+            isLoading={isPlanDetailLoading}
+            error={planDetailError}
+            onBack={onBackToPlans}
+            onRetry={refreshPlan}
+          />
+        ) : (
+          <PlanList
+            plans={plans}
+            isLoading={isPlansLoading}
+            error={plansError}
+            onOpenCreate={() => {
+              setCreateError(null);
+              setIsCreateOpen(true);
+            }}
+            onSeedSample={onHandleSeedSample}
+            onOpenPlan={onOpenPlan}
+            onDeletePlan={onHandleDeletePlan}
+            onRetry={fetchPlans}
+          />
+        )}
+      </main>
 
-      <form
-        className="row"
-        onSubmit={(e) => {
-          e.preventDefault();
-          greet();
+      <CreatePlanDialog
+        open={isCreateOpen}
+        onOpenChange={(open) => {
+          setIsCreateOpen(open);
+          if (!open) {
+            setCreateError(null);
+          }
         }}
-      >
-        <input
-          id="greet-input"
-          onChange={(e) => setName(e.currentTarget.value)}
-          placeholder="Enter a name..."
-        />
-        <button type="submit">Greet</button>
-      </form>
-      <p>{greetMsg}</p>
-    </main>
+        campusOptions={campusOptions}
+        sessionOptions={sessionOptions}
+        error={createError}
+        onSubmit={onHandleCreate}
+      />
+    </div>
   );
+}
+
+function App() {
+  return <AppContent />;
 }
 
 export default App;
