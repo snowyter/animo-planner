@@ -5,13 +5,15 @@
 //! tickets land, the bodies deliberately fail loudly: a stub never returns
 //! empty or plausible-looking data, so no UI ticket can be declared finished
 //! against a command that does nothing. `seed_sample_plan` is implemented
-//! (ticket 07); the rest remain stubs.
+//! (ticket 07), as are the capture-window pair `open_capture_window` and
+//! `clear_browser_session` (ticket 10); the rest remain stubs.
 //!
 //! Amendment protocol: `docs/ipc-contract.md` is the single source of truth.
 //! A signature change updates this file and `src/adapters/ipc/` in the same
 //! commit and names the change in its PR description.
 
 use crate::adapters::capture::CaptureEvents;
+use crate::adapters::capture_window;
 use crate::adapters::sample_seed;
 use crate::adapters::store::{CaptureScope, StoreHandle};
 use crate::core::ipc_types::*;
@@ -210,9 +212,17 @@ pub fn apply_solution(_args: ApplySolutionArgs) -> Result<Plan, String> {
     Err(unimplemented("apply_solution"))
 }
 
+/// Opens (or refocuses) the Archer's Hub capture popup for the given plan
+/// scope (ticket 10). The popup is a separate window where the student
+/// signs in manually; its injected script posts captures to the loopback
+/// endpoint. The remote origin never gets Tauri IPC (ADR-0003).
 #[tauri::command]
-pub fn open_capture_window(_args: CampusSessionArgs) -> Result<(), String> {
-    Err(unimplemented("open_capture_window"))
+pub fn open_capture_window(
+    args: CampusSessionArgs,
+    app: tauri::AppHandle,
+    listener: tauri::State<'_, crate::adapters::capture::CaptureListener>,
+) -> Result<(), String> {
+    capture_window::open_capture_window(&app, &listener, capture_scope(&args))
 }
 
 #[tauri::command]
@@ -238,9 +248,12 @@ pub fn undo_last_capture(
         .map_err(|err| err.to_string())
 }
 
+/// Signs the student out of the capture popup (ticket 10): destroys the
+/// window and wipes its persisted WebView profile. The control is surfaced
+/// by ticket 23; this command does the wiping.
 #[tauri::command]
-pub fn clear_browser_session() -> Result<(), String> {
-    Err(unimplemented("clear_browser_session"))
+pub fn clear_browser_session(app: tauri::AppHandle) -> Result<(), String> {
+    capture_window::clear_browser_session(&app)
 }
 
 #[tauri::command]
@@ -329,8 +342,9 @@ mod tests {
     }
 
     /// Every command that is still a stub fails loudly and identifiably.
-    /// `seed_sample_plan` is implemented (ticket 07) and is not asserted
-    /// here; its behavior is covered by the store and sample-seed tests.
+    /// `seed_sample_plan` (ticket 07) and the capture-window pair (ticket 10)
+    /// are implemented and are not asserted here; their behavior is covered
+    /// by the adapter tests.
     #[test]
     fn every_command_fails_loudly_and_identifiably() {
         expect_unimplemented("get_campus_options", get_campus_options());
@@ -356,8 +370,6 @@ mod tests {
             plan_id: "p1".into(),
             sections: vec![SectionRef { course_id: 2923, section_id: 384 }],
         }));
-        expect_unimplemented("open_capture_window", open_capture_window(scope_args()));
-        expect_unimplemented("clear_browser_session", clear_browser_session());
         expect_unimplemented("solve_plan", block_on(solve_plan(SolvePlanArgs {
             plan_id: "p1".into(),
             options: SolveOptions {
