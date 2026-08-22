@@ -1,3 +1,4 @@
+import { useMemo } from "react";
 import {
   Building2,
   Calendar,
@@ -7,13 +8,17 @@ import {
   Sparkles,
   Layers,
   Clock,
+  AlertTriangle,
+  CheckCircle2,
 } from "lucide-react";
 import { Button } from "./ui/button";
 import { Badge } from "./ui/badge";
 import { Card, CardHeader, CardTitle, CardDescription, CardContent } from "./ui/card";
 import { Alert, AlertTitle, AlertDescription } from "./ui/alert";
+import { WeekGrid } from "./WeekGrid";
 import type { Plan, PlanSummary } from "../adapters/ipc/types";
 import { formatSectionCount } from "../core/plan";
+import { findConflicts } from "../core/conflicts";
 
 export interface PlanWorkspaceProps {
   planSummary: PlanSummary;
@@ -32,6 +37,10 @@ export function PlanWorkspace({
   onRetry,
 }: PlanWorkspaceProps) {
   const currentSections = plan?.sections ?? [];
+
+  const conflicts = useMemo(() => {
+    return findConflicts(currentSections);
+  }, [currentSections]);
 
   return (
     <div className="mx-auto max-w-7xl px-4 py-6 sm:px-6 lg:px-8 space-y-6">
@@ -64,14 +73,34 @@ export function PlanWorkspace({
             </div>
           </div>
 
-          <div className="flex items-center gap-4 text-sm text-slate-600 bg-slate-50 rounded-lg p-3 border border-slate-100">
+          {/* Persistent stats & conflict indicator (ADR-0009) */}
+          <div className="flex flex-wrap items-center gap-4 text-sm text-slate-600 bg-slate-50 rounded-lg p-3 border border-slate-100">
             <div className="flex items-center gap-1.5">
               <Layers className="h-4 w-4 text-emerald-700" />
               <span className="font-semibold text-slate-900">
                 {formatSectionCount(currentSections.length || planSummary.sectionCount)}
               </span>
             </div>
+
             <div className="h-4 w-px bg-slate-200" />
+
+            {/* Persistent Conflict Count in Plan Header */}
+            {conflicts.length > 0 ? (
+              <div className="flex items-center gap-1.5 text-red-600 font-semibold">
+                <AlertTriangle className="h-4 w-4" />
+                <span>
+                  {conflicts.length} {conflicts.length === 1 ? "conflict" : "conflicts"}
+                </span>
+              </div>
+            ) : (
+              <div className="flex items-center gap-1.5 text-slate-600">
+                <CheckCircle2 className="h-4 w-4 text-emerald-600" />
+                <span>No conflicts</span>
+              </div>
+            )}
+
+            <div className="h-4 w-px bg-slate-200" />
+
             <div className="flex items-center gap-1.5">
               <Clock className="h-4 w-4 text-slate-400" />
               <span>Created {new Date(planSummary.createdAt).toLocaleDateString()}</span>
@@ -108,7 +137,7 @@ export function PlanWorkspace({
         </div>
       )}
 
-      {/* Entry Points & Workspace (SPEC §7, ADR-0014) */}
+      {/* Entry Points & Actions (SPEC §7, ADR-0014) */}
       <div className="grid grid-cols-1 md:grid-cols-2 gap-5">
         <Card className="hover:border-slate-300 transition-colors">
           <CardHeader>
@@ -147,11 +176,18 @@ export function PlanWorkspace({
         </Card>
       </div>
 
-      {/* Week Grid / Sections Area placeholder */}
-      <div className="rounded-xl border border-dashed border-slate-300 bg-white p-8 text-center">
-        <p className="text-sm text-slate-500">
-          Week grid and section browser will be wired here in upcoming tickets.
-        </p>
+      {/* Week Grid (SPEC §7, ADR-0011, ADR-0012) */}
+      <div className="space-y-3">
+        <div className="flex items-center justify-between">
+          <h3 className="text-base font-semibold text-slate-900">Weekly Schedule</h3>
+          <span className="text-xs text-slate-500">
+            {currentSections.length === 0
+              ? "No sections added yet"
+              : formatSectionCount(currentSections.length)}
+          </span>
+        </div>
+
+        <WeekGrid sections={currentSections} conflicts={conflicts} />
       </div>
     </div>
   );
