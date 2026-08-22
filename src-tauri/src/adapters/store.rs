@@ -28,10 +28,11 @@
 //! dates. A later ticket can add them as a migration.
 
 use crate::core::conflicts::{self, PlannedBlock, PlannedSection};
-use crate::core::ipc_types::{Conflict, Day};
+use crate::core::ipc_types::{CaptureSummary, Conflict, Day};
 use crate::core::parser::{ParsedBlock, ParsedSection};
 use rusqlite::{Connection, OptionalExtension, Transaction};
 use std::path::Path;
+use std::sync::{Arc, Mutex};
 
 /// Which campus and academic session a capture belongs to. Sections and
 /// plans are both scoped by this pair; it can never be mixed.
@@ -217,12 +218,60 @@ pub fn migrate(conn: &Connection) -> Result<(), StoreError> {
     Ok(())
 }
 
-/// Owns the connection and all write paths. No section row is ever removed;
-/// see `record_capture` and `add_section_to_plan`.
+/// Owns the connection and all write paths. No section row is ever removed
+/// by a capture; see `record_capture` and `add_section_to_plan`. The one
+/// deliberate removal path is `undo_last_capture`, which reverses exactly
+/// what the most recent batch introduced.
 pub struct Store {
     /// Crate-visible so adapter modules and their tests can inspect rows;
     /// all writes go through `Store` methods.
     pub(crate) conn: Connection,
+    /// Journal of the most recent capture batch, enough to reverse it.
+    /// In-memory on purpose: undo targets only the most recent batch, and
+    /// there is nothing to undo after a restart.
+    last_batch: Option<CaptureBatch>,
+}
+
+/// Shared handle to the store: the loopback capture listener and the Tauri
+/// commands both touch the same connection, serialized one call at a time.
+pub type StoreHandle = Arc<Mutex<Store>>;
+
+/// One schedule block exactly as stored, for restoring a section's prior
+/// blocks when a batch is undone.
+#[derive(Debug, Clone)]
+struct StoredBlock {
+    day: String,
+    start_min: i64,
+    end_min: i64,
+    location: Option<String>,
+    modality: Option<String>,
+}
+
+/// What one section of a batch changed, so the batch can be reversed.
+struct BatchSectionRecord {
+    section_fk: i64,
+    /// False only for sections the batch itself inserted — those are
+    /// removed on undo. Pre-existing sections are restored instead.
+    existed_before: bool,
+    prior_last_seen_at: Option<String>,
+    prior_blocks: Vec<StoredBlock>,
+    /// The snapshot row this batch appended for the section.
+    appended_snapshot_id: i64,
+}
+
+/// Whether a course existed before the batch, so an introduced course can
+/// be removed on undo.
+struct BatchCourseRecord {
+    campus_id: i64,
+    session_id: i64,
+    course_id: i64,
+    existed_before: bool,
+}
+
+/// The journal of one capture batch: everything it introduced or changed.
+struct CaptureBatch {
+    sections: Vec<BatchSectionRecord>,
+    courses: Vec<BatchCourseRecord>,
 }
 
 fn day_to_db(day: Day) -> &'static str {
@@ -286,14 +335,20 @@ impl Store {
         let conn = Connection::open(path)?;
         conn.pragma_update(None, "foreign_keys", true)?;
         migrate(&conn)?;
-        Ok(Self { conn })
+        Ok(Self {
+            conn,
+            last_batch: None,
+        })
     }
 
     pub fn open_in_memory() -> Result<Self, StoreError> {
         let conn = Connection::open_in_memory()?;
         conn.pragma_update(None, "foreign_keys", true)?;
         migrate(&conn)?;
-        Ok(Self { conn })
+        Ok(Self {
+            conn,
+            last_batch: None,
+        })
     }
 
     /// Records one parsed result set: upserts the course and each section,
@@ -303,6 +358,10 @@ impl Store {
     ///
     /// Sections not present in this capture are never touched, let alone
     /// deleted (ADR-0008); ticket 16 surfaces them.
+    ///
+    /// A journal of everything this batch introduced or changed is kept so
+    /// `undo_last_capture` can reverse it. An empty batch changes nothing
+    /// and does not become undoable.
     pub fn record_capture(
         &mut self,
         scope: &CaptureScope,
@@ -310,7 +369,133 @@ impl Store {
         captured_at: &str,
     ) -> Result<(), StoreError> {
         let tx = self.conn.transaction()?;
-        record_capture_tx(&tx, scope, sections, captured_at)?;
+        let mut batch_sections: Vec<BatchSectionRecord> = Vec::new();
+        let mut batch_courses: Vec<BatchCourseRecord> = Vec::new();
+        for section in sections {
+            record_course(&tx, scope, section, &mut batch_courses)?;
+            let (section_fk, existed_before, prior_last_seen_at) =
+                upsert_section(&tx, scope, section, captured_at)?;
+            let prior_blocks = if existed_before {
+                read_blocks(&tx, section_fk)?
+            } else {
+                Vec::new()
+            };
+            replace_blocks(&tx, section_fk, section)?;
+            let appended_snapshot_id = append_snapshot(&tx, section_fk, section, captured_at)?;
+            batch_sections.push(BatchSectionRecord {
+                section_fk,
+                existed_before,
+                prior_last_seen_at,
+                prior_blocks,
+                appended_snapshot_id,
+            });
+        }
+        tx.commit()?;
+        if !sections.is_empty() {
+            self.last_batch = Some(CaptureBatch {
+                sections: batch_sections,
+                courses: batch_courses,
+            });
+        }
+        Ok(())
+    }
+
+    /// Reverses the most recent capture batch: sections and snapshots it
+    /// introduced are removed, and sections it updated are restored to
+    /// their prior blocks and `last_seen_at`. Safe to call when there is
+    /// nothing to undo — it returns `false` and changes nothing.
+    ///
+    /// This is the one deliberate row-removal path in the codebase. ADR-0008
+    /// protects sections from capture-side deletion; undo is an explicit
+    /// user reversal of the batch that introduced them.
+    pub fn undo_last_capture(&mut self) -> Result<bool, StoreError> {
+        let Some(batch) = self.last_batch.take() else {
+            return Ok(false);
+        };
+        match self.reverse_batch(&batch) {
+            Ok(()) => Ok(true),
+            Err(err) => {
+                // Keep the journal so a failed undo can be retried rather
+                // than silently losing the ability to reverse the batch.
+                self.last_batch = Some(batch);
+                Err(err)
+            }
+        }
+    }
+
+    /// Running counts for the capture counter: sections and distinct
+    /// courses captured under the given `(campus, session)`, plus whether
+    /// a batch is available to undo.
+    pub fn capture_summary(&self, scope: &CaptureScope) -> Result<CaptureSummary, StoreError> {
+        let section_count: i64 = self.conn.query_row(
+            "SELECT COUNT(*) FROM sections WHERE campus_id = ?1 AND session_id = ?2",
+            rusqlite::params![scope.campus_id, scope.session_id],
+            |row| row.get(0),
+        )?;
+        let course_count: i64 = self.conn.query_row(
+            "SELECT COUNT(*) FROM courses WHERE campus_id = ?1 AND session_id = ?2",
+            rusqlite::params![scope.campus_id, scope.session_id],
+            |row| row.get(0),
+        )?;
+        Ok(CaptureSummary {
+            campus_id: scope.campus_id,
+            session_id: scope.session_id,
+            section_count,
+            course_count,
+            can_undo: self.last_batch.is_some(),
+        })
+    }
+
+    fn reverse_batch(&self, batch: &CaptureBatch) -> Result<(), StoreError> {
+        // The store is behind the shared handle's mutex, so this transaction
+        // can never interleave with another caller's.
+        let tx = self.conn.unchecked_transaction()?;
+        for record in &batch.sections {
+            tx.execute(
+                "DELETE FROM snapshots WHERE id = ?1",
+                [record.appended_snapshot_id],
+            )?;
+            if record.existed_before {
+                tx.execute(
+                    "DELETE FROM schedule_blocks WHERE section_fk = ?1",
+                    [record.section_fk],
+                )?;
+                for block in &record.prior_blocks {
+                    tx.execute(
+                        "INSERT INTO schedule_blocks (section_fk, day, start_min, end_min, location, modality)
+                         VALUES (?1, ?2, ?3, ?4, ?5, ?6)",
+                        rusqlite::params![
+                            record.section_fk,
+                            block.day,
+                            block.start_min,
+                            block.end_min,
+                            block.location,
+                            block.modality,
+                        ],
+                    )?;
+                }
+                if let Some(prior_last_seen_at) = &record.prior_last_seen_at {
+                    tx.execute(
+                        "UPDATE sections SET last_seen_at = ?1 WHERE id = ?2",
+                        rusqlite::params![prior_last_seen_at, record.section_fk],
+                    )?;
+                }
+            } else {
+                tx.execute(
+                    "DELETE FROM schedule_blocks WHERE section_fk = ?1",
+                    [record.section_fk],
+                )?;
+                tx.execute("DELETE FROM sections WHERE id = ?1", [record.section_fk])?;
+            }
+        }
+        for course in &batch.courses {
+            if !course.existed_before {
+                tx.execute(
+                    "DELETE FROM courses WHERE campus_id = ?1 AND session_id = ?2 AND course_id = ?3",
+                    rusqlite::params![course.campus_id, course.session_id, course.course_id],
+                )?;
+            }
+        }
         tx.commit()?;
         Ok(())
     }
@@ -497,7 +682,7 @@ fn record_capture_tx(
 ) -> Result<(), StoreError> {
     for section in sections {
         upsert_course(tx, scope, section)?;
-        let section_fk = upsert_section(tx, scope, section, captured_at)?;
+        let (section_fk, _, _) = upsert_section(tx, scope, section, captured_at)?;
         replace_blocks(tx, section_fk, section)?;
         append_snapshot(tx, section_fk, section, captured_at)?;
     }
@@ -618,6 +803,29 @@ fn plan_summary_row(conn: &Connection, plan_id: &str) -> Result<PlanSummaryRow, 
     })
 }
 
+/// Upserts the course and notes whether it pre-existed, so undo can remove
+/// a course this batch introduced.
+fn record_course(
+    tx: &Transaction<'_>,
+    scope: &CaptureScope,
+    section: &ParsedSection,
+    journal: &mut Vec<BatchCourseRecord>,
+) -> Result<(), StoreError> {
+    let existed_before: i64 = tx.query_row(
+        "SELECT COUNT(*) FROM courses WHERE campus_id = ?1 AND session_id = ?2 AND course_id = ?3",
+        rusqlite::params![scope.campus_id, scope.session_id, section.course_id],
+        |row| row.get(0),
+    )?;
+    upsert_course(tx, scope, section)?;
+    journal.push(BatchCourseRecord {
+        campus_id: scope.campus_id,
+        session_id: scope.session_id,
+        course_id: section.course_id,
+        existed_before: existed_before > 0,
+    });
+    Ok(())
+}
+
 fn upsert_course(
     tx: &Transaction<'_>,
     scope: &CaptureScope,
@@ -640,12 +848,28 @@ fn upsert_course(
     Ok(())
 }
 
+/// Upserts the section and reports its prior state — whether it already
+/// existed and its previous `last_seen_at` — so undo can restore it.
 fn upsert_section(
     tx: &Transaction<'_>,
     scope: &CaptureScope,
     section: &ParsedSection,
     captured_at: &str,
-) -> Result<i64, StoreError> {
+) -> Result<(i64, bool, Option<String>), StoreError> {
+    let prior = tx
+        .query_row(
+            "SELECT id, last_seen_at FROM sections
+             WHERE campus_id = ?1 AND session_id = ?2 AND course_id = ?3 AND section_id = ?4",
+            rusqlite::params![
+                scope.campus_id,
+                scope.session_id,
+                section.course_id,
+                section.section_id
+            ],
+            |row| Ok((row.get::<_, i64>(0)?, row.get::<_, String>(1)?)),
+        )
+        .optional()?;
+    let existed_before = prior.is_some();
     tx.execute(
         "INSERT INTO sections (campus_id, session_id, course_id, section_id, section_code,
                                course_type, credits, enroll_cap, first_seen_at, last_seen_at)
@@ -669,7 +893,7 @@ fn upsert_section(
             captured_at,
         ],
     )?;
-    Ok(tx.query_row(
+    let section_fk = tx.query_row(
         "SELECT id FROM sections
          WHERE campus_id = ?1 AND session_id = ?2 AND course_id = ?3 AND section_id = ?4",
         rusqlite::params![
@@ -679,7 +903,26 @@ fn upsert_section(
             section.section_id
         ],
         |row| row.get(0),
-    )?)
+    )?;
+    Ok((section_fk, existed_before, prior.map(|(_, last_seen)| last_seen)))
+}
+
+/// Reads a section's stored blocks, for restoring them on undo.
+fn read_blocks(tx: &Transaction<'_>, section_fk: i64) -> Result<Vec<StoredBlock>, StoreError> {
+    let mut stmt = tx.prepare(
+        "SELECT day, start_min, end_min, location, modality
+         FROM schedule_blocks WHERE section_fk = ?1 ORDER BY day, start_min",
+    )?;
+    let rows = stmt.query_map([section_fk], |row| {
+        Ok(StoredBlock {
+            day: row.get(0)?,
+            start_min: row.get(1)?,
+            end_min: row.get(2)?,
+            location: row.get(3)?,
+            modality: row.get(4)?,
+        })
+    })?;
+    rows.collect::<Result<Vec<_>, _>>().map_err(StoreError::Sql)
 }
 
 fn replace_blocks(
@@ -735,12 +978,14 @@ fn block_location_text(block: &ParsedBlock) -> Option<String> {
     }
 }
 
+/// Appends the batch's snapshot for a section and returns its row id, so
+/// undo can remove exactly this snapshot.
 fn append_snapshot(
     tx: &Transaction<'_>,
     section_fk: i64,
     section: &ParsedSection,
     captured_at: &str,
-) -> Result<(), StoreError> {
+) -> Result<i64, StoreError> {
     tx.execute(
         "INSERT INTO snapshots (section_fk, captured_at, enrolled, teacher, remark)
          VALUES (?1, ?2, ?3, ?4, ?5)",
@@ -752,7 +997,7 @@ fn append_snapshot(
             section.remark,
         ],
     )?;
-    Ok(())
+    Ok(tx.last_insert_rowid())
 }
 
 #[cfg(test)]
@@ -1795,5 +2040,163 @@ mod tests {
             .set_section_pinned("p1", 2923, 384, false)
             .expect("unpinning works after the restart");
         assert_eq!(pinned_flag(&reopened.conn, 384), 0);
+    }
+
+    // ---------- capture summary ----------
+
+    #[test]
+    fn capture_summary_counts_sections_and_distinct_courses_per_scope() {
+        let mut store = store();
+        store
+            .record_capture(
+                &SCOPE,
+                &[
+                    parsed_section(2923, 384, "S01", None, Some(10), vec![]),
+                    parsed_section(2923, 385, "S02", None, Some(20), vec![]),
+                ],
+                T1,
+            )
+            .expect("first course capture");
+        store
+            .record_capture(&SCOPE, &[parsed_section(2999, 400, "S01", None, Some(5), vec![])], T2)
+            .expect("second course capture");
+
+        let summary = store.capture_summary(&SCOPE).expect("summary");
+        assert_eq!(summary.campus_id, 7);
+        assert_eq!(summary.session_id, 155);
+        assert_eq!(summary.section_count, 3, "sections across both courses");
+        assert_eq!(summary.course_count, 2, "distinct courses");
+        assert!(summary.can_undo, "a real batch is undoable");
+
+        // A capture under another scope never leaks into this scope's counts.
+        store
+            .record_capture(
+                &OTHER_SCOPE,
+                &[parsed_section(2923, 999, "S99", None, Some(5), vec![])],
+                T2,
+            )
+            .expect("other-scope capture");
+        let summary = store.capture_summary(&SCOPE).expect("summary");
+        assert_eq!(summary.section_count, 3, "other scopes do not count here");
+        assert_eq!(summary.course_count, 2);
+    }
+
+    // ---------- undo ----------
+
+    #[test]
+    fn undo_reverses_the_most_recent_batch_removing_what_it_introduced() {
+        let mut store = store();
+        store
+            .record_capture(&SCOPE, &[parsed_section(2923, 384, "S01", None, Some(10), vec![])], T1)
+            .expect("first batch");
+        store
+            .record_capture(&SCOPE, &[parsed_section(2999, 400, "S01", None, Some(5), vec![])], T2)
+            .expect("second batch");
+
+        assert!(store.undo_last_capture().expect("undo"), "undo must reverse a batch");
+
+        assert_eq!(count(&store.conn, "SELECT COUNT(*) FROM sections"), 1);
+        assert_eq!(count(&store.conn, "SELECT COUNT(*) FROM courses"), 1);
+        assert_eq!(count(&store.conn, "SELECT COUNT(*) FROM snapshots"), 1);
+        assert_eq!(count(&store.conn, "SELECT COUNT(*) FROM schedule_blocks"), 0);
+        assert_eq!(
+            section_rows(&store.conn),
+            vec![(7, 155, 2923, 384, "S01".into(), T1.into(), T1.into())],
+            "the first batch's section survives untouched"
+        );
+        assert!(
+            !store.capture_summary(&SCOPE).expect("summary").can_undo,
+            "undo consumes the most recent batch"
+        );
+    }
+
+    #[test]
+    fn undo_restores_prior_state_of_pre_existing_sections() {
+        let mut store = store();
+        let first = parsed_section(2923, 384, "S01", None, Some(10), vec![
+            online_block(Day::Mon, 450, 540),
+        ]);
+        let second = parsed_section(2923, 384, "S01", Some("Bryant Lee"), Some(42), vec![
+            room_block(Day::Tue, 870, 960, "L226"),
+        ]);
+        store.record_capture(&SCOPE, &[first], T1).expect("first batch");
+        store.record_capture(&SCOPE, &[second], T2).expect("second batch");
+
+        assert!(store.undo_last_capture().expect("undo"));
+
+        let rows = section_rows(&store.conn);
+        assert_eq!(rows.len(), 1, "the section itself pre-existed and survives");
+        assert_eq!(rows[0].5, T1, "first_seen_at stays at first capture");
+        assert_eq!(rows[0].6, T1, "last_seen_at is restored to the prior capture");
+        assert_eq!(
+            snapshot_rows(&store.conn),
+            vec![(384, T1.to_string(), Some(10), None)],
+            "the batch's snapshot is removed; the earlier one stays readable"
+        );
+        assert_eq!(
+            block_rows(&store.conn),
+            vec![(384, "MON".into(), 450, 540, None, Some("ONLINE".into()))],
+            "blocks are restored to the prior capture"
+        );
+    }
+
+    #[test]
+    fn undo_is_safe_when_there_is_nothing_to_undo() {
+        let mut store = store();
+        assert!(
+            !store.undo_last_capture().expect("undo of nothing must not error"),
+            "nothing to undo on a fresh store"
+        );
+        assert!(!store.undo_last_capture().expect("a repeat call is still safe"));
+
+        store
+            .record_capture(&SCOPE, &[parsed_section(2923, 384, "S01", None, Some(10), vec![])], T1)
+            .expect("capture");
+        assert!(store.undo_last_capture().expect("undo"));
+        assert!(
+            !store.undo_last_capture().expect("double undo must be a no-op"),
+            "undo never undoes twice"
+        );
+        assert_eq!(
+            count(&store.conn, "SELECT COUNT(*) FROM sections"),
+            0,
+            "the second undo changed nothing"
+        );
+    }
+
+    #[test]
+    fn an_empty_batch_changes_nothing_and_is_not_undoable() {
+        let mut store = store();
+        store.record_capture(&SCOPE, &[], T1).expect("empty capture");
+        let summary = store.capture_summary(&SCOPE).expect("summary");
+        assert_eq!(summary.section_count, 0);
+        assert_eq!(summary.course_count, 0);
+        assert!(!summary.can_undo, "an empty batch must not enable undo");
+        assert!(!store.undo_last_capture().expect("undo is safe"));
+    }
+
+    #[test]
+    fn undo_of_a_hybrid_batch_keeps_untouched_sections_intact() {
+        let mut store = store();
+        // Batch 1 introduces two sections of the same course.
+        let batch1 = vec![
+            parsed_section(2923, 384, "S01", None, Some(10), vec![]),
+            parsed_section(2923, 385, "S02", None, Some(20), vec![]),
+        ];
+        // Batch 2 re-captures only S01; S02 stays untouched by the batch.
+        let batch2 = vec![parsed_section(2923, 384, "S01", None, Some(11), vec![])];
+        store.record_capture(&SCOPE, &batch1, T1).expect("batch 1");
+        store.record_capture(&SCOPE, &batch2, T2).expect("batch 2");
+
+        assert!(store.undo_last_capture().expect("undo"));
+
+        assert_eq!(count(&store.conn, "SELECT COUNT(*) FROM sections"), 2);
+        assert_eq!(count(&store.conn, "SELECT COUNT(*) FROM courses"), 1);
+        // S02's single snapshot survives; S01's second snapshot is gone.
+        assert_eq!(snapshot_rows(&store.conn), vec![(384, T1.to_string(), Some(10), None), (385, T1.to_string(), Some(20), None)]);
+        let rows = section_rows(&store.conn);
+        let s01 = rows.iter().find(|r| r.3 == 384).expect("S01");
+        assert_eq!(s01.6, T1, "S01 last_seen_at restored");
+        assert_eq!(s01.5, T1, "S01 first_seen_at untouched");
     }
 }

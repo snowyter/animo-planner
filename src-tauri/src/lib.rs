@@ -5,6 +5,7 @@ pub mod interface;
 pub const UPDATER_ENABLED: bool = cfg!(feature = "updater");
 
 use interface::commands::*;
+use tauri::Manager;
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
@@ -14,6 +15,27 @@ pub fn run() {
     let builder = builder.plugin(tauri_plugin_updater::Builder::new().build());
 
     builder
+        .setup(|app| {
+            // The local store lives in the app data directory and survives
+            // restarts; the loopback capture listener is minted per launch.
+            let data_dir = app.path().app_data_dir()?;
+            std::fs::create_dir_all(&data_dir)?;
+            let store = adapters::store::Store::open(&data_dir.join("animo-plan.db"))
+                .map_err(|err| format!("failed to open the local store: {err}"))?;
+            let store: adapters::store::StoreHandle = std::sync::Arc::new(std::sync::Mutex::new(store));
+            app.manage(store.clone());
+
+            let (listener, server) = adapters::capture::CaptureListener::bind(
+                store,
+                AppHandleEvents(app.handle().clone()),
+            )
+            .map_err(|err| format!("failed to start the capture listener: {err}"))?;
+            app.manage(listener);
+            tauri::async_runtime::spawn(async move {
+                server.serve().await;
+            });
+            Ok(())
+        })
         .invoke_handler(tauri::generate_handler![
             get_campus_options,
             get_session_options,
