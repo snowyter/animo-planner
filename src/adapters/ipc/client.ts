@@ -1,0 +1,237 @@
+/**
+ * Typed TypeScript client for the Tauri IPC seam.
+ *
+ * One function per command declared in `docs/ipc-contract.md`, with argument
+ * and return types mirroring the Rust serde types. This module only calls
+ * commands that the contract declares; inventing one here is a contract
+ * violation. Until the matching headless tickets land, every command rejects
+ * with an identifiable `unimplemented: <name>` error from Rust — the client
+ * deliberately does not swallow or mask it.
+ */
+
+import { invoke } from "@tauri-apps/api/core";
+import { listen, type UnlistenFn } from "@tauri-apps/api/event";
+import type {
+  AppInfo,
+  CampusOption,
+  CaptureReport,
+  CaptureSummary,
+  CapturedCourse,
+  Conflict,
+  Day,
+  IcsExport,
+  MissingSection,
+  Plan,
+  PlanSummary,
+  Preset,
+  RefreshOutcome,
+  RefreshProgress,
+  Section,
+  SectionRef,
+  SessionOption,
+  SolveResult,
+} from "./types";
+
+// Options & app info
+
+export function getCampusOptions(): Promise<CampusOption[]> {
+  return invoke("get_campus_options");
+}
+
+export function getSessionOptions(): Promise<SessionOption[]> {
+  return invoke("get_session_options");
+}
+
+export function getAppInfo(): Promise<AppInfo> {
+  return invoke("get_app_info");
+}
+
+// Plans
+
+export function listPlans(): Promise<PlanSummary[]> {
+  return invoke("list_plans");
+}
+
+export function createPlan(args: {
+  name: string;
+  campusId: number;
+  sessionId: number;
+}): Promise<PlanSummary> {
+  return invoke("create_plan", args);
+}
+
+export function deletePlan(args: { planId: string }): Promise<void> {
+  return invoke("delete_plan", args);
+}
+
+export function getPlan(args: { planId: string }): Promise<Plan> {
+  return invoke("get_plan", args);
+}
+
+export function seedSamplePlan(): Promise<PlanSummary> {
+  return invoke("seed_sample_plan");
+}
+
+// Captured catalog
+
+export function listCapturedCourses(args: {
+  campusId: number;
+  sessionId: number;
+}): Promise<CapturedCourse[]> {
+  return invoke("list_captured_courses", args);
+}
+
+export function listCapturedSections(args: {
+  campusId: number;
+  sessionId: number;
+  courseId: number;
+}): Promise<Section[]> {
+  return invoke("list_captured_sections", args);
+}
+
+// Plan membership
+
+export function addSectionToPlan(args: {
+  planId: string;
+  courseId: number;
+  sectionId: number;
+}): Promise<Plan> {
+  return invoke("add_section_to_plan", args);
+}
+
+export function removeSectionFromPlan(args: {
+  planId: string;
+  courseId: number;
+  sectionId: number;
+}): Promise<Plan> {
+  return invoke("remove_section_from_plan", args);
+}
+
+export function setSectionPinned(args: {
+  planId: string;
+  courseId: number;
+  sectionId: number;
+  pinned: boolean;
+}): Promise<Plan> {
+  return invoke("set_section_pinned", args);
+}
+
+export function getPlanConflicts(args: { planId: string }): Promise<Conflict[]> {
+  return invoke("get_plan_conflicts", args);
+}
+
+export function applySolution(args: {
+  planId: string;
+  sections: SectionRef[];
+}): Promise<Plan> {
+  return invoke("apply_solution", args);
+}
+
+// Capture window & undo
+
+export function openCaptureWindow(args: {
+  campusId: number;
+  sessionId: number;
+}): Promise<void> {
+  return invoke("open_capture_window", args);
+}
+
+export function getCaptureSummary(args: {
+  campusId: number;
+  sessionId: number;
+}): Promise<CaptureSummary> {
+  return invoke("get_capture_summary", args);
+}
+
+export function undoLastCapture(args: {
+  campusId: number;
+  sessionId: number;
+}): Promise<CaptureSummary> {
+  return invoke("undo_last_capture", args);
+}
+
+export function clearBrowserSession(): Promise<void> {
+  return invoke("clear_browser_session");
+}
+
+// Solver (async commands — never block the UI thread)
+
+export function solvePlan(args: {
+  planId: string;
+  options: {
+    preset: Preset;
+    dayBlacklist: Day[];
+    earliestStartMin: number | null;
+    latestEndMin: number | null;
+    excludeFull: boolean;
+    resultLimit: number;
+  };
+}): Promise<SolveResult> {
+  return invoke("solve_plan", args);
+}
+
+export function continueSolve(args: {
+  planId: string;
+  resumeToken: string;
+}): Promise<SolveResult> {
+  return invoke("continue_solve", args);
+}
+
+export function cancelSolve(): Promise<void> {
+  return invoke("cancel_solve");
+}
+
+// Refresh (async commands — never block the UI thread)
+
+export function startRefresh(args: { planId: string }): Promise<RefreshOutcome> {
+  return invoke("start_refresh", args);
+}
+
+export function resumeRefresh(args: { planId: string }): Promise<RefreshOutcome> {
+  return invoke("resume_refresh", args);
+}
+
+export function getMissingSections(args: {
+  planId: string;
+}): Promise<MissingSection[]> {
+  return invoke("get_missing_sections", args);
+}
+
+// Export & diagnostics
+
+export function exportPlanIcs(args: { planId: string }): Promise<IcsExport> {
+  return invoke("export_plan_ics", args);
+}
+
+export function buildCaptureReport(args: {
+  error: string;
+  fragment: string;
+}): Promise<CaptureReport> {
+  return invoke("build_capture_report", args);
+}
+
+// Events (Rust → main window)
+
+export function onCaptureUpdated(
+  handler: (payload: CaptureSummary) => void,
+): Promise<UnlistenFn> {
+  return listen<CaptureSummary>("capture:updated", (event) =>
+    handler(event.payload),
+  );
+}
+
+export function onCaptureFailed(
+  handler: (payload: { error: string }) => void,
+): Promise<UnlistenFn> {
+  return listen<{ error: string }>("capture:failed", (event) =>
+    handler(event.payload),
+  );
+}
+
+export function onRefreshProgress(
+  handler: (payload: RefreshProgress) => void,
+): Promise<UnlistenFn> {
+  return listen<RefreshProgress>("refresh:progress", (event) =>
+    handler(event.payload),
+  );
+}
