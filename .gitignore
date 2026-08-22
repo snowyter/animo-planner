@@ -14,3 +14,7 @@ src-tauri/target
 .idea
 .DS_Store
 
+
+# Raw Archer's Hub DOM captures - contain student ID / IP / MAC address.
+# Never commit these. Ticket 01 commits scrubbed fixtures only.
+docs/ArchersHub-Course-Finder-*.html

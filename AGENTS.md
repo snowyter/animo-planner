@@ -25,7 +25,7 @@
 ## Rules
 - Every module of core logic gets a colocated test.
 - Core logic stays free of I/O and framework imports.
-- No new dependencies without asking.
+- No new dependencies without asking, except the pre-approved set in `docs/agents/dependencies.md`.
 - Never edit files under `.scratch/` while implementing.
 - If stuck after three red-green cycles, stop and name what's ambiguous. Do not guess.
 - Never write to Archer's Hub (ADR-0001).
