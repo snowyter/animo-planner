@@ -249,11 +249,9 @@ mod tests {
         let waker = unsafe { Waker::from_raw(RawWaker::new(std::ptr::null(), &VTABLE)) };
         let mut context = Context::from_waker(&waker);
         let mut pinned = Box::pin(future);
-        loop {
-            match Pin::new(&mut pinned).as_mut().poll(&mut context) {
-                Poll::Ready(output) => return output,
-                Poll::Pending => panic!("stub future must never be pending"),
-            }
+        match Pin::new(&mut pinned).as_mut().poll(&mut context) {
+            Poll::Ready(output) => output,
+            Poll::Pending => panic!("stub future must never be pending"),
         }
     }
 
