@@ -1,4 +1,5 @@
-//! SQLite persistence for captured sections (ticket 05).
+//! SQLite persistence for captured sections (ticket 05) and plan membership
+//! with conflict computation (ticket 08).
 //!
 //! This is the storage layer for SPEC §5: parsed sections are upserted on
 //! their natural key, every capture appends a point-in-time snapshot, and
@@ -26,7 +27,8 @@
 //! What §5 deliberately omits is not persisted here: section start/end
 //! dates. A later ticket can add them as a migration.
 
-use crate::core::ipc_types::Day;
+use crate::core::conflicts::{self, PlannedBlock, PlannedSection};
+use crate::core::ipc_types::{Conflict, Day};
 use crate::core::parser::{ParsedBlock, ParsedSection};
 use rusqlite::{Connection, OptionalExtension, Transaction};
 use std::path::Path;
@@ -72,6 +74,13 @@ pub enum StoreError {
         section_campus_id: i64,
         section_session_id: i64,
     },
+    /// A pin request for a section that is not a member of the plan. Failing
+    /// loudly here means pinned state can never silently fail to persist.
+    SectionNotInPlan {
+        plan_id: String,
+        course_id: i64,
+        section_id: i64,
+    },
 }
 
 impl std::fmt::Display for StoreError {
@@ -97,6 +106,14 @@ impl std::fmt::Display for StoreError {
                 "plan {plan_id:?} is scoped to campus {plan_campus_id} session {plan_session_id} \
                  but the section belongs to campus {section_campus_id} session \
                  {section_session_id}"
+            ),
+            StoreError::SectionNotInPlan {
+                plan_id,
+                course_id,
+                section_id,
+            } => write!(
+                f,
+                "section (course {course_id}, section {section_id}) is not in plan {plan_id:?}"
             ),
         }
     }
@@ -219,6 +236,51 @@ fn day_to_db(day: Day) -> &'static str {
     }
 }
 
+/// Inverse of [`day_to_db`]; the schema CHECK constrains the stored values.
+fn day_from_db(day: &str) -> Day {
+    match day {
+        "MON" => Day::Mon,
+        "TUE" => Day::Tue,
+        "WED" => Day::Wed,
+        "THU" => Day::Thu,
+        "FRI" => Day::Fri,
+        "SAT" => Day::Sat,
+        other => unreachable!("day column is constrained to MON..SAT, got {other:?}"),
+    }
+}
+
+/// The `(campus, session)` a plan is hard-scoped to, or `PlanNotFound`.
+fn plan_scope(conn: &Connection, plan_id: &str) -> Result<(i64, i64), StoreError> {
+    conn.query_row(
+        "SELECT campus_id, session_id FROM plans WHERE id = ?1",
+        [plan_id],
+        |row| Ok((row.get(0)?, row.get(1)?)),
+    )
+    .optional()?
+    .ok_or_else(|| StoreError::PlanNotFound {
+        plan_id: plan_id.to_string(),
+    })
+}
+
+/// The `sections.id` of the section captured under the plan's scope, or
+/// `None` when no such section exists (captured elsewhere or never).
+fn scoped_section_fk(
+    conn: &Connection,
+    plan_campus_id: i64,
+    plan_session_id: i64,
+    course_id: i64,
+    section_id: i64,
+) -> Result<Option<i64>, StoreError> {
+    Ok(conn
+        .query_row(
+            "SELECT id FROM sections
+             WHERE campus_id = ?1 AND session_id = ?2 AND course_id = ?3 AND section_id = ?4",
+            rusqlite::params![plan_campus_id, plan_session_id, course_id, section_id],
+            |row| row.get::<_, i64>(0),
+        )
+        .optional()?)
+}
+
 impl Store {
     pub fn open(path: &Path) -> Result<Self, StoreError> {
         let conn = Connection::open(path)?;
@@ -282,6 +344,117 @@ impl Store {
         Ok(())
     }
 
+    /// Removes a section's membership in a plan. The captured section row
+    /// itself is untouched — plan membership removal is not a hard delete
+    /// (ADR-0008). Idempotent: removing a section that is not a member
+    /// succeeds and changes nothing.
+    pub fn remove_section_from_plan(
+        &mut self,
+        plan_id: &str,
+        course_id: i64,
+        section_id: i64,
+    ) -> Result<(), StoreError> {
+        let (plan_campus, plan_session) = plan_scope(&self.conn, plan_id)?;
+        if let Some(section_fk) = scoped_section_fk(
+            &self.conn,
+            plan_campus,
+            plan_session,
+            course_id,
+            section_id,
+        )? {
+            self.conn.execute(
+                "DELETE FROM plan_sections WHERE plan_id = ?1 AND section_fk = ?2",
+                rusqlite::params![plan_id, section_fk],
+            )?;
+        }
+        Ok(())
+    }
+
+    /// Pins or unpins a section that is already a member of the plan. A pin
+    /// request for a non-member fails loudly: silently ignoring it would let
+    /// pinned state silently fail to persist.
+    pub fn set_section_pinned(
+        &mut self,
+        plan_id: &str,
+        course_id: i64,
+        section_id: i64,
+        pinned: bool,
+    ) -> Result<(), StoreError> {
+        let (plan_campus, plan_session) = plan_scope(&self.conn, plan_id)?;
+        let Some(section_fk) = scoped_section_fk(
+            &self.conn,
+            plan_campus,
+            plan_session,
+            course_id,
+            section_id,
+        )? else {
+            return Err(StoreError::SectionNotInPlan {
+                plan_id: plan_id.to_string(),
+                course_id,
+                section_id,
+            });
+        };
+        let updated = self.conn.execute(
+            "UPDATE plan_sections SET pinned = ?3 WHERE plan_id = ?1 AND section_fk = ?2",
+            rusqlite::params![plan_id, section_fk, pinned],
+        )?;
+        if updated == 0 {
+            return Err(StoreError::SectionNotInPlan {
+                plan_id: plan_id.to_string(),
+                course_id,
+                section_id,
+            });
+        }
+        Ok(())
+    }
+
+    /// Returns every overlapping block pair among the plan's members: which
+    /// two sections clash, on which day, over which time range. Conflict is
+    /// a query over a plan, never a constraint on membership (ADR-0009), and
+    /// detection runs per block (ADR-0007), so a hybrid section conflicts
+    /// only on the day that actually overlaps.
+    pub fn conflicts_in_plan(&self, plan_id: &str) -> Result<Vec<Conflict>, StoreError> {
+        let _ = plan_scope(&self.conn, plan_id)?;
+        let mut stmt = self.conn.prepare(
+            "SELECT s.course_id, s.section_id, b.day, b.start_min, b.end_min
+             FROM plan_sections ps
+             JOIN sections s ON s.id = ps.section_fk
+             JOIN schedule_blocks b ON b.section_fk = ps.section_fk
+             WHERE ps.plan_id = ?1
+             ORDER BY s.course_id, s.section_id, b.id",
+        )?;
+        let rows = stmt.query_map([plan_id], |row| {
+            Ok((
+                row.get::<_, i64>(0)?,
+                row.get::<_, i64>(1)?,
+                row.get::<_, String>(2)?,
+                row.get::<_, i64>(3)?,
+                row.get::<_, i64>(4)?,
+            ))
+        })?;
+
+        // Rows arrive grouped by section; fold each run into one member.
+        let mut members: Vec<PlannedSection> = Vec::new();
+        for row in rows {
+            let (course_id, section_id, day, start_min, end_min) = row?;
+            let block = PlannedBlock {
+                day: day_from_db(&day),
+                start_min,
+                end_min,
+            };
+            match members.last_mut() {
+                Some(last) if last.course_id == course_id && last.section_id == section_id => {
+                    last.blocks.push(block);
+                }
+                _ => members.push(PlannedSection {
+                    course_id,
+                    section_id,
+                    blocks: vec![block],
+                }),
+            }
+        }
+        Ok(conflicts::find_conflicts(&members))
+    }
     /// Seeds the sample-data plan (ticket 07) in one transaction: records
     /// each capture, creates the plan flagged as sample data, and links
     /// every section into it. Idempotent — if the sample plan already
@@ -370,26 +543,8 @@ fn add_section_tx(
     course_id: i64,
     section_id: i64,
 ) -> Result<(), StoreError> {
-    let (plan_campus, plan_session) = tx
-        .query_row(
-            "SELECT campus_id, session_id FROM plans WHERE id = ?1",
-            [plan_id],
-            |row| Ok((row.get(0)?, row.get(1)?)),
-        )
-        .optional()?
-        .ok_or_else(|| StoreError::PlanNotFound {
-            plan_id: plan_id.to_string(),
-        })?;
-
-    let scoped = tx
-        .query_row(
-            "SELECT id FROM sections
-             WHERE campus_id = ?1 AND session_id = ?2 AND course_id = ?3 AND section_id = ?4",
-            rusqlite::params![plan_campus, plan_session, course_id, section_id],
-            |row| row.get::<_, i64>(0),
-        )
-        .optional()?;
-    let section_fk = match scoped {
+    let (plan_campus, plan_session) = plan_scope(tx, plan_id)?;
+    let section_fk = match scoped_section_fk(tx, plan_campus, plan_session, course_id, section_id)? {
         Some(section_fk) => section_fk,
         None => {
             // Distinguish "captured under another scope" from "never
@@ -603,7 +758,7 @@ fn append_snapshot(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::core::ipc_types::BlockModality;
+    use crate::core::ipc_types::{BlockModality, Conflict, SectionRef};
     use crate::core::parser::{ParsedLocation, ParsedSection};
 
     const SCOPE: CaptureScope = CaptureScope {
@@ -1344,5 +1499,301 @@ mod tests {
             1,
             "the existing plan is the only plan"
         );
+    }
+    // ---------- plan membership and conflicts (ticket 08) ----------
+
+    fn plan_membership_rows(conn: &Connection) -> Vec<(i64, i64, i64)> {
+        let mut stmt = conn
+            .prepare(
+                "SELECT s.course_id, s.section_id, ps.pinned
+                 FROM plan_sections ps JOIN sections s ON s.id = ps.section_fk
+                 ORDER BY s.course_id, s.section_id",
+            )
+            .expect("plan membership select must prepare");
+        stmt.query_map([], |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)))
+            .expect("plan membership select must run")
+            .map(|row| row.expect("membership row"))
+            .collect()
+    }
+
+    fn pinned_flag(conn: &Connection, section_id: i64) -> i64 {
+        conn.query_row(
+            "SELECT ps.pinned FROM plan_sections ps
+             JOIN sections s ON s.id = ps.section_fk
+             WHERE ps.plan_id = 'p1' AND s.section_id = ?1",
+            [section_id],
+            |row| row.get(0),
+        )
+        .expect("pinned flag must be readable")
+    }
+
+    fn overlap_fixture() -> Vec<ParsedSection> {
+        vec![
+            parsed_section(
+                2923,
+                384,
+                "S01",
+                None,
+                Some(10),
+                vec![
+                    room_block(Day::Mon, 450, 540, "A1103"),
+                    room_block(Day::Thu, 450, 540, "A1103"),
+                ],
+            ),
+            parsed_section(
+                2923,
+                385,
+                "S02",
+                None,
+                Some(20),
+                vec![
+                    room_block(Day::Mon, 480, 570, "G207"),
+                    room_block(Day::Fri, 480, 570, "G207"),
+                ],
+            ),
+        ]
+    }
+
+    #[test]
+    fn adding_overlapping_sections_to_a_plan_is_legal() {
+        let mut store = store();
+        store.create_plan("p1", "T1 load", &SCOPE, T1, false).expect("plan");
+        store
+            .record_capture(&SCOPE, &overlap_fixture(), T1)
+            .expect("capture");
+        store.add_section_to_plan("p1", 2923, 384).expect("first add");
+        store
+            .add_section_to_plan("p1", 2923, 385)
+            .expect("membership carries no validity constraint (ADR-0009)");
+        assert_eq!(count(&store.conn, "SELECT COUNT(*) FROM plan_sections"), 2);
+    }
+
+    #[test]
+    fn conflicts_in_plan_reports_the_overlapping_pair_day_and_range() {
+        let mut store = store();
+        store.create_plan("p1", "T1 load", &SCOPE, T1, false).expect("plan");
+        store
+            .record_capture(&SCOPE, &overlap_fixture(), T1)
+            .expect("capture");
+        store.add_section_to_plan("p1", 2923, 384).expect("add");
+        store.add_section_to_plan("p1", 2923, 385).expect("add");
+
+        assert_eq!(
+            store.conflicts_in_plan("p1").expect("conflicts query"),
+            vec![Conflict {
+                a: SectionRef { course_id: 2923, section_id: 384 },
+                b: SectionRef { course_id: 2923, section_id: 385 },
+                day: Day::Mon,
+                start_min: 480,
+                end_min: 540,
+            }],
+            "Monday overlaps; Thursday and Friday are clear"
+        );
+    }
+
+    #[test]
+    fn conflicts_in_plan_is_clear_when_blocks_touch_without_overlapping() {
+        let mut store = store();
+        store.create_plan("p1", "T1 load", &SCOPE, T1, false).expect("plan");
+        let touching = vec![
+            parsed_section(2923, 384, "S01", None, Some(10), vec![
+                room_block(Day::Mon, 450, 540, "A1103"),
+            ]),
+            parsed_section(2923, 385, "S02", None, Some(20), vec![
+                room_block(Day::Mon, 540, 630, "G207"),
+            ]),
+        ];
+        store.record_capture(&SCOPE, &touching, T1).expect("capture");
+        store.add_section_to_plan("p1", 2923, 384).expect("add");
+        store.add_section_to_plan("p1", 2923, 385).expect("add");
+        assert!(
+            store.conflicts_in_plan("p1").expect("conflicts query").is_empty(),
+            "a 15-minute break between blocks is not a conflict"
+        );
+    }
+
+    #[test]
+    fn conflicts_in_plan_never_reports_a_section_against_itself() {
+        let mut store = store();
+        store.create_plan("p1", "T1 load", &SCOPE, T1, false).expect("plan");
+        let self_overlapping = vec![parsed_section(2923, 384, "S01", None, Some(10), vec![
+            room_block(Day::Mon, 450, 540, "A1103"),
+            room_block(Day::Mon, 480, 570, "A1103"),
+        ])];
+        store
+            .record_capture(&SCOPE, &self_overlapping, T1)
+            .expect("capture");
+        store.add_section_to_plan("p1", 2923, 384).expect("add");
+        assert!(
+            store.conflicts_in_plan("p1").expect("conflicts query").is_empty(),
+            "a section is never compared with itself"
+        );
+    }
+
+    #[test]
+    fn blocks_with_unrecognized_locations_still_participate_in_conflicts() {
+        let mut store = store();
+        store.create_plan("p1", "T1 load", &SCOPE, T1, false).expect("plan");
+        let mixed = vec![
+            parsed_section(2923, 384, "S01", None, Some(10), vec![
+                room_block(Day::Mon, 450, 540, "A1103"),
+            ]),
+            parsed_section(2923, 385, "S02", None, Some(20), vec![ParsedBlock {
+                day: Day::Mon,
+                start_min: 480,
+                end_min: 570,
+                location: ParsedLocation::Unrecognized("TBA".into()),
+            }]),
+        ];
+        store.record_capture(&SCOPE, &mixed, T1).expect("capture");
+        store.add_section_to_plan("p1", 2923, 384).expect("add");
+        store.add_section_to_plan("p1", 2923, 385).expect("add");
+        assert_eq!(
+            store.conflicts_in_plan("p1").expect("conflicts query").len(),
+            1,
+            "conflict detection depends on times, never on modality"
+        );
+    }
+
+    #[test]
+    fn remove_section_from_plan_removes_membership_and_keeps_the_section_row() {
+        let mut store = store();
+        store.create_plan("p1", "T1 load", &SCOPE, T1, false).expect("plan");
+        store
+            .record_capture(&SCOPE, &overlap_fixture(), T1)
+            .expect("capture");
+        store.add_section_to_plan("p1", 2923, 384).expect("add");
+        store.add_section_to_plan("p1", 2923, 385).expect("add");
+
+        store
+            .remove_section_from_plan("p1", 2923, 385)
+            .expect("removal must succeed");
+
+        assert_eq!(
+            plan_membership_rows(&store.conn),
+            vec![(2923, 384, 0)],
+            "only the removed membership disappears"
+        );
+        assert_eq!(
+            count(&store.conn, "SELECT COUNT(*) FROM sections WHERE section_id = 385"),
+            1,
+            "removing from a plan never hard-deletes the section (ADR-0008)"
+        );
+        assert!(
+            store.conflicts_in_plan("p1").expect("conflicts query").is_empty(),
+            "the conflicting partner is gone, so the conflict is gone"
+        );
+    }
+
+    #[test]
+    fn removing_a_section_not_in_the_plan_is_a_no_op() {
+        let mut store = store();
+        store.create_plan("p1", "T1 load", &SCOPE, T1, false).expect("plan");
+        store
+            .record_capture(&SCOPE, &overlap_fixture(), T1)
+            .expect("capture");
+        store.add_section_to_plan("p1", 2923, 384).expect("add");
+
+        store
+            .remove_section_from_plan("p1", 2923, 385)
+            .expect("removing a non-member is not an error");
+
+        assert_eq!(
+            plan_membership_rows(&store.conn),
+            vec![(2923, 384, 0)],
+            "membership is unchanged"
+        );
+    }
+
+    #[test]
+    fn pinned_state_can_be_set_and_unset() {
+        let mut store = store();
+        store.create_plan("p1", "T1 load", &SCOPE, T1, false).expect("plan");
+        store
+            .record_capture(&SCOPE, &overlap_fixture(), T1)
+            .expect("capture");
+        store.add_section_to_plan("p1", 2923, 384).expect("add");
+
+        assert_eq!(pinned_flag(&store.conn, 384), 0, "new members start unpinned");
+
+        store.set_section_pinned("p1", 2923, 384, true).expect("pin");
+        assert_eq!(pinned_flag(&store.conn, 384), 1, "pinned state persists");
+
+        store.set_section_pinned("p1", 2923, 384, false).expect("unpin");
+        assert_eq!(pinned_flag(&store.conn, 384), 0, "unpinning restores the default");
+    }
+
+    #[test]
+    fn set_pinned_on_a_section_not_in_the_plan_is_an_error() {
+        let mut store = store();
+        store.create_plan("p1", "T1 load", &SCOPE, T1, false).expect("plan");
+        store
+            .record_capture(&SCOPE, &overlap_fixture(), T1)
+            .expect("capture");
+        store.add_section_to_plan("p1", 2923, 384).expect("add");
+
+        let err = store
+            .set_section_pinned("p1", 2923, 385, true)
+            .expect_err("pinning a non-member must fail loudly");
+        assert!(
+            matches!(
+                err,
+                StoreError::SectionNotInPlan { course_id: 2923, section_id: 385, .. }
+            ),
+            "got {err:?}"
+        );
+        assert_eq!(plan_membership_rows(&store.conn).len(), 1, "nothing was written");
+    }
+
+    #[test]
+    fn removing_or_pinning_in_an_unknown_plan_is_a_plan_error() {
+        let mut store = store();
+        let remove_err = store
+            .remove_section_from_plan("missing", 2923, 384)
+            .expect_err("removing in an unknown plan must error");
+        assert!(matches!(remove_err, StoreError::PlanNotFound { .. }), "got {remove_err:?}");
+
+        let pin_err = store
+            .set_section_pinned("missing", 2923, 384, true)
+            .expect_err("pinning in an unknown plan must error");
+        assert!(matches!(pin_err, StoreError::PlanNotFound { .. }), "got {pin_err:?}");
+    }
+
+    #[test]
+    fn membership_pinned_state_and_conflicts_survive_a_restart() {
+        let dir = tempfile::tempdir().expect("temp dir");
+        let path = dir.path().join("store.db");
+        {
+            let mut store = Store::open(&path).expect("fresh file must open");
+            store.create_plan("p1", "T1 load", &SCOPE, T1, false).expect("plan");
+            store
+                .record_capture(&SCOPE, &overlap_fixture(), T1)
+                .expect("capture");
+            store.add_section_to_plan("p1", 2923, 384).expect("add");
+            store.add_section_to_plan("p1", 2923, 385).expect("add");
+            store.set_section_pinned("p1", 2923, 384, true).expect("pin");
+        }
+
+        let mut reopened = Store::open(&path).expect("existing file must reopen");
+        assert_eq!(
+            plan_membership_rows(&reopened.conn),
+            vec![(2923, 384, 1), (2923, 385, 0)],
+            "membership and pinned state survive the restart"
+        );
+        assert_eq!(
+            reopened.conflicts_in_plan("p1").expect("conflicts query").len(),
+            1,
+            "conflicts remain computable after the restart"
+        );
+
+        reopened
+            .remove_section_from_plan("p1", 2923, 385)
+            .expect("removal works after the restart");
+        assert!(reopened.conflicts_in_plan("p1").expect("conflicts query").is_empty());
+
+        reopened
+            .set_section_pinned("p1", 2923, 384, false)
+            .expect("unpinning works after the restart");
+        assert_eq!(pinned_flag(&reopened.conn, 384), 0);
     }
 }
