@@ -35,6 +35,6 @@ The scaffold shipped React + Vite only. `SPEC.md` §7 calls for **Tailwind + sha
 
 Stop and ask on both of these — they are architecture, not plumbing.
 
-**SQLite access (ticket 05).** `SPEC.md` §5 names `tauri-plugin-sql`, but that plugin is designed to expose SQL to the *frontend*, whereas ADR-0006 and the ticket breakdown put all storage behind Rust commands with Rust-side migrations and tests. If the plugin's shape fights Rust-side ownership, `rusqlite` or `sqlx` is the likely answer — but that contradicts the spec, so it needs a human decision and probably an ADR, not a silent substitution.
+**SQLite access — RESOLVED in ticket 05.** `SPEC.md` §5 names `tauri-plugin-sql`, but that plugin is designed to expose SQL to the *frontend*, whereas ADR-0006 and the ticket breakdown put all storage behind Rust commands with Rust-side migrations and tests. Decided by a human in ticket 05: **`rusqlite` (bundled)**, Rust-owned storage, no SQL ever crosses IPC. See ADR-0015. Do not reintroduce the plugin without a new decision.
 
 **Anything that touches the capture path.** No dependency may be added to the injected script or the popup webview without asking. ADR-0003 constrains that boundary deliberately.
