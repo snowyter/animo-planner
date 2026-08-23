@@ -27,9 +27,24 @@ pub fn run() {
             let store: adapters::store::StoreHandle = std::sync::Arc::new(std::sync::Mutex::new(store));
             app.manage(store.clone());
 
+            // The bundled selector config is live immediately; the remote
+            // document (ticket 18) is fetched off the main thread and swaps
+            // in only if it validates. Startup never blocks on the network
+            // and the app is fully usable offline (ADR-0013). One shared
+            // handle: the managed state, the fetch task, and the capture
+            // listener all see the same loaded config.
+            let selector_config = adapters::remote_config::SelectorConfigHandle::default();
+            app.manage(selector_config.clone());
+            let fetch_handle = selector_config.clone();
+            tauri::async_runtime::spawn(async move {
+                let loaded = adapters::remote_config::fetch_startup_config().await;
+                fetch_handle.set_loaded(loaded);
+            });
+
             let (listener, server) = adapters::capture::CaptureListener::bind(
                 store,
                 AppHandleEvents(app.handle().clone()),
+                selector_config,
             )
             .map_err(|err| format!("failed to start the capture listener: {err}"))?;
             app.manage(listener);

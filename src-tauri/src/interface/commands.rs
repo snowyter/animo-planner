@@ -15,6 +15,7 @@
 
 use crate::adapters::capture::CaptureEvents;
 use crate::adapters::capture_window;
+use crate::adapters::remote_config::{LoadedSelectorConfig, SelectorConfigHandle};
 use crate::adapters::sample_seed;
 use crate::adapters::store::{CaptureScope, StoreHandle};
 use crate::core::ics;
@@ -139,9 +140,27 @@ pub fn get_session_options() -> Result<Vec<SessionOption>, String> {
     Err(unimplemented("get_session_options"))
 }
 
+/// Reports the app version together with which selector config is live —
+/// its version and whether it came from the remote document or the bundled
+/// fallback (ticket 18). A bug report about broken capture is undiagnosable
+/// without these; they feed the About screen and report flow (SPEC §9).
 #[tauri::command]
-pub fn get_app_info() -> Result<AppInfo, String> {
-    Err(unimplemented("get_app_info"))
+pub fn get_app_info(
+    app: tauri::AppHandle,
+    selector_config: tauri::State<'_, SelectorConfigHandle>,
+) -> Result<AppInfo, String> {
+    Ok(app_info_from(
+        app.package_info().version.to_string(),
+        &selector_config.loaded(),
+    ))
+}
+
+fn app_info_from(app_version: String, loaded: &LoadedSelectorConfig) -> AppInfo {
+    AppInfo {
+        app_version,
+        selector_config_version: loaded.version.clone(),
+        selector_config_source: loaded.source,
+    }
 }
 
 #[tauri::command]
@@ -223,8 +242,14 @@ pub fn open_capture_window(
     args: CampusSessionArgs,
     app: tauri::AppHandle,
     listener: tauri::State<'_, crate::adapters::capture::CaptureListener>,
+    selector_config: tauri::State<'_, SelectorConfigHandle>,
 ) -> Result<(), String> {
-    capture_window::open_capture_window(&app, &listener, capture_scope(&args))
+    capture_window::open_capture_window(
+        &app,
+        &listener,
+        &selector_config.loaded().config,
+        capture_scope(&args),
+    )
 }
 
 #[tauri::command]
@@ -353,19 +378,42 @@ mod tests {
         CampusSessionArgs { campus_id: 7, session_id: 155 }
     }
 
+    // ---------- app info (ticket 18) ----------
+
+    #[test]
+    fn app_info_reports_the_app_version_and_which_selector_config_is_live() {
+        let remote = crate::adapters::remote_config::LoadedSelectorConfig {
+            source: crate::core::ipc_types::SelectorConfigSource::Remote,
+            version: "9".into(),
+            config: crate::core::parser::SelectorConfig::default(),
+        };
+        let info = app_info_from("0.1.0".into(), &remote);
+        assert_eq!(info.app_version, "0.1.0");
+        assert_eq!(info.selector_config_version, "9");
+        assert_eq!(
+            info.selector_config_source,
+            crate::core::ipc_types::SelectorConfigSource::Remote
+        );
+
+        let bundled = crate::adapters::remote_config::bundled();
+        let info = app_info_from("0.1.0".into(), &bundled);
+        assert_eq!(info.selector_config_source, SelectorConfigSource::Bundled);
+        assert_eq!(info.selector_config_version, bundled.version);
+    }
+
     fn section_args() -> SectionInPlanArgs {
         SectionInPlanArgs { plan_id: "p1".into(), course_id: 2923, section_id: 384 }
     }
 
     /// Every command that is still a stub fails loudly and identifiably.
     /// `seed_sample_plan` (ticket 07), the capture-window pair (ticket 10),
-    /// and `export_plan_ics` (ticket 17) are implemented and are not asserted
-    /// here; their behavior is covered by the adapter and core tests.
+    /// `export_plan_ics` (ticket 17), and `get_app_info` (ticket 18) are
+    /// implemented and are not asserted here; their behavior is covered by
+    /// the adapter and core tests.
     #[test]
     fn every_command_fails_loudly_and_identifiably() {
         expect_unimplemented("get_campus_options", get_campus_options());
         expect_unimplemented("get_session_options", get_session_options());
-        expect_unimplemented("get_app_info", get_app_info());
         expect_unimplemented("list_plans", list_plans());
         expect_unimplemented("create_plan", create_plan(CreatePlanArgs {
             name: "T1".into(), campus_id: 7, session_id: 155,
