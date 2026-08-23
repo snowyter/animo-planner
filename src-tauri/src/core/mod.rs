@@ -1,6 +1,7 @@
 pub mod conflicts;
 pub mod ics;
 pub mod ipc_types;
+pub mod options;
 pub mod parser;
 pub mod refresh;
 pub mod sample_data;

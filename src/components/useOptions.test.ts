@@ -1,7 +1,6 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import * as client from "../adapters/ipc/client";
 import { useOptionsState } from "./useOptions";
-import { DEFAULT_CAMPUS_OPTIONS, DEFAULT_SESSION_OPTIONS } from "../core/options";
 
 vi.mock("../adapters/ipc/client", () => ({
   getCampusOptions: vi.fn(),
@@ -13,7 +12,7 @@ describe("useOptionsState", () => {
     vi.clearAllMocks();
   });
 
-  it("loads options from backend when available", async () => {
+  it("loads options from the backend, which is their single source", async () => {
     const mockCampuses = [{ id: 7, name: "Manila" }];
     const mockSessions = [{ id: 155, name: "AY2026-27 T1" }];
 
@@ -28,16 +27,25 @@ describe("useOptionsState", () => {
     expect(state.error).toBeNull();
   });
 
-  it("falls back to SPEC §2 default options when IPC throws unimplemented", async () => {
-    vi.mocked(client.getCampusOptions).mockRejectedValue("unimplemented: get_campus_options");
-    vi.mocked(client.getSessionOptions).mockRejectedValue("unimplemented: get_session_options");
+  it("starts empty and surfaces failures instead of masking them with hardcoded data", async () => {
+    // Rust owns these values since ticket 25; a failed fetch must show the
+    // error against empty lists rather than silently pretending a stale
+    // frontend copy is still true.
+    vi.mocked(client.getCampusOptions).mockRejectedValue(
+      "unimplemented: get_campus_options",
+    );
+    vi.mocked(client.getSessionOptions).mockRejectedValue(
+      "unimplemented: get_session_options",
+    );
 
     const state = useOptionsState();
+    expect(state.campusOptions).toEqual([]);
+    expect(state.sessionOptions).toEqual([]);
+
     await state.fetchOptions();
 
-    // Default fallback options covering SPEC §2
-    expect(state.campusOptions).toEqual(DEFAULT_CAMPUS_OPTIONS);
-    expect(state.sessionOptions).toEqual(DEFAULT_SESSION_OPTIONS);
+    expect(state.campusOptions).toEqual([]);
+    expect(state.sessionOptions).toEqual([]);
     expect(state.error).toBe("unimplemented: get_campus_options");
   });
 });

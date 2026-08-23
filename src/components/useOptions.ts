@@ -1,8 +1,12 @@
 import { useState, useCallback, useEffect } from "react";
 import * as client from "../adapters/ipc/client";
 import type { CampusOption, SessionOption } from "../adapters/ipc/types";
-import { DEFAULT_CAMPUS_OPTIONS, DEFAULT_SESSION_OPTIONS } from "../core/options";
 import { formatErrorMessage } from "../core/error";
+
+// The option values are owned by Rust (`get_campus_options` /
+// `get_session_options`) — the single source since ticket 25. A failed
+// fetch leaves the lists empty and surfaces the error; nothing here masks
+// a failure with a hardcoded copy that could silently drift.
 
 export interface OptionsState {
   campusOptions: CampusOption[];
@@ -13,8 +17,8 @@ export interface OptionsState {
 }
 
 export function useOptionsState(): OptionsState {
-  let campusOptions: CampusOption[] = DEFAULT_CAMPUS_OPTIONS;
-  let sessionOptions: SessionOption[] = DEFAULT_SESSION_OPTIONS;
+  let campusOptions: CampusOption[] = [];
+  let sessionOptions: SessionOption[] = [];
   let isLoading = false;
   let error: string | null = null;
 
@@ -38,23 +42,17 @@ export function useOptionsState(): OptionsState {
       let sessionErr: unknown = null;
 
       try {
-        const campuses = await client.getCampusOptions();
-        if (Array.isArray(campuses) && campuses.length > 0) {
-          campusOptions = campuses;
-        }
+        campusOptions = await client.getCampusOptions();
       } catch (err) {
         campusErr = err;
-        campusOptions = DEFAULT_CAMPUS_OPTIONS;
+        campusOptions = [];
       }
 
       try {
-        const sessions = await client.getSessionOptions();
-        if (Array.isArray(sessions) && sessions.length > 0) {
-          sessionOptions = sessions;
-        }
+        sessionOptions = await client.getSessionOptions();
       } catch (err) {
         sessionErr = err;
-        sessionOptions = DEFAULT_SESSION_OPTIONS;
+        sessionOptions = [];
       }
 
       if (campusErr || sessionErr) {
@@ -67,8 +65,8 @@ export function useOptionsState(): OptionsState {
 }
 
 export function useOptions() {
-  const [campusOptions, setCampusOptions] = useState<CampusOption[]>(DEFAULT_CAMPUS_OPTIONS);
-  const [sessionOptions, setSessionOptions] = useState<SessionOption[]>(DEFAULT_SESSION_OPTIONS);
+  const [campusOptions, setCampusOptions] = useState<CampusOption[]>([]);
+  const [sessionOptions, setSessionOptions] = useState<SessionOption[]>([]);
   const [isLoading, setIsLoading] = useState<boolean>(false);
   const [error, setError] = useState<string | null>(null);
 
@@ -79,23 +77,17 @@ export function useOptions() {
     let sessionErr: unknown = null;
 
     try {
-      const campuses = await client.getCampusOptions();
-      if (Array.isArray(campuses) && campuses.length > 0) {
-        setCampusOptions(campuses);
-      }
+      setCampusOptions(await client.getCampusOptions());
     } catch (err) {
       campusErr = err;
-      setCampusOptions(DEFAULT_CAMPUS_OPTIONS);
+      setCampusOptions([]);
     }
 
     try {
-      const sessions = await client.getSessionOptions();
-      if (Array.isArray(sessions) && sessions.length > 0) {
-        setSessionOptions(sessions);
-      }
+      setSessionOptions(await client.getSessionOptions());
     } catch (err) {
       sessionErr = err;
-      setSessionOptions(DEFAULT_SESSION_OPTIONS);
+      setSessionOptions([]);
     }
 
     if (campusErr || sessionErr) {

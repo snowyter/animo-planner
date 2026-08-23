@@ -1,40 +1,11 @@
 /**
- * Core campus and academic session domain options and plan input validation.
+ * Core plan input validation.
  *
- * Scoped to DLSU Archer's Hub options verified in SPEC.md §2.
+ * The campus and academic session option values live in Rust
+ * (`src-tauri/src/core/options.rs`) and cross the seam through
+ * `get_campus_options` / `get_session_options`. Rust is the single source
+ * of those names since ticket 25; this module deliberately holds no copy.
  */
-
-export interface CampusOption {
-  id: number;
-  name: string;
-}
-
-export interface SessionOption {
-  id: number;
-  name: string;
-}
-
-/**
- * Verified campus options from SPEC §2.
- * Manila=7, Laguna=8, Rufino=9
- */
-export const DEFAULT_CAMPUS_OPTIONS: CampusOption[] = [
-  { id: 7, name: "Manila" },
-  { id: 8, name: "Laguna" },
-  { id: 9, name: "Rufino" },
-];
-
-/**
- * Verified academic session options from SPEC §2.
- * AY2026-27 T1=155, T2=156, T3=157, Annual=144, SHS=161
- */
-export const DEFAULT_SESSION_OPTIONS: SessionOption[] = [
-  { id: 155, name: "AY2026-27 T1" },
-  { id: 156, name: "AY2026-27 T2" },
-  { id: 157, name: "AY2026-27 T3" },
-  { id: 144, name: "Annual" },
-  { id: 161, name: "SHS" },
-];
 
 export interface CreatePlanValidationResult {
   valid: boolean;

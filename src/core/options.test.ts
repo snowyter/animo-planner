@@ -1,43 +1,13 @@
 import { describe, expect, it } from "vitest";
-import {
-  DEFAULT_CAMPUS_OPTIONS,
-  DEFAULT_SESSION_OPTIONS,
-  validateCreatePlanInput,
-} from "./options";
+import { validateCreatePlanInput } from "./options";
 
-describe("options and plan input validation", () => {
-  describe("DEFAULT_CAMPUS_OPTIONS", () => {
-    it("covers the verified campus values from SPEC §2", () => {
-      const ids = DEFAULT_CAMPUS_OPTIONS.map((c) => c.id);
-      expect(ids).toContain(7); // Manila
-      expect(ids).toContain(8); // Laguna
-      expect(ids).toContain(9); // Rufino
+// The campus/session option values themselves live in Rust
+// (`src-tauri/src/core/options.rs`, served by `get_campus_options` /
+// `get_session_options`) — the single source since ticket 25. Restating
+// them here would be a second copy that can drift, so they are not tested
+// on this side.
 
-      const manila = DEFAULT_CAMPUS_OPTIONS.find((c) => c.id === 7);
-      expect(manila?.name).toBe("Manila");
-
-      const laguna = DEFAULT_CAMPUS_OPTIONS.find((c) => c.id === 8);
-      expect(laguna?.name).toBe("Laguna");
-
-      const rufino = DEFAULT_CAMPUS_OPTIONS.find((c) => c.id === 9);
-      expect(rufino?.name).toBe("Rufino");
-    });
-  });
-
-  describe("DEFAULT_SESSION_OPTIONS", () => {
-    it("covers the verified academic session values from SPEC §2", () => {
-      const ids = DEFAULT_SESSION_OPTIONS.map((s) => s.id);
-      expect(ids).toContain(155); // AY2026-27 T1
-      expect(ids).toContain(156); // AY2026-27 T2
-      expect(ids).toContain(157); // AY2026-27 T3
-      expect(ids).toContain(144); // Annual
-      expect(ids).toContain(161); // SHS
-
-      const t1 = DEFAULT_SESSION_OPTIONS.find((s) => s.id === 155);
-      expect(t1?.name).toBe("AY2026-27 T1");
-    });
-  });
-
+describe("plan input validation", () => {
   describe("validateCreatePlanInput", () => {
     it("returns valid when all three required fields are provided", () => {
       const result = validateCreatePlanInput({
