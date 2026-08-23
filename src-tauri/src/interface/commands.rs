@@ -15,6 +15,7 @@
 
 use crate::adapters::capture::CaptureEvents;
 use crate::adapters::capture_window;
+use crate::adapters::remote_config::{LoadedSelectorConfig, SelectorConfigHandle};
 use crate::adapters::sample_seed;
 use crate::adapters::store::{CaptureScope, PlanDetail, PlanSummaryRow, Store, StoreHandle};
 use crate::core::ics;
@@ -322,19 +323,6 @@ fn list_captured_sections_impl(
         .map_err(|err| err.to_string())
 }
 
-/// The About-screen facts (ticket 23): the app version plus which selector
-/// config is running. Ticket 18 owns the real config version; until it
-/// lands the bundled copy is reported honestly — `Bundled` source, and a
-/// version string that names the bundled config without inventing a number
-/// that would read as real.
-fn app_info(app_version: String) -> AppInfo {
-    AppInfo {
-        app_version,
-        selector_config_version: "bundled".to_string(),
-        selector_config_source: SelectorConfigSource::Bundled,
-    }
-}
-
 // ---------- commands: options & app info ----------
 
 #[tauri::command]
@@ -359,9 +347,27 @@ pub fn get_session_options() -> Result<Vec<SessionOption>, String> {
         .collect())
 }
 
+/// Reports the app version together with which selector config is live —
+/// its version and whether it came from the remote document or the bundled
+/// fallback (ticket 18). A bug report about broken capture is undiagnosable
+/// without these; they feed the About screen and report flow (SPEC §9).
 #[tauri::command]
-pub fn get_app_info(app: tauri::AppHandle) -> Result<AppInfo, String> {
-    Ok(app_info(app.package_info().version.to_string()))
+pub fn get_app_info(
+    app: tauri::AppHandle,
+    selector_config: tauri::State<'_, SelectorConfigHandle>,
+) -> Result<AppInfo, String> {
+    Ok(app_info_from(
+        app.package_info().version.to_string(),
+        &selector_config.loaded(),
+    ))
+}
+
+fn app_info_from(app_version: String, loaded: &LoadedSelectorConfig) -> AppInfo {
+    AppInfo {
+        app_version,
+        selector_config_version: loaded.version.clone(),
+        selector_config_source: loaded.source,
+    }
 }
 
 // ---------- commands: plans ----------
@@ -487,8 +493,14 @@ pub fn open_capture_window(
     args: CampusSessionArgs,
     app: tauri::AppHandle,
     listener: tauri::State<'_, crate::adapters::capture::CaptureListener>,
+    selector_config: tauri::State<'_, SelectorConfigHandle>,
 ) -> Result<(), String> {
-    capture_window::open_capture_window(&app, &listener, capture_scope(&args))
+    capture_window::open_capture_window(
+        &app,
+        &listener,
+        &selector_config.loaded().config,
+        capture_scope(&args),
+    )
 }
 
 #[tauri::command]
@@ -837,22 +849,24 @@ mod tests {
     }
 
     #[test]
-    fn app_info_reports_the_app_version_and_the_bundled_config_honestly() {
-        let info = app_info("9.9.9".into());
-        assert_eq!(info.app_version, "9.9.9");
+    fn app_info_reports_the_app_version_and_which_selector_config_is_live() {
+        let remote = crate::adapters::remote_config::LoadedSelectorConfig {
+            source: crate::core::ipc_types::SelectorConfigSource::Remote,
+            version: "9".into(),
+            config: crate::core::parser::SelectorConfig::default(),
+        };
+        let info = app_info_from("0.1.0".into(), &remote);
+        assert_eq!(info.app_version, "0.1.0");
+        assert_eq!(info.selector_config_version, "9");
+        assert_eq!(
+            info.selector_config_source,
+            crate::core::ipc_types::SelectorConfigSource::Remote
+        );
+
+        let bundled = crate::adapters::remote_config::bundled();
+        let info = app_info_from("0.1.0".into(), &bundled);
         assert_eq!(info.selector_config_source, SelectorConfigSource::Bundled);
-        assert_ne!(
-            info.selector_config_version, "",
-            "an empty version would read as broken data"
-        );
-        assert!(
-            !info
-                .selector_config_version
-                .chars()
-                .next()
-                .is_some_and(|c| c.is_ascii_digit()),
-            "the pre-ticket-18 version must not read like a real config version"
-        );
+        assert_eq!(info.selector_config_version, bundled.version);
     }
 
     #[test]

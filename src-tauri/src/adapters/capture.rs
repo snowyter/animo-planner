@@ -9,9 +9,10 @@
 //! ticket-05 store. Raw HTML exists only in the request body: the store
 //! receives typed parsed sections, so no HTML can ever be persisted.
 
+use crate::adapters::remote_config::CurrentSelectorConfig;
 use crate::adapters::store::{CaptureScope, StoreHandle};
 use crate::core::ipc_types::CaptureSummary;
-use crate::core::parser::{parse_results_table, CourseContext, SelectorConfig};
+use crate::core::parser::{parse_results_table, CourseContext};
 use axum::body::Bytes;
 use axum::extract::State;
 use axum::http::header::{self, AUTHORIZATION};
@@ -73,10 +74,11 @@ impl From<std::io::Error> for ListenerError {
 }
 
 #[derive(Clone)]
-struct ListenerState<E> {
+struct ListenerState<E, C> {
     store: StoreHandle,
     events: E,
     token: String,
+    config: C,
 }
 
 /// The bound endpoint: its loopback address and the per-launch token the
@@ -92,11 +94,16 @@ impl CaptureListener {
     /// token. The token lives only in memory for this launch; the address
     /// is loopback, so no other machine can reach the listener.
     ///
+    /// Captures are parsed with whatever selector config `config` serves —
+    /// the remote document once loaded, the bundled copy otherwise (ticket
+    /// 18) — never with selectors hardcoded at this call site.
+    ///
     /// Returns the endpoint metadata and the server to run: call
     /// `CaptureServer::serve` on the app's async runtime.
-    pub fn bind<E: CaptureEvents>(
+    pub fn bind<E: CaptureEvents, C: CurrentSelectorConfig>(
         store: StoreHandle,
         events: E,
+        config: C,
     ) -> Result<(CaptureListener, CaptureServer), ListenerError> {
         let listener = std::net::TcpListener::bind((Ipv4Addr::LOCALHOST, 0))?;
         listener.set_nonblocking(true)?;
@@ -107,9 +114,10 @@ impl CaptureListener {
             store,
             events,
             token: token.clone(),
+            config,
         };
         let app = Router::new()
-            .route("/capture", post(handle_capture::<E>).options(handle_preflight))
+            .route("/capture", post(handle_capture::<E, C>).options(handle_preflight))
             .with_state(state);
         Ok((
             CaptureListener { addr, token },
@@ -232,8 +240,8 @@ fn now_iso() -> String {
 }
 
 /// Rejects the request with a diagnostic body and announces the failure.
-fn reject<E: CaptureEvents>(
-    state: &ListenerState<E>,
+fn reject<E: CaptureEvents, C: CurrentSelectorConfig>(
+    state: &ListenerState<E, C>,
     origin: Option<HeaderValue>,
     status: StatusCode,
     message: String,
@@ -248,8 +256,8 @@ fn reject<E: CaptureEvents>(
 /// The one write route: authenticate, parse, store. Anything malformed or
 /// unparseable is rejected and stores nothing; the store's single
 /// transaction guarantees no partial rows on failure.
-async fn handle_capture<E: CaptureEvents>(
-    State(state): State<ListenerState<E>>,
+async fn handle_capture<E: CaptureEvents, C: CurrentSelectorConfig>(
+    State(state): State<ListenerState<E, C>>,
     headers: HeaderMap,
     body: Bytes,
 ) -> Response {
@@ -277,7 +285,9 @@ async fn handle_capture<E: CaptureEvents>(
         code: payload.course_code,
         title: payload.course_title,
     };
-    let parsed = match parse_results_table(&payload.html, &context, &SelectorConfig::default()) {
+    let selector_config = state.config.selector_config();
+    let parsed =
+        match parse_results_table(&payload.html, &context, &selector_config) {
         Ok(parsed) => parsed,
         Err(err) => {
             return reject(
@@ -495,7 +505,18 @@ mod tests {
     }
 
     fn bind(store: StoreHandle, events: RecordingEvents) -> (CaptureListener, CaptureServer) {
-        CaptureListener::bind(store, events).expect("listener must bind on loopback")
+        CaptureListener::bind(store, events, ()).expect("listener must bind on loopback")
+    }
+
+    fn bind_with_config<C>(
+        store: StoreHandle,
+        events: RecordingEvents,
+        config: C,
+    ) -> (CaptureListener, CaptureServer)
+    where
+        C: crate::adapters::remote_config::CurrentSelectorConfig,
+    {
+        CaptureListener::bind(store, events, config).expect("listener must bind on loopback")
     }
 
     fn spawn(server: CaptureServer) {
@@ -745,6 +766,77 @@ mod tests {
         assert!(!again, "there is nothing left to undo");
         let counts = summary(&store, 7, 155);
         assert_eq!((counts.section_count, counts.course_count), (5, 1));
+    }
+
+    // ---------- the loaded selector config drives parsing (ticket 18) ----------
+
+    /// A provider serving one fixed, non-default config: a results table
+    /// under a different id, as a renamed remote document would carry.
+    #[derive(Clone)]
+    struct FixedConfig(crate::core::parser::SelectorConfig);
+
+    impl crate::adapters::remote_config::CurrentSelectorConfig for FixedConfig {
+        fn selector_config(&self) -> crate::core::parser::SelectorConfig {
+            self.0.clone()
+        }
+    }
+
+    fn alt_table_payload() -> String {
+        let row = "<tr data-start-date=\"07/10/2026\" data-end-date=\"12/09/2026\">\
+                   <td>Lecture</td><td></td><td>3</td><td>S01</td>\
+                   <td>[ MONDAY - 04:15 PM - 05:45 PM : Room - A1103 ]</td>\
+                   <td>45</td><td>10</td><td></td><td><button>Add</button></td>\
+                   <td hidden>2923</td><td hidden>384</td><td hidden></td></tr>";
+        payload(
+            7,
+            155,
+            2923,
+            "CSINTSY",
+            "INTRODUCTION TO INTELLIGENT SYSTEMS",
+            &format!("<html><body><table id=\"altTable\"><tbody>{row}</tbody></table></body></html>"),
+        )
+    }
+
+    #[tokio::test]
+    async fn captures_are_parsed_with_the_loaded_selector_config_not_a_hardcoded_default() {
+        let custom = crate::core::parser::SelectorConfig {
+            results_table: "#altTable".into(),
+            ..crate::core::parser::SelectorConfig::default()
+        };
+        let store = in_memory_store();
+        let (listener, server) =
+            bind_with_config(store.clone(), RecordingEvents::default(), FixedConfig(custom));
+        spawn(server);
+
+        let (status, _) = raw_request(
+            listener.port(),
+            "POST",
+            "/capture",
+            &[("Authorization", &auth(listener.token()))],
+            alt_table_payload().as_bytes(),
+        )
+        .await;
+        assert_eq!(
+            status, 204,
+            "a capture matching the loaded config parses and stores"
+        );
+        assert_eq!(summary(&store, 7, 155).section_count, 1);
+
+        // The bundled-only default cannot see the renamed table.
+        let other_store = in_memory_store();
+        let (default_listener, default_server) =
+            bind_with_config(other_store.clone(), RecordingEvents::default(), ());
+        spawn(default_server);
+        let (status, _) = raw_request(
+            default_listener.port(),
+            "POST",
+            "/capture",
+            &[("Authorization", &auth(default_listener.token()))],
+            alt_table_payload().as_bytes(),
+        )
+        .await;
+        assert_eq!(status, 422, "the bundled config does not know #altTable");
+        assert_eq!(summary(&other_store, 7, 155).section_count, 0);
     }
 
     // ---------- the single route ----------

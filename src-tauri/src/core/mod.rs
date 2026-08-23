@@ -6,4 +6,5 @@ pub mod parser;
 pub mod refresh;
 pub mod sample_data;
 pub mod scoring;
+pub mod selector_config;
 pub mod solver;

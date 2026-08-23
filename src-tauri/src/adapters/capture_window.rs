@@ -70,12 +70,14 @@ impl CaptureWindowScope {
 ///
 /// The window gets its own data directory (persisted session) and the
 /// initialization script built from the listener's address and token, the
-/// scope, and the parser's selector config. Reopening with the same scope
+/// scope, and the currently loaded selector config — remote if it validated
+/// at startup, bundled otherwise (ticket 18). Reopening with the same scope
 /// focuses the existing window; a different scope closes it and starts a
 /// fresh window so captures cannot be misfiled across terms.
 pub fn open_capture_window(
     app: &AppHandle,
     listener: &CaptureListener,
+    selector_config: &SelectorConfig,
     scope: CaptureScope,
 ) -> Result<(), String> {
     let state = app.state::<CaptureWindowScope>();
@@ -96,7 +98,7 @@ pub fn open_capture_window(
         .map_err(|err| format!("failed to create the capture session directory: {err}"))?;
 
     let script = build_capture_script(
-        &SelectorConfig::default(),
+        selector_config,
         &endpoint_url(listener),
         listener.token(),
         scope.campus_id,
@@ -176,6 +178,7 @@ mod tests {
         let store = crate::adapters::store::Store::open_in_memory().expect("store");
         let (listener, server) = CaptureListener::bind(
             std::sync::Arc::new(std::sync::Mutex::new(store)),
+            (),
             (),
         )
         .expect("listener must bind");
