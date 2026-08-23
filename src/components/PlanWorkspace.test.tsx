@@ -195,4 +195,26 @@ describe("PlanWorkspace", () => {
     expect(html).toContain("GEARTAP");
     expect(html).toContain("No conflicts");
   });
+
+  it("renders SectionPicker with captured courses inside PlanWorkspace", () => {
+    const mockFullPlan: Plan = {
+      ...mockPlanSummary,
+      sections: [],
+    };
+
+    const html = renderToStaticMarkup(
+      React.createElement(PlanWorkspace, {
+        planSummary: mockPlanSummary,
+        plan: mockFullPlan,
+        isLoading: false,
+        error: null,
+        onBack: vi.fn(),
+        onRetry: vi.fn(),
+      })
+    );
+
+    expect(html).toContain("Pick my own sections");
+  });
 });
+
+

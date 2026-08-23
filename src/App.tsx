@@ -95,7 +95,12 @@ function AppContent() {
             error={planDetailError}
             onBack={onBackToPlans}
             onRetry={refreshPlan}
+            onPlanUpdated={() => {
+              refreshPlan();
+              fetchPlans();
+            }}
           />
+
         ) : (
           <PlanList
             plans={plans}

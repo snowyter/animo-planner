@@ -1,22 +1,23 @@
-import { useMemo } from "react";
+import { useState, useMemo } from "react";
 import {
   Building2,
   Calendar,
   AlertCircle,
   RefreshCw,
-  Search,
-  Sparkles,
   Layers,
   Clock,
   AlertTriangle,
   CheckCircle2,
+  Sparkles,
 } from "lucide-react";
+
 import { Button } from "./ui/button";
 import { Badge } from "./ui/badge";
-import { Card, CardHeader, CardTitle, CardDescription, CardContent } from "./ui/card";
 import { Alert, AlertTitle, AlertDescription } from "./ui/alert";
 import { WeekGrid } from "./WeekGrid";
-import type { Plan, PlanSummary } from "../adapters/ipc/types";
+import { SectionPicker } from "./SectionPicker";
+import { useSectionPicker } from "./useSectionPicker";
+import type { Plan, PlanSummary, Section } from "../adapters/ipc/types";
 import { formatSectionCount } from "../core/plan";
 import { findConflicts } from "../core/conflicts";
 
@@ -27,6 +28,7 @@ export interface PlanWorkspaceProps {
   error: string | null;
   onBack: () => void;
   onRetry: () => void;
+  onPlanUpdated?: (plan: Plan) => void;
 }
 
 export function PlanWorkspace({
@@ -35,12 +37,64 @@ export function PlanWorkspace({
   isLoading,
   error,
   onRetry,
+  onPlanUpdated,
 }: PlanWorkspaceProps) {
+  const [hoveredSection, setHoveredSection] = useState<Section | null>(null);
+
   const currentSections = plan?.sections ?? [];
 
   const conflicts = useMemo(() => {
     return findConflicts(currentSections);
   }, [currentSections]);
+
+  const {
+    courses,
+    selectedCourseId,
+    sections,
+    isLoadingCourses,
+    isLoadingSections,
+    isMutating,
+    error: pickerError,
+    selectCourse,
+    addSection,
+    removeSection,
+    togglePin,
+  } = useSectionPicker({
+    campusId: planSummary.campusId,
+    sessionId: planSummary.sessionId,
+    planId: planSummary.id,
+    onPlanUpdated: (updatedPlan) => {
+      onPlanUpdated?.(updatedPlan);
+      onRetry();
+    },
+  });
+
+  const handleAddSection = async (section: Section) => {
+    try {
+      await addSection(section);
+      onRetry();
+    } catch {
+      // Error handled in picker state
+    }
+  };
+
+  const handleRemoveSection = async (section: Section) => {
+    try {
+      await removeSection(section);
+      onRetry();
+    } catch {
+      // Error handled in picker state
+    }
+  };
+
+  const handleTogglePin = async (section: Section, pinned: boolean) => {
+    try {
+      await togglePin(section, pinned);
+      onRetry();
+    } catch {
+      // Error handled in picker state
+    }
+  };
 
   return (
     <div className="mx-auto max-w-7xl px-4 py-6 sm:px-6 lg:px-8 space-y-6">
@@ -137,58 +191,71 @@ export function PlanWorkspace({
         </div>
       )}
 
-      {/* Entry Points & Actions (SPEC §7, ADR-0014) */}
-      <div className="grid grid-cols-1 md:grid-cols-2 gap-5">
-        <Card className="hover:border-slate-300 transition-colors">
-          <CardHeader>
-            <div className="flex h-10 w-10 items-center justify-center rounded-lg bg-emerald-50 text-emerald-700 mb-2">
-              <Search className="h-5 w-5" />
+      {/* Main workspace layout: Section Picker + Week Grid (SPEC §7, ADR-0011, ADR-0012, ADR-0014) */}
+      <div className="space-y-6">
+        {/* Solver affordance / Entry point ("Let the solver build it" / "Solve the rest") */}
+        <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3 rounded-xl border border-blue-100 bg-blue-50/50 p-4">
+          <div className="flex items-start sm:items-center gap-3">
+            <div className="flex h-9 w-9 items-center justify-center rounded-lg bg-blue-100 text-blue-700 shrink-0">
+              <Sparkles className="h-4 w-4" />
             </div>
-            <CardTitle className="text-lg">Pick my own sections</CardTitle>
-            <CardDescription>
-              Browse captured courses and sections for {planSummary.campusName} • {planSummary.sessionName},
-              preview ghosts on the week grid, and select sections manually.
-            </CardDescription>
-          </CardHeader>
-          <CardContent>
-            <Button variant="outline" className="w-full sm:w-auto" disabled={isLoading}>
-              Browse Sections
-            </Button>
-          </CardContent>
-        </Card>
-
-        <Card className="hover:border-slate-300 transition-colors">
-          <CardHeader>
-            <div className="flex h-10 w-10 items-center justify-center rounded-lg bg-blue-50 text-blue-700 mb-2">
-              <Sparkles className="h-5 w-5" />
+            <div>
+              <h4 className="text-sm font-semibold text-slate-900">
+                Let the solver build it
+              </h4>
+              <p className="text-xs text-slate-500">
+                Solve conflict-free combinations filled around your choices.
+              </p>
             </div>
-            <CardTitle className="text-lg">Let the solver build it</CardTitle>
-            <CardDescription>
-              Automatically solve conflict-free schedule combinations using ranking
-              presets (fewest campus days, no early mornings, most online).
-            </CardDescription>
-          </CardHeader>
-          <CardContent>
-            <Button variant="outline" className="w-full sm:w-auto" disabled={isLoading}>
-              Solve Schedule
-            </Button>
-          </CardContent>
-        </Card>
-      </div>
-
-      {/* Week Grid (SPEC §7, ADR-0011, ADR-0012) */}
-      <div className="space-y-3">
-        <div className="flex items-center justify-between">
-          <h3 className="text-base font-semibold text-slate-900">Weekly Schedule</h3>
-          <span className="text-xs text-slate-500">
-            {currentSections.length === 0
-              ? "No sections added yet"
-              : formatSectionCount(currentSections.length)}
-          </span>
+          </div>
+          <Button
+            variant="outline"
+            size="sm"
+            disabled={isLoading}
+            className="text-xs shrink-0 bg-white hover:bg-slate-50 text-blue-700 border-blue-200"
+          >
+            <Sparkles className="h-3.5 w-3.5 mr-1" />
+            Solve the rest
+          </Button>
         </div>
 
-        <WeekGrid sections={currentSections} conflicts={conflicts} />
+        {/* Section Picker (Ticket 13: default entry point for browsing & picking sections) */}
+        <SectionPicker
+          courses={courses}
+          selectedCourseId={selectedCourseId}
+          sections={sections}
+          planSections={currentSections}
+          isLoadingCourses={isLoadingCourses}
+          isLoadingSections={isLoadingSections}
+          isMutating={isMutating}
+          error={pickerError}
+          onSelectCourse={selectCourse}
+          onAddSection={handleAddSection}
+          onRemoveSection={handleRemoveSection}
+          onTogglePin={handleTogglePin}
+          onHoverSection={setHoveredSection}
+        />
+
+
+        {/* Week Grid */}
+        <div className="space-y-3">
+          <div className="flex items-center justify-between">
+            <h3 className="text-base font-semibold text-slate-900">Weekly Schedule</h3>
+            <span className="text-xs text-slate-500">
+              {currentSections.length === 0
+                ? "No sections added yet"
+                : formatSectionCount(currentSections.length)}
+            </span>
+          </div>
+
+          <WeekGrid
+            sections={currentSections}
+            ghostSection={hoveredSection}
+            conflicts={conflicts}
+          />
+        </div>
       </div>
     </div>
   );
 }
+
