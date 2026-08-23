@@ -166,6 +166,39 @@ mod tests {
     }
 
     #[test]
+    fn the_seeded_sample_plan_exports_a_valid_ics_calendar() {
+        // The full ticket-17 path over real captures: seed → load → serialise.
+        let mut store = store();
+        seed_sample_plan(&mut store, T1).expect("seed");
+
+        let plan = store
+            .load_plan_ics_export(sample_data::SAMPLE_PLAN_ID)
+            .expect("every seeded section must carry its term dates");
+        assert_eq!(plan.name, sample_data::SAMPLE_PLAN_NAME);
+        assert_eq!(plan.sections.len(), 47);
+
+        let out = crate::core::ics::export_plan_ics(
+            &plan.name,
+            &plan.sections,
+            chrono::Utc::now(),
+        );
+        assert_eq!(
+            out.contents.matches("BEGIN:VEVENT").count(),
+            94,
+            "one event per schedule block across all 47 sections"
+        );
+        assert!(
+            out.contents.contains("BYDAY=SA"),
+            "Saturday meetings recur on Saturday"
+        );
+        assert!(
+            !out.contents.contains("\r\nDTSTART:"),
+            "no floating event times"
+        );
+        assert!(out.contents.starts_with("BEGIN:VCALENDAR\r\n"));
+    }
+
+    #[test]
     fn the_sample_plan_differs_from_student_plans_only_by_the_marker() {
         let mut store = store();
         seed_sample_plan(&mut store, T1).expect("seed");

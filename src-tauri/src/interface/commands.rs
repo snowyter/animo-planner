@@ -6,7 +6,8 @@
 //! empty or plausible-looking data, so no UI ticket can be declared finished
 //! against a command that does nothing. `seed_sample_plan` is implemented
 //! (ticket 07), as are the capture-window pair `open_capture_window` and
-//! `clear_browser_session` (ticket 10); the rest remain stubs.
+//! `clear_browser_session` (ticket 10) and `export_plan_ics` (ticket 17);
+//! the rest remain stubs.
 //!
 //! Amendment protocol: `docs/ipc-contract.md` is the single source of truth.
 //! A signature change updates this file and `src/adapters/ipc/` in the same
@@ -16,6 +17,7 @@ use crate::adapters::capture::CaptureEvents;
 use crate::adapters::capture_window;
 use crate::adapters::sample_seed;
 use crate::adapters::store::{CaptureScope, StoreHandle};
+use crate::core::ics;
 use crate::core::ipc_types::*;
 use serde::Deserialize;
 use tauri::Emitter;
@@ -286,9 +288,23 @@ pub fn get_missing_sections(_args: PlanIdArgs) -> Result<Vec<MissingSection>, St
     Err(unimplemented("get_missing_sections"))
 }
 
+/// Exports a plan as an `.ics` calendar file (ticket 17). Pure Rust, no
+/// network: the plan is read from the local store and serialised by the
+/// core exporter, so the export works with no connection at all.
 #[tauri::command]
-pub fn export_plan_ics(_args: PlanIdArgs) -> Result<IcsExport, String> {
-    Err(unimplemented("export_plan_ics"))
+pub fn export_plan_ics(
+    args: PlanIdArgs,
+    store: tauri::State<'_, StoreHandle>,
+) -> Result<IcsExport, String> {
+    let store = store.lock().unwrap_or_else(|poisoned| poisoned.into_inner());
+    let plan = store
+        .load_plan_ics_export(&args.plan_id)
+        .map_err(|err| err.to_string())?;
+    Ok(ics::export_plan_ics(
+        &plan.name,
+        &plan.sections,
+        chrono::Utc::now(),
+    ))
 }
 
 #[tauri::command]
@@ -342,9 +358,9 @@ mod tests {
     }
 
     /// Every command that is still a stub fails loudly and identifiably.
-    /// `seed_sample_plan` (ticket 07) and the capture-window pair (ticket 10)
-    /// are implemented and are not asserted here; their behavior is covered
-    /// by the adapter tests.
+    /// `seed_sample_plan` (ticket 07), the capture-window pair (ticket 10),
+    /// and `export_plan_ics` (ticket 17) are implemented and are not asserted
+    /// here; their behavior is covered by the adapter and core tests.
     #[test]
     fn every_command_fails_loudly_and_identifiably() {
         expect_unimplemented("get_campus_options", get_campus_options());
@@ -389,7 +405,6 @@ mod tests {
         expect_unimplemented("start_refresh", block_on(start_refresh(simple_args())));
         expect_unimplemented("resume_refresh", block_on(resume_refresh(simple_args())));
         expect_unimplemented("get_missing_sections", get_missing_sections(simple_args()));
-        expect_unimplemented("export_plan_ics", export_plan_ics(simple_args()));
         expect_unimplemented("build_capture_report", build_capture_report(BuildCaptureReportArgs {
             error: "boom".into(), fragment: "<td></td>".into(),
         }));
