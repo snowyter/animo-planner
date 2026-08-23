@@ -275,4 +275,82 @@ describe("WeekGrid component", () => {
     expect(html).toContain("COURSE_B");
     expect(html).toContain("data-conflicting=\"true\"");
   });
+
+  it("renders a ghost section with data-ghost='true' and preview styling", () => {
+    const planSection = makeSection(
+      2923,
+      384,
+      "GEARTAP",
+      "S11",
+      [makeBlock("MON", 450, 540, "F2F", "L226")]
+    );
+
+    const ghostCandidate = makeSection(
+      564,
+      737,
+      "CSINTSY",
+      "Z01",
+      [makeBlock("WED", 450, 540, "ONLINE")]
+    );
+
+    const html = renderToStaticMarkup(
+      React.createElement(WeekGrid, {
+        sections: [planSection],
+        ghostSection: ghostCandidate,
+      })
+    );
+
+    expect(html).toContain("data-ghost=\"true\"");
+    expect(html).toContain("CSINTSY");
+    expect(html).toContain("Z01");
+  });
+
+  it("renders ghost section as conflicting and hatched when overlapping with a plan section", () => {
+    const planSection = makeSection(
+      2923,
+      384,
+      "GEARTAP",
+      "S11",
+      [makeBlock("MON", 450, 540, "F2F", "L226")]
+    );
+
+    const ghostConflicting = makeSection(
+      564,
+      737,
+      "CSINTSY",
+      "Z01",
+      [makeBlock("MON", 480, 570, "ONLINE")]
+    );
+
+    const html = renderToStaticMarkup(
+      React.createElement(WeekGrid, {
+        sections: [planSection],
+        ghostSection: ghostConflicting,
+      })
+    );
+
+    expect(html).toContain("data-ghost=\"true\"");
+    expect(html).toContain("data-conflicting=\"true\"");
+    expect(html).toContain("hatched");
+  });
+
+  it("does not render ghost blocks when ghostSection is null", () => {
+    const planSection = makeSection(
+      2923,
+      384,
+      "GEARTAP",
+      "S11",
+      [makeBlock("MON", 450, 540, "F2F", "L226")]
+    );
+
+    const html = renderToStaticMarkup(
+      React.createElement(WeekGrid, {
+        sections: [planSection],
+        ghostSection: null,
+      })
+    );
+
+    expect(html).not.toContain("data-ghost=\"true\"");
+  });
 });
+

@@ -18,7 +18,7 @@ import {
   Pin,
   AlertTriangle,
 } from "lucide-react";
-import type { Conflict, Day, PlanSection, ScheduleBlock } from "../adapters/ipc/types";
+import type { Conflict, Day, PlanSection, ScheduleBlock, Section } from "../adapters/ipc/types";
 import {
   DAYS,
   DAY_INFOS,
@@ -31,30 +31,41 @@ import {
 } from "../core/grid";
 import { getCourseTheme } from "../core/palette";
 import { findConflicts, isBlockConflicting } from "../core/conflicts";
+import { findCandidateConflicts } from "../core/section";
 
 export interface WeekGridProps {
   sections: PlanSection[];
+  ghostSection?: Section | PlanSection | null;
   conflicts?: Conflict[];
   onSelectSection?: (section: PlanSection) => void;
   className?: string;
 }
 
 interface FlattenedBlock {
-  section: PlanSection;
+  section: PlanSection | Section;
   block: ScheduleBlock;
   isConflicting: boolean;
+  isGhost: boolean;
 }
+
 
 export function WeekGrid({
   sections,
+  ghostSection,
   conflicts: propConflicts,
   onSelectSection,
   className = "",
 }: WeekGridProps) {
-  // Compute conflicts if not provided via props
+  // Compute conflicts for plan sections if not provided via props
   const conflicts = useMemo(() => {
     return propConflicts ?? findConflicts(sections);
   }, [propConflicts, sections]);
+
+  // Compute ghost conflicts against current plan sections
+  const ghostConflicts = useMemo(() => {
+    if (!ghostSection) return [];
+    return findCandidateConflicts(ghostSection, sections);
+  }, [ghostSection, sections]);
 
   // Extract unique course IDs for consistent palette distribution
   const uniqueCourseIds = useMemo(() => {
@@ -64,13 +75,20 @@ export function WeekGrid({
         ids.push(section.courseId);
       }
     }
+    if (ghostSection && !ids.includes(ghostSection.courseId)) {
+      ids.push(ghostSection.courseId);
+    }
     return ids;
-  }, [sections]);
+  }, [sections, ghostSection]);
 
   // Extract all blocks to compute dynamic time bounds
   const allBlocks = useMemo(() => {
-    return sections.flatMap((s) => s.blocks);
-  }, [sections]);
+    const blocks = sections.flatMap((s) => s.blocks);
+    if (ghostSection) {
+      blocks.push(...ghostSection.blocks);
+    }
+    return blocks;
+  }, [sections, ghostSection]);
 
   const timeBounds = useMemo(() => {
     return getGridTimeBounds(allBlocks);
@@ -98,12 +116,41 @@ export function WeekGrid({
           section,
           block,
           isConflicting,
+          isGhost: false,
+        });
+      }
+    }
+
+    // Add ghost blocks if ghostSection is present and not already in plan
+    if (
+      ghostSection &&
+      !sections.some(
+        (s) =>
+          s.courseId === ghostSection.courseId &&
+          s.sectionId === ghostSection.sectionId
+      )
+    ) {
+      for (const block of ghostSection.blocks) {
+        const isConflicting = isBlockConflicting(
+          block,
+          {
+            courseId: ghostSection.courseId,
+            sectionId: ghostSection.sectionId,
+          },
+          ghostConflicts
+        );
+        map[block.day].push({
+          section: ghostSection,
+          block,
+          isConflicting,
+          isGhost: true,
         });
       }
     }
 
     return map;
-  }, [sections, conflicts]);
+  }, [sections, conflicts, ghostSection, ghostConflicts]);
+
 
   return (
     <div
@@ -190,7 +237,7 @@ export function WeekGrid({
                   key={day}
                   className="relative border-r last:border-r-0 border-slate-200 min-h-[640px] p-1"
                 >
-                  {dayBlocks.map(({ section, block, isConflicting }) => {
+                  {dayBlocks.map(({ section, block, isConflicting, isGhost }) => {
                     const pos = computeBlockPosition(
                       block.startMin,
                       block.endMin,
@@ -200,9 +247,9 @@ export function WeekGrid({
 
                     const theme = getCourseTheme(section.courseId, uniqueCourseIds);
                     const isF2F = block.modality === "F2F";
-                    const isPinned = section.pinned;
+                    const isPinned = !isGhost && ("pinned" in section ? section.pinned : false);
                     const enrolled = section.latestSnapshot?.enrolled ?? 0;
-                    const enrollCap = (section as unknown as { enrollCap?: number }).enrollCap;
+                    const enrollCap = "enrollCap" in section ? (section.enrollCap as number | undefined) : undefined;
                     const enrollLabel = enrollCap !== undefined ? `${enrolled}/${enrollCap}` : `${enrolled}`;
 
                     // Border style for modality: solid for F2F, dashed for ONLINE
@@ -210,8 +257,10 @@ export function WeekGrid({
                       ? "border-l-solid border-l-[4px]"
                       : "border-l-dashed border-l-[4px]";
 
-                    // Pinned vs tentative styling
-                    const pinClass = isPinned
+                    // Pinned vs tentative vs ghost styling
+                    const visualClass = isGhost
+                      ? "opacity-75 ring-2 ring-dashed ring-slate-400/70 shadow-sm"
+                      : isPinned
                       ? "ring-1 ring-slate-400/50 shadow-xs opacity-100"
                       : "opacity-95";
 
@@ -229,12 +278,17 @@ export function WeekGrid({
 
                     return (
                       <div
-                        key={`${section.courseId}-${section.sectionId}-${block.day}-${block.startMin}`}
+                        key={`${isGhost ? "ghost-" : ""}${section.courseId}-${section.sectionId}-${block.day}-${block.startMin}`}
                         data-pinned={isPinned ? "true" : "false"}
+                        data-ghost={isGhost ? "true" : "false"}
                         data-conflicting={isConflicting ? "true" : "false"}
                         data-modality={block.modality}
-                        onClick={() => onSelectSection?.(section)}
-                        className={`absolute inset-x-1 rounded-md p-2 flex flex-col justify-between overflow-hidden transition-all duration-150 cursor-pointer select-none ${theme.bgClass} ${theme.borderClass} ${theme.textClass} ${borderStyleClass} ${pinClass} ${conflictClass}`}
+                        onClick={() => {
+                          if (!isGhost && onSelectSection && "pinned" in section && "missing" in section) {
+                            onSelectSection(section as PlanSection);
+                          }
+                        }}
+                        className={`absolute inset-x-1 rounded-md p-2 flex flex-col justify-between overflow-hidden transition-all duration-150 ${isGhost ? "cursor-default pointer-events-none" : "cursor-pointer"} select-none ${theme.bgClass} ${theme.borderClass} ${theme.textClass} ${borderStyleClass} ${visualClass} ${conflictClass}`}
                         style={{
                           top: `${pos.topPercent}%`,
                           height: `calc(${pos.heightPercent}% - 4px)`,
@@ -243,7 +297,7 @@ export function WeekGrid({
                           borderLeftStyle: isF2F ? "solid" : "dashed",
                           ...hatchedBgStyle,
                         }}
-                        title={`${section.courseCode} ${section.sectionCode} (${formatMinutesRange(block.startMin, block.endMin)}) — ${isF2F ? block.location ?? "Room" : "Online"}`}
+                        title={`${section.courseCode} ${section.sectionCode} (${formatMinutesRange(block.startMin, block.endMin)}) — ${isF2F ? block.location ?? "Room" : "Online"}${isGhost ? " [Preview]" : ""}`}
                       >
                         {/* Top row: Course Code, Section Code, Badges */}
                         <div className="flex items-start justify-between gap-1 leading-tight">
@@ -254,6 +308,11 @@ export function WeekGrid({
                             <span className="text-[11px] font-medium opacity-75">
                               {section.sectionCode}
                             </span>
+                            {isGhost && (
+                              <span className="text-[9px] uppercase tracking-wider font-semibold opacity-75 bg-black/5 dark:bg-white/10 px-1 rounded ml-0.5">
+                                Preview
+                              </span>
+                            )}
                           </div>
 
                           <div className="flex items-center gap-1 shrink-0">
@@ -304,6 +363,7 @@ export function WeekGrid({
                       </div>
                     );
                   })}
+
                 </div>
               );
             })}
