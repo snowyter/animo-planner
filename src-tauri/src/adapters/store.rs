@@ -1,5 +1,6 @@
-//! SQLite persistence for captured sections (ticket 05) and plan membership
-//! with conflict computation (ticket 08).
+//! SQLite persistence for captured sections (ticket 05), plan membership
+//! with conflict computation (ticket 08), and refresh with missing-section
+//! flags (ticket 16).
 //!
 //! This is the storage layer for SPEC §5: parsed sections are upserted on
 //! their natural key, every capture appends a point-in-time snapshot, and
@@ -28,9 +29,14 @@
 //! dates. A later ticket can add them as a migration.
 
 use crate::core::conflicts::{self, PlannedBlock, PlannedSection};
-use crate::core::ipc_types::{CaptureSummary, Conflict, Day};
+use crate::core::ipc_types::{
+    BlockModality, CaptureSummary, Conflict, Day, MissingSection, ScheduleBlock, Section,
+    SectionModality, Snapshot,
+};
 use crate::core::parser::{ParsedBlock, ParsedSection};
+use crate::core::refresh::RefreshCourse;
 use rusqlite::{Connection, OptionalExtension, Transaction};
+use std::collections::HashSet;
 use std::path::Path;
 use std::sync::{Arc, Mutex};
 
@@ -82,6 +88,13 @@ pub enum StoreError {
         course_id: i64,
         section_id: i64,
     },
+    /// Every section row is written with its first snapshot in the same
+    /// transaction; a section row without any snapshot violates that
+    /// invariant and cannot produce a wire `Section`.
+    SectionHasNoSnapshots {
+        course_id: i64,
+        section_id: i64,
+    },
 }
 
 impl std::fmt::Display for StoreError {
@@ -115,6 +128,14 @@ impl std::fmt::Display for StoreError {
             } => write!(
                 f,
                 "section (course {course_id}, section {section_id}) is not in plan {plan_id:?}"
+            ),
+            StoreError::SectionHasNoSnapshots {
+                course_id,
+                section_id,
+            } => write!(
+                f,
+                "section (course {course_id}, section {section_id}) has no snapshots and \
+                 cannot be read"
             ),
         }
     }
@@ -199,7 +220,15 @@ const MIGRATION_V2: &str = r#"
 ALTER TABLE plans ADD COLUMN is_sample INTEGER NOT NULL DEFAULT 0 CHECK (is_sample IN (0, 1));
 "#;
 
-const MIGRATIONS: &[&str] = &[MIGRATION_V1, MIGRATION_V2];
+/// Migration 3 (ticket 16): plan membership gains a missing marker. Refresh
+/// flags a plan section that no longer appears in its course's results —
+/// never deletes it (ADR-0008). Memberships created before v3 default to
+/// `0` (present).
+const MIGRATION_V3: &str = r#"
+ALTER TABLE plan_sections ADD COLUMN missing INTEGER NOT NULL DEFAULT 0 CHECK (missing IN (0, 1));
+"#;
+
+const MIGRATIONS: &[&str] = &[MIGRATION_V1, MIGRATION_V2, MIGRATION_V3];
 
 /// Runs every migration not yet applied, tracked by `PRAGMA user_version`.
 /// Idempotent: safe to run on a fresh database and on an existing one.
@@ -672,6 +701,156 @@ impl Store {
 
         plan_summary_row(&self.conn, plan_id)
     }
+
+    /// The courses a refresh must re-run, in plan order: every course with
+    /// at least one plan section, carrying the plan's section ids for that
+    /// course so missing sections can be detected. Only courses in the plan
+    /// are returned — refresh never walks the catalog.
+    pub fn refresh_courses(&self, plan_id: &str) -> Result<Vec<RefreshCourse>, StoreError> {
+        let _ = plan_scope(&self.conn, plan_id)?;
+        let mut stmt = self.conn.prepare(
+            "SELECT c.course_id, c.code, s.section_id
+             FROM plan_sections ps
+             JOIN sections s ON s.id = ps.section_fk
+             JOIN courses c ON c.campus_id = s.campus_id AND c.session_id = s.session_id
+                 AND c.course_id = s.course_id
+             WHERE ps.plan_id = ?1
+             ORDER BY c.course_id, s.section_id",
+        )?;
+        let rows = stmt.query_map([plan_id], |row| {
+            Ok((
+                row.get::<_, i64>(0)?,
+                row.get::<_, String>(1)?,
+                row.get::<_, i64>(2)?,
+            ))
+        })?;
+        let mut courses: Vec<RefreshCourse> = Vec::new();
+        for row in rows {
+            let (course_id, code, section_id) = row?;
+            match courses.last_mut() {
+                Some(last) if last.course_id == course_id => {
+                    last.plan_section_ids.push(section_id);
+                }
+                _ => courses.push(RefreshCourse {
+                    course_id,
+                    code,
+                    plan_section_ids: vec![section_id],
+                }),
+            }
+        }
+        Ok(courses)
+    }
+
+    /// Records one refreshed course: appends snapshots for every section in
+    /// the fresh results (deduped on the natural key, history preserved) and
+    /// flags plan sections of this course that no longer appear as missing.
+    /// Sections are never deleted — vanishing only flips the flag (ADR-0008).
+    ///
+    /// The whole step is one transaction, so snapshots and missing flags can
+    /// never disagree. Refresh deliberately does not join the undo journal:
+    /// undo reverses capture batches, never an explicit refresh.
+    pub fn apply_refresh(
+        &mut self,
+        plan_id: &str,
+        course_id: i64,
+        sections: &[ParsedSection],
+        captured_at: &str,
+    ) -> Result<(), StoreError> {
+        let (plan_campus, plan_session) = plan_scope(&self.conn, plan_id)?;
+        let scope = CaptureScope {
+            campus_id: plan_campus,
+            session_id: plan_session,
+        };
+        let tx = self.conn.transaction()?;
+        record_capture_tx(&tx, &scope, sections, captured_at)?;
+
+        let present: HashSet<i64> = sections.iter().map(|section| section.section_id).collect();
+        let members: Vec<(i64, i64)> = {
+            let mut stmt = tx.prepare(
+                "SELECT ps.section_fk, s.section_id
+                 FROM plan_sections ps
+                 JOIN sections s ON s.id = ps.section_fk
+                 WHERE ps.plan_id = ?1 AND s.course_id = ?2",
+            )?;
+            let rows = stmt.query_map(rusqlite::params![plan_id, course_id], |row| {
+                Ok((row.get::<_, i64>(0)?, row.get::<_, i64>(1)?))
+            })?;
+            rows.collect::<Result<Vec<_>, _>>()?
+        };
+        for (section_fk, section_id) in members {
+            tx.execute(
+                "UPDATE plan_sections SET missing = ?3 WHERE plan_id = ?1 AND section_fk = ?2",
+                rusqlite::params![plan_id, section_fk, i64::from(!present.contains(&section_id))],
+            )?;
+        }
+        tx.commit()?;
+        Ok(())
+    }
+
+    /// Every plan section flagged missing, with the alternatives the banner
+    /// will surface: other captured sections of the same course under the
+    /// plan's scope, excluding the missing section itself (ticket 21).
+    pub fn missing_sections(&self, plan_id: &str) -> Result<Vec<MissingSection>, StoreError> {
+        let (campus_id, session_id) = plan_scope(&self.conn, plan_id)?;
+        let missing_rows: Vec<(i64, i64, String)> = {
+            let mut stmt = self.conn.prepare(
+                "SELECT s.course_id, s.section_id, s.section_code
+                 FROM plan_sections ps
+                 JOIN sections s ON s.id = ps.section_fk
+                 WHERE ps.plan_id = ?1 AND ps.missing = 1
+                 ORDER BY s.course_id, s.section_id",
+            )?;
+            let rows = stmt.query_map([plan_id], |row| {
+                Ok((
+                    row.get::<_, i64>(0)?,
+                    row.get::<_, i64>(1)?,
+                    row.get::<_, String>(2)?,
+                ))
+            })?;
+            rows.collect::<Result<Vec<_>, _>>()?
+        };
+        let mut result = Vec::new();
+        for (course_id, section_id, section_code) in missing_rows {
+            let alternatives =
+                self.alternatives_for(campus_id, session_id, course_id, section_id)?;
+            result.push(MissingSection {
+                course_id,
+                section_id,
+                section_code,
+                alternatives,
+            });
+        }
+        Ok(result)
+    }
+
+    /// Other captured sections of the same course under the plan's scope,
+    /// excluding the missing section itself — the options the banner
+    /// surfaces so the student can act rather than just be informed.
+    fn alternatives_for(
+        &self,
+        campus_id: i64,
+        session_id: i64,
+        course_id: i64,
+        missing_section_id: i64,
+    ) -> Result<Vec<Section>, StoreError> {
+        let section_fks: Vec<i64> = {
+            let mut stmt = self.conn.prepare(
+                "SELECT id FROM sections
+                 WHERE campus_id = ?1 AND session_id = ?2 AND course_id = ?3
+                   AND section_id != ?4
+                 ORDER BY section_id",
+            )?;
+            let rows = stmt.query_map(
+                rusqlite::params![campus_id, session_id, course_id, missing_section_id],
+                |row| row.get::<_, i64>(0),
+            )?;
+            rows.collect::<Result<Vec<_>, _>>()?
+        };
+        section_fks
+            .iter()
+            .map(|section_fk| section_view(&self.conn, *section_fk))
+            .collect()
+    }
 }
 
 fn record_capture_tx(
@@ -1000,6 +1179,165 @@ fn append_snapshot(
     Ok(tx.last_insert_rowid())
 }
 
+/// Reads one section row into the wire [`Section`] view: course identity,
+/// schedule blocks with per-block modality, and the latest snapshot.
+///
+/// Start/end dates are deliberately not persisted (ticket 05), so they
+/// surface as `None`. The wire type's `enroll_cap` and snapshot `enrolled`
+/// are plain numbers, so blank (unknown) values surface as `0` — the
+/// alternative would be amending the IPC contract.
+fn section_view(conn: &Connection, section_fk: i64) -> Result<Section, StoreError> {
+    let (campus_id, session_id, course_id, course_code, course_title, section_id, section_code,
+         course_type, credits, enroll_cap, first_seen_at, last_seen_at) = conn.query_row(
+        "SELECT s.campus_id, s.session_id, s.course_id, c.code, c.title, s.section_id,
+                s.section_code, s.course_type, s.credits, s.enroll_cap,
+                s.first_seen_at, s.last_seen_at
+         FROM sections s
+         JOIN courses c ON c.campus_id = s.campus_id AND c.session_id = s.session_id
+             AND c.course_id = s.course_id
+         WHERE s.id = ?1",
+        [section_fk],
+        |row| {
+            Ok((
+                row.get::<_, i64>(0)?,
+                row.get::<_, i64>(1)?,
+                row.get::<_, i64>(2)?,
+                row.get::<_, String>(3)?,
+                row.get::<_, String>(4)?,
+                row.get::<_, i64>(5)?,
+                row.get::<_, String>(6)?,
+                row.get::<_, Option<String>>(7)?,
+                row.get::<_, Option<f64>>(8)?,
+                row.get::<_, Option<i64>>(9)?,
+                row.get::<_, String>(10)?,
+                row.get::<_, String>(11)?,
+            ))
+        },
+    )?;
+
+    let blocks = read_wire_blocks(conn, section_fk)?;
+    let modality = derive_section_modality(&blocks);
+    let latest_snapshot = latest_snapshot(conn, section_fk)?.ok_or_else(|| {
+        StoreError::SectionHasNoSnapshots {
+            course_id,
+            section_id,
+        }
+    })?;
+
+    Ok(Section {
+        campus_id,
+        session_id,
+        course_id,
+        course_code,
+        course_title,
+        section_id,
+        section_code,
+        course_type,
+        credits,
+        enroll_cap: enroll_cap.unwrap_or(0),
+        start_date: None,
+        end_date: None,
+        first_seen_at,
+        last_seen_at,
+        modality,
+        blocks,
+        latest_snapshot,
+    })
+}
+
+/// A section's blocks in insertion order (the parser's order).
+fn read_wire_blocks(
+    conn: &Connection,
+    section_fk: i64,
+) -> Result<Vec<ScheduleBlock>, StoreError> {
+    let mut stmt = conn.prepare(
+        "SELECT day, start_min, end_min, location, modality
+         FROM schedule_blocks WHERE section_fk = ?1 ORDER BY id",
+    )?;
+    let rows = stmt.query_map([section_fk], |row| {
+        Ok((
+            row.get::<_, String>(0)?,
+            row.get::<_, i64>(1)?,
+            row.get::<_, i64>(2)?,
+            row.get::<_, Option<String>>(3)?,
+            row.get::<_, Option<String>>(4)?,
+        ))
+    })?;
+    rows.map(|row| {
+        let (day, start_min, end_min, location, modality) = row?;
+        Ok(wire_block(day_from_db(&day), start_min, end_min, location, modality))
+    })
+    .collect::<Result<Vec<_>, StoreError>>()
+}
+
+/// Stored block → wire block. Online blocks store NULL location; F2F blocks
+/// store the room code. Blocks the parser could not classify keep their raw
+/// location text and NULL modality, and surface as F2F because the wire
+/// modality is binary — the raw text is what disambiguates, and conflict
+/// detection never branches on modality.
+fn wire_block(
+    day: Day,
+    start_min: i64,
+    end_min: i64,
+    location: Option<String>,
+    modality: Option<String>,
+) -> ScheduleBlock {
+    let (modality, location) = match modality.as_deref() {
+        Some("ONLINE") => (BlockModality::Online, None),
+        _ => (BlockModality::F2F, location),
+    };
+    ScheduleBlock {
+        day,
+        start_min,
+        end_min,
+        location,
+        modality,
+    }
+}
+
+/// Section-level modality derived from the mix of the section's blocks
+/// (ADR-0007). A section whose schedule could not be read at all defaults
+/// to F2F — the representable choice for the binary wire type.
+fn derive_section_modality(blocks: &[ScheduleBlock]) -> SectionModality {
+    let mut f2f = false;
+    let mut online = false;
+    for block in blocks {
+        match block.modality {
+            BlockModality::F2F => f2f = true,
+            BlockModality::Online => online = true,
+        }
+    }
+    match (f2f, online) {
+        (true, true) => SectionModality::Hybrid,
+        (true, false) => SectionModality::F2F,
+        (false, true) => SectionModality::Online,
+        (false, false) => SectionModality::F2F,
+    }
+}
+
+/// The most recent snapshot by capture time; later ids break ties. Every
+/// section row is created with its first snapshot in the same transaction,
+/// so `None` here means that invariant is broken — the caller turns it into
+/// a loud error rather than fabricating a snapshot.
+fn latest_snapshot(conn: &Connection, section_fk: i64) -> Result<Option<Snapshot>, StoreError> {
+    conn.query_row(
+        "SELECT captured_at, enrolled, teacher, remark
+         FROM snapshots WHERE section_fk = ?1
+         ORDER BY captured_at DESC, id DESC LIMIT 1",
+        [section_fk],
+        |row| {
+            Ok(Snapshot {
+                captured_at: row.get(0)?,
+                enrolled: row.get::<_, Option<i64>>(1)?.unwrap_or(0),
+                teacher: row.get(2)?,
+                remark: row.get(3)?,
+            })
+        },
+    )
+    .optional()
+    .map_err(StoreError::Sql)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -1190,7 +1528,7 @@ mod tests {
             .conn
             .query_row("PRAGMA user_version", [], |row| row.get(0))
             .expect("user_version must be readable");
-        assert_eq!(version, 2, "both migrations apply exactly once");
+        assert_eq!(version, 3, "all three migrations apply exactly once");
     }
 
     #[test]
@@ -1257,7 +1595,7 @@ mod tests {
             ),
             (
                 "plan_sections",
-                &["plan_id", "section_fk", "pinned"],
+                &["plan_id", "section_fk", "pinned", "missing"],
             ),
         ];
         for (table, columns) in expected {
@@ -1639,10 +1977,24 @@ mod tests {
             .conn
             .query_row("PRAGMA user_version", [], |row| row.get(0))
             .expect("user_version must be readable");
-        assert_eq!(version, 2, "a fresh database runs both migrations");
+        assert_eq!(version, 3, "a fresh database runs all three migrations");
         assert!(
             column_names(&store.conn, "plans").contains(&"is_sample".to_string()),
             "plans must carry the sample-data marker"
+        );
+    }
+
+    #[test]
+    fn migration_three_adds_the_missing_flag_to_plan_sections() {
+        let store = store();
+        let version: i64 = store
+            .conn
+            .query_row("PRAGMA user_version", [], |row| row.get(0))
+            .expect("user_version must be readable");
+        assert_eq!(version, 3, "a fresh database runs all three migrations");
+        assert!(
+            column_names(&store.conn, "plan_sections").contains(&"missing".to_string()),
+            "plan_sections must carry the missing marker"
         );
     }
 
@@ -1658,16 +2010,50 @@ mod tests {
         )
         .expect("a v1 plan row");
 
-        migrate(&conn).expect("v2 migration must run on the existing database");
+        migrate(&conn).expect("later migrations must run on the existing database");
 
         let version: i64 = conn
             .query_row("PRAGMA user_version", [], |row| row.get(0))
             .expect("user_version");
-        assert_eq!(version, 2);
+        assert_eq!(version, 3);
         let is_sample: i64 = conn
             .query_row("SELECT is_sample FROM plans WHERE id = 'p1'", [], |row| row.get(0))
             .expect("is_sample must be readable");
         assert_eq!(is_sample, 0, "plans created before v2 are student plans, not sample data");
+    }
+
+    #[test]
+    fn upgrading_a_version_two_database_defaults_missing_off() {
+        let conn = Connection::open_in_memory().expect("in-memory connection");
+        conn.execute_batch(MIGRATION_V1).expect("v1 schema must apply");
+        conn.execute_batch(MIGRATION_V2).expect("v2 schema must apply");
+        conn.pragma_update(None, "user_version", 2).expect("user_version");
+        conn.execute_batch(
+            "INSERT INTO courses (campus_id, session_id, course_id, code, title)
+             VALUES (7, 155, 2923, 'CSINTSY', 'TITLE');
+             INSERT INTO sections (campus_id, session_id, course_id, section_id, section_code,
+                                   first_seen_at, last_seen_at)
+             VALUES (7, 155, 2923, 384, 'S01', 't', 't');
+             INSERT INTO plans (id, name, campus_id, session_id, created_at)
+             VALUES ('p1', 'T1', 7, 155, 't');",
+        )
+        .expect("v2 rows");
+        conn.execute(
+            "INSERT INTO plan_sections (plan_id, section_fk, pinned) VALUES ('p1', 1, 0)",
+            [],
+        )
+        .expect("a v2 membership row");
+
+        migrate(&conn).expect("the v3 migration must run on the existing database");
+
+        let version: i64 = conn
+            .query_row("PRAGMA user_version", [], |row| row.get(0))
+            .expect("user_version");
+        assert_eq!(version, 3);
+        let missing: i64 = conn
+            .query_row("SELECT missing FROM plan_sections", [], |row| row.get(0))
+            .expect("missing must be readable");
+        assert_eq!(missing, 0, "memberships created before v3 are not missing");
     }
 
     #[test]
@@ -2198,5 +2584,227 @@ mod tests {
         let s01 = rows.iter().find(|r| r.3 == 384).expect("S01");
         assert_eq!(s01.6, T1, "S01 last_seen_at restored");
         assert_eq!(s01.5, T1, "S01 first_seen_at untouched");
+    }
+
+    // ---------- refresh (ticket 16) ----------
+
+    fn missing_flag(conn: &Connection, section_id: i64) -> i64 {
+        conn.query_row(
+            "SELECT ps.missing FROM plan_sections ps
+             JOIN sections s ON s.id = ps.section_fk
+             WHERE ps.plan_id = 'p1' AND s.section_id = ?1",
+            [section_id],
+            |row| row.get(0),
+        )
+        .expect("missing flag must be readable")
+    }
+
+    #[test]
+    fn refresh_courses_returns_only_plan_courses_with_their_section_ids_in_order() {
+        let mut store = store();
+        store.create_plan("p1", "T1 load", &SCOPE, T1, false).expect("plan");
+        let mut geartap_y11 = parsed_section(564, 737, "Y11", None, Some(10), vec![]);
+        geartap_y11.course_code = "GEARTAP".into();
+        let mut geartap_y12 = parsed_section(564, 738, "Y12", None, Some(10), vec![]);
+        geartap_y12.course_code = "GEARTAP".into();
+        // Captured out of order so course-id ordering is what is asserted.
+        let catalog = vec![
+            parsed_section(2923, 384, "S01", None, Some(10), vec![]),
+            parsed_section(2923, 385, "S02", None, Some(20), vec![]),
+            geartap_y11,
+            geartap_y12,
+            // A captured course with no plan membership must not appear.
+            parsed_section(999, 500, "X01", None, Some(5), vec![]),
+        ];
+        store.record_capture(&SCOPE, &catalog, T1).expect("capture");
+        store.add_section_to_plan("p1", 2923, 385).expect("add S02");
+        store.add_section_to_plan("p1", 564, 737).expect("add Y11");
+        store.add_section_to_plan("p1", 2923, 384).expect("add S01");
+
+        let courses = store.refresh_courses("p1").expect("refresh courses");
+        assert_eq!(courses.len(), 2, "only courses in the plan are refreshed");
+        assert_eq!(courses[0].course_id, 564, "courses are ordered by course id");
+        assert_eq!(courses[0].code, "GEARTAP");
+        assert_eq!(courses[0].plan_section_ids, vec![737]);
+        assert_eq!(courses[1].course_id, 2923);
+        assert_eq!(courses[1].code, "CSINTSY");
+        assert_eq!(courses[1].plan_section_ids, vec![384, 385]);
+    }
+
+    #[test]
+    fn refresh_courses_is_empty_for_an_empty_plan() {
+        let mut store = store();
+        store.create_plan("p1", "T1 load", &SCOPE, T1, false).expect("plan");
+        assert!(store.refresh_courses("p1").expect("refresh courses").is_empty());
+    }
+
+    #[test]
+    fn apply_refresh_appends_snapshots_and_marks_a_vanished_section_missing() {
+        let mut store = store();
+        store.create_plan("p1", "T1 load", &SCOPE, T1, false).expect("plan");
+        let initial = vec![
+            parsed_section(2923, 384, "S01", None, Some(10), vec![online_block(Day::Mon, 450, 540)]),
+            parsed_section(2923, 385, "S02", Some("Bryant Lee"), Some(20), vec![]),
+        ];
+        store.record_capture(&SCOPE, &initial, T1).expect("initial capture");
+        store.add_section_to_plan("p1", 2923, 384).expect("add S01");
+        store.add_section_to_plan("p1", 2923, 385).expect("add S02");
+
+        // The refresh finds only S01: S02 has vanished from the results.
+        let refreshed = vec![
+            parsed_section(2923, 384, "S01", None, Some(11), vec![online_block(Day::Mon, 450, 540)]),
+        ];
+        store.apply_refresh("p1", 2923, &refreshed, T2).expect("refresh");
+
+        assert_eq!(missing_flag(&store.conn, 384), 0, "S01 still appears");
+        assert_eq!(missing_flag(&store.conn, 385), 1, "S02 vanished and is flagged");
+        assert_eq!(
+            count(&store.conn, "SELECT COUNT(*) FROM sections"),
+            2,
+            "no section is ever deleted (ADR-0008)"
+        );
+        assert_eq!(
+            count(&store.conn, "SELECT COUNT(*) FROM snapshots"),
+            3,
+            "the refresh appends a snapshot; history stays readable"
+        );
+        let s02_snapshots = count(
+            &store.conn,
+            "SELECT COUNT(*) FROM snapshots sn JOIN sections s ON s.id = sn.section_fk
+             WHERE s.section_id = 385",
+        );
+        assert_eq!(s02_snapshots, 1, "S02 keeps its history");
+        let s01_rows = section_rows(&store.conn)
+            .into_iter()
+            .find(|row| row.3 == 384)
+            .expect("S01 row");
+        assert_eq!(s01_rows.6, T2, "S01's last_seen_at advances on refresh");
+    }
+
+    #[test]
+    fn a_later_refresh_finding_the_section_again_clears_the_missing_flag() {
+        let mut store = store();
+        store.create_plan("p1", "T1 load", &SCOPE, T1, false).expect("plan");
+        let initial = vec![
+            parsed_section(2923, 384, "S01", None, Some(10), vec![]),
+            parsed_section(2923, 385, "S02", None, Some(20), vec![]),
+        ];
+        store.record_capture(&SCOPE, &initial, T1).expect("initial capture");
+        store.add_section_to_plan("p1", 2923, 384).expect("add S01");
+        store.add_section_to_plan("p1", 2923, 385).expect("add S02");
+
+        store
+            .apply_refresh("p1", 2923, &[initial[0].clone()], T2)
+            .expect("first refresh");
+        assert_eq!(missing_flag(&store.conn, 385), 1, "S02 flagged missing");
+
+        store.apply_refresh("p1", 2923, &initial, T2).expect("second refresh");
+        assert_eq!(missing_flag(&store.conn, 385), 0, "S02 reappears: flag cleared");
+        assert_eq!(missing_flag(&store.conn, 384), 0);
+    }
+
+    #[test]
+    fn missing_sections_returns_the_vanished_section_with_alternatives() {
+        let mut store = store();
+        store.create_plan("p1", "T1 load", &SCOPE, T1, false).expect("plan");
+        let catalog = vec![
+            parsed_section(2923, 384, "S01", None, Some(10), vec![
+                online_block(Day::Mon, 450, 540),
+            ]),
+            parsed_section(2923, 385, "S02", Some("Bryant Lee"), Some(20), vec![
+                room_block(Day::Tue, 870, 960, "L226"),
+                online_block(Day::Fri, 870, 960),
+            ]),
+            parsed_section(2923, 386, "S03", None, Some(30), vec![
+                room_block(Day::Wed, 660, 750, "A1103"),
+            ]),
+        ];
+        store.record_capture(&SCOPE, &catalog, T1).expect("catalog capture");
+        store.add_section_to_plan("p1", 2923, 384).expect("the plan holds S01 only");
+
+        // The refresh finds only S02 and S03: S01 has vanished.
+        let refreshed = vec![catalog[1].clone(), catalog[2].clone()];
+        store.apply_refresh("p1", 2923, &refreshed, T2).expect("refresh");
+
+        let missing = store.missing_sections("p1").expect("missing query");
+        assert_eq!(missing.len(), 1);
+        assert_eq!(missing[0].course_id, 2923);
+        assert_eq!(missing[0].section_id, 384);
+        assert_eq!(missing[0].section_code, "S01");
+
+        let alternatives = &missing[0].alternatives;
+        assert_eq!(
+            alternatives.iter().map(|s| s.section_code.as_str()).collect::<Vec<_>>(),
+            vec!["S02", "S03"],
+            "alternatives are the other sections of the same course"
+        );
+        assert_eq!(alternatives[0].course_code, "CSINTSY");
+        assert_eq!(alternatives[0].latest_snapshot.teacher.as_deref(), Some("Bryant Lee"));
+        assert_eq!(alternatives[0].latest_snapshot.enrolled, 20);
+        assert_eq!(alternatives[0].modality, SectionModality::Hybrid);
+        assert_eq!(alternatives[0].blocks.len(), 2);
+        assert_eq!(alternatives[0].blocks[0].modality, BlockModality::F2F);
+        assert_eq!(alternatives[0].blocks[0].location.as_deref(), Some("L226"));
+        assert_eq!(alternatives[0].blocks[1].modality, BlockModality::Online);
+        assert_eq!(alternatives[0].blocks[1].location, None);
+        assert_eq!(alternatives[1].modality, SectionModality::F2F);
+
+        // The vanished section's row is untouched — only the flag changed.
+        assert_eq!(
+            count(&store.conn, "SELECT COUNT(*) FROM sections WHERE section_id = 384"),
+            1,
+            "the missing section is never removed"
+        );
+    }
+
+    #[test]
+    fn missing_sections_is_empty_when_nothing_is_missing() {
+        let mut store = store();
+        store.create_plan("p1", "T1 load", &SCOPE, T1, false).expect("plan");
+        let sections = vec![parsed_section(2923, 384, "S01", None, Some(10), vec![])];
+        store.record_capture(&SCOPE, &sections, T1).expect("capture");
+        store.add_section_to_plan("p1", 2923, 384).expect("add");
+
+        store.apply_refresh("p1", 2923, &sections, T2).expect("refresh");
+        assert!(store.missing_sections("p1").expect("missing query").is_empty());
+    }
+
+    #[test]
+    fn apply_refresh_in_an_unknown_plan_is_a_plan_error() {
+        let mut store = store();
+        let err = store
+            .apply_refresh("missing", 2923, &[], T1)
+            .expect_err("refreshing an unknown plan must error");
+        assert!(matches!(err, StoreError::PlanNotFound { .. }), "got {err:?}");
+    }
+
+    #[test]
+    fn unclassified_blocks_surface_in_alternatives_with_their_raw_location() {
+        let mut store = store();
+        store.create_plan("p1", "T1 load", &SCOPE, T1, false).expect("plan");
+        let catalog = vec![
+            parsed_section(2923, 384, "S01", None, Some(10), vec![]),
+            parsed_section(2923, 385, "S02", None, Some(20), vec![ParsedBlock {
+                day: Day::Sat,
+                start_min: 660,
+                end_min: 750,
+                location: ParsedLocation::Unrecognized("TBA".into()),
+            }]),
+        ];
+        store.record_capture(&SCOPE, &catalog, T1).expect("capture");
+        store.add_section_to_plan("p1", 2923, 384).expect("add S01");
+
+        store
+            .apply_refresh("p1", 2923, &[catalog[1].clone()], T2)
+            .expect("refresh");
+        let missing = store.missing_sections("p1").expect("missing query");
+        assert_eq!(missing.len(), 1);
+        let alternatives = &missing[0].alternatives;
+        assert_eq!(alternatives.len(), 1);
+        assert_eq!(
+            alternatives[0].blocks[0].location.as_deref(),
+            Some("TBA"),
+            "the raw location text survives into the wire view"
+        );
     }
 }
