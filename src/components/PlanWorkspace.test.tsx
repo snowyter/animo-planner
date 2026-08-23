@@ -1,10 +1,32 @@
-import { describe, expect, it, vi } from "vitest";
+import { beforeEach, describe, expect, it, vi } from "vitest";
 import React from "react";
 import { renderToStaticMarkup } from "react-dom/server";
 import { PlanWorkspace } from "./PlanWorkspace";
+import * as client from "../adapters/ipc/client";
 import type { Plan, PlanSection, PlanSummary, ScheduleBlock } from "../adapters/ipc/types";
 
+vi.mock("../adapters/ipc/client", () => ({
+  getCaptureSummary: vi.fn(),
+  openCaptureWindow: vi.fn(),
+  undoLastCapture: vi.fn(),
+  onCaptureUpdated: vi.fn().mockResolvedValue(() => {}),
+  onCaptureFailed: vi.fn().mockResolvedValue(() => {}),
+}));
+
 describe("PlanWorkspace", () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    vi.mocked(client.getCaptureSummary).mockResolvedValue({
+      campusId: 7,
+      sessionId: 155,
+      sectionCount: 42,
+      courseCount: 8,
+      canUndo: true,
+    });
+    vi.mocked(client.onCaptureUpdated).mockResolvedValue(() => {});
+    vi.mocked(client.onCaptureFailed).mockResolvedValue(() => {});
+  });
+
   const mockPlanSummary: PlanSummary = {
     id: "p1",
     name: "T1 Target Schedule",
@@ -194,5 +216,23 @@ describe("PlanWorkspace", () => {
 
     expect(html).toContain("GEARTAP");
     expect(html).toContain("No conflicts");
+  });
+
+  it("renders the capture bar with open Archer's Hub button, credential disclaimer, and undo control", () => {
+    const html = renderToStaticMarkup(
+      React.createElement(PlanWorkspace, {
+        planSummary: mockPlanSummary,
+        plan: null,
+        isLoading: false,
+        error: null,
+        onBack: vi.fn(),
+        onRetry: vi.fn(),
+      })
+    );
+
+    expect(html).toContain("Open Archer&#x27;s Hub");
+    expect(html).toContain("Capture Sections");
+    expect(html).toMatch(/never (?:sees, captures, or )?stores (?:your )?credentials/i);
+    expect(html).toContain("Undo");
   });
 });

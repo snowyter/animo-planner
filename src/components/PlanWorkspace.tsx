@@ -16,6 +16,8 @@ import { Badge } from "./ui/badge";
 import { Card, CardHeader, CardTitle, CardDescription, CardContent } from "./ui/card";
 import { Alert, AlertTitle, AlertDescription } from "./ui/alert";
 import { WeekGrid } from "./WeekGrid";
+import { CaptureBar } from "./CaptureBar";
+import { useCapture } from "./useCapture";
 import type { Plan, PlanSummary } from "../adapters/ipc/types";
 import { formatSectionCount } from "../core/plan";
 import { findConflicts } from "../core/conflicts";
@@ -27,6 +29,7 @@ export interface PlanWorkspaceProps {
   error: string | null;
   onBack: () => void;
   onRetry: () => void;
+  onReportBrokenCapture?: (error: string) => void;
 }
 
 export function PlanWorkspace({
@@ -35,12 +38,25 @@ export function PlanWorkspace({
   isLoading,
   error,
   onRetry,
+  onReportBrokenCapture,
 }: PlanWorkspaceProps) {
   const currentSections = plan?.sections ?? [];
 
   const conflicts = useMemo(() => {
     return findConflicts(currentSections);
   }, [currentSections]);
+
+  const {
+    summary: captureSummary,
+    isLoading: isCaptureLoading,
+    error: captureError,
+    captureFailure,
+    isOpening: isOpeningCapture,
+    isUndoing: isUndoingCapture,
+    openCapture,
+    undoLast,
+    dismissFailure,
+  } = useCapture(planSummary.campusId, planSummary.sessionId);
 
   return (
     <div className="mx-auto max-w-7xl px-4 py-6 sm:px-6 lg:px-8 space-y-6">
@@ -108,6 +124,24 @@ export function PlanWorkspace({
           </div>
         </div>
       </div>
+
+      {/* Capture Launch, Running Counter, and Undo (Ticket 12, SPEC §4) */}
+      <CaptureBar
+        campusId={planSummary.campusId}
+        sessionId={planSummary.sessionId}
+        campusName={planSummary.campusName}
+        sessionName={planSummary.sessionName}
+        summary={captureSummary}
+        isLoading={isCaptureLoading}
+        error={captureError}
+        captureFailure={captureFailure}
+        isOpening={isOpeningCapture}
+        isUndoing={isUndoingCapture}
+        onOpenCapture={openCapture}
+        onUndo={undoLast}
+        onDismissFailure={dismissFailure}
+        onReportBrokenCapture={onReportBrokenCapture}
+      />
 
       {error && (
         <Alert variant="destructive">
