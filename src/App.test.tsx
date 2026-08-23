@@ -15,6 +15,11 @@ vi.mock("./adapters/ipc/client", () => ({
   deletePlan: vi.fn(),
   getPlan: vi.fn(),
   seedSamplePlan: vi.fn(),
+  getCaptureSummary: vi.fn(),
+  openCaptureWindow: vi.fn(),
+  undoLastCapture: vi.fn(),
+  onCaptureUpdated: vi.fn().mockResolvedValue(() => {}),
+  onCaptureFailed: vi.fn().mockResolvedValue(() => {}),
 }));
 
 describe("App shell and navigation", () => {
