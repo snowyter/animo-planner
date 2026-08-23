@@ -29,12 +29,14 @@
 //! dates. A later ticket can add them as a migration.
 
 use crate::core::conflicts::{self, PlannedBlock, PlannedSection};
+use crate::core::ics::{ExportBlock, ExportPlan, ExportSection};
 use crate::core::ipc_types::{
     BlockModality, CaptureSummary, Conflict, Day, MissingSection, ScheduleBlock, Section,
     SectionModality, Snapshot,
 };
 use crate::core::parser::{ParsedBlock, ParsedSection};
 use crate::core::refresh::RefreshCourse;
+use chrono::NaiveDate;
 use rusqlite::{Connection, OptionalExtension, Transaction};
 use std::collections::HashSet;
 use std::path::Path;
@@ -95,6 +97,10 @@ pub enum StoreError {
         course_id: i64,
         section_id: i64,
     },
+    /// The section has no captured start/end dates, so a recurring event
+    /// spanning its term cannot be produced. Exporting would silently drop
+    /// the section's classes, so this fails instead (ticket 17).
+    SectionDatesMissing { course_id: i64, section_id: i64 },
 }
 
 impl std::fmt::Display for StoreError {
@@ -136,6 +142,11 @@ impl std::fmt::Display for StoreError {
                 f,
                 "section (course {course_id}, section {section_id}) has no snapshots and \
                  cannot be read"
+            ),
+            StoreError::SectionDatesMissing { course_id, section_id } => write!(
+                f,
+                "section (course {course_id}, section {section_id}) has no captured \
+                 start/end dates — refresh the course and export again"
             ),
         }
     }
@@ -228,7 +239,16 @@ const MIGRATION_V3: &str = r#"
 ALTER TABLE plan_sections ADD COLUMN missing INTEGER NOT NULL DEFAULT 0 CHECK (missing IN (0, 1));
 "#;
 
-const MIGRATIONS: &[&str] = &[MIGRATION_V1, MIGRATION_V2, MIGRATION_V3];
+/// Migration 4 (ticket 17): sections gain their captured term span, so an
+/// ICS export can recur each block across the section's start and end
+/// dates. The dates arrive with every capture; rows from before this
+/// migration stay NULL until their course is re-captured.
+const MIGRATION_V4: &str = r#"
+ALTER TABLE sections ADD COLUMN start_date TEXT;
+ALTER TABLE sections ADD COLUMN end_date TEXT;
+"#;
+
+const MIGRATIONS: &[&str] = &[MIGRATION_V1, MIGRATION_V2, MIGRATION_V3, MIGRATION_V4];
 
 /// Runs every migration not yet applied, tracked by `PRAGMA user_version`.
 /// Idempotent: safe to run on a fresh database and on an existing one.
@@ -325,6 +345,16 @@ fn day_from_db(day: &str) -> Day {
         "SAT" => Day::Sat,
         other => unreachable!("day column is constrained to MON..SAT, got {other:?}"),
     }
+}
+
+/// A term date stored as `YYYY-MM-DD`, or NULL when the capture had none.
+fn date_to_db(date: Option<NaiveDate>) -> Option<String> {
+    date.map(|date| date.format("%Y-%m-%d").to_string())
+}
+
+/// Inverse of [`date_to_db`]; `None` when unset.
+fn date_from_db(raw: Option<String>) -> Option<NaiveDate> {
+    raw.and_then(|raw| NaiveDate::parse_from_str(raw.trim(), "%Y-%m-%d").ok())
 }
 
 /// The `(campus, session)` a plan is hard-scoped to, or `PlanNotFound`.
@@ -668,6 +698,124 @@ impl Store {
             }
         }
         Ok(conflicts::find_conflicts(&members))
+    }
+
+    /// Loads everything the ICS exporter needs about one plan (ticket 17):
+    /// the plan name and every member section with its blocks, term dates,
+    /// and the teacher/remark of the latest snapshot.
+    ///
+    /// A member without captured term dates is a loud
+    /// [`StoreError::SectionDatesMissing`], never a silent skip: exporting
+    /// would otherwise drop that section's classes without a trace.
+    pub fn load_plan_ics_export(&self, plan_id: &str) -> Result<ExportPlan, StoreError> {
+        let plan_name: String = self
+            .conn
+            .query_row(
+                "SELECT name FROM plans WHERE id = ?1",
+                [plan_id],
+                |row| row.get(0),
+            )
+            .optional()?
+            .ok_or_else(|| StoreError::PlanNotFound {
+                plan_id: plan_id.to_string(),
+            })?;
+
+        let mut stmt = self.conn.prepare(
+            "SELECT s.id, s.course_id, s.section_id, c.code, s.section_code,
+                    sn.teacher, sn.remark, s.start_date, s.end_date
+             FROM plan_sections ps
+             JOIN sections s ON s.id = ps.section_fk
+             JOIN courses c ON c.campus_id = s.campus_id AND c.session_id = s.session_id
+                           AND c.course_id = s.course_id
+             LEFT JOIN snapshots sn ON sn.id = (
+                     SELECT id FROM snapshots WHERE section_fk = s.id ORDER BY id DESC LIMIT 1)
+             WHERE ps.plan_id = ?1
+             ORDER BY s.course_id, s.section_id",
+        )?;
+        let rows = stmt.query_map([plan_id], |row| {
+            Ok((
+                row.get::<_, i64>(0)?,
+                row.get::<_, i64>(1)?,
+                row.get::<_, i64>(2)?,
+                row.get::<_, String>(3)?,
+                row.get::<_, String>(4)?,
+                row.get::<_, Option<String>>(5)?,
+                row.get::<_, Option<String>>(6)?,
+                row.get::<_, Option<String>>(7)?,
+                row.get::<_, Option<String>>(8)?,
+            ))
+        })?;
+
+        let mut sections = Vec::new();
+        for row in rows {
+            let (
+                row_id,
+                course_id,
+                section_id,
+                course_code,
+                section_code,
+                teacher,
+                remark,
+                start_date,
+                end_date,
+            ) = row?;
+            let Some(start_date) = date_from_db(start_date) else {
+                return Err(StoreError::SectionDatesMissing {
+                    course_id,
+                    section_id,
+                });
+            };
+            let Some(end_date) = date_from_db(end_date) else {
+                return Err(StoreError::SectionDatesMissing {
+                    course_id,
+                    section_id,
+                });
+            };
+            sections.push(ExportSection {
+                course_id,
+                section_id,
+                course_code,
+                section_code,
+                teacher,
+                remark,
+                start_date,
+                end_date,
+                blocks: self.load_blocks_for_export(row_id)?,
+            });
+        }
+
+        Ok(ExportPlan {
+            name: plan_name,
+            sections,
+        })
+    }
+
+    /// A member's blocks as exported: `location` is `None` exactly for the
+    /// online blocks, per the storage invariant.
+    fn load_blocks_for_export(&self, section_row_id: i64) -> Result<Vec<ExportBlock>, StoreError> {
+        let mut stmt = self.conn.prepare(
+            "SELECT day, start_min, end_min, location
+             FROM schedule_blocks WHERE section_fk = ?1
+             ORDER BY day, start_min, id",
+        )?;
+        let rows = stmt.query_map([section_row_id], |row| {
+            Ok((
+                row.get::<_, String>(0)?,
+                row.get::<_, i64>(1)?,
+                row.get::<_, i64>(2)?,
+                row.get::<_, Option<String>>(3)?,
+            ))
+        })?;
+        rows.map(|row| {
+            let (day, start_min, end_min, location) = row?;
+            Ok(ExportBlock {
+                day: day_from_db(&day),
+                start_min,
+                end_min,
+                location,
+            })
+        })
+        .collect()
     }
     /// Seeds the sample-data plan (ticket 07) in one transaction: records
     /// each capture, creates the plan flagged as sample data, and links
@@ -1051,14 +1199,17 @@ fn upsert_section(
     let existed_before = prior.is_some();
     tx.execute(
         "INSERT INTO sections (campus_id, session_id, course_id, section_id, section_code,
-                               course_type, credits, enroll_cap, first_seen_at, last_seen_at)
-         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10)
+                               course_type, credits, enroll_cap, first_seen_at, last_seen_at,
+                               start_date, end_date)
+         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12)
          ON CONFLICT (campus_id, session_id, course_id, section_id) DO UPDATE SET
              section_code = excluded.section_code,
              course_type  = excluded.course_type,
              credits      = excluded.credits,
              enroll_cap   = excluded.enroll_cap,
-             last_seen_at = excluded.last_seen_at",
+             last_seen_at = excluded.last_seen_at,
+             start_date   = excluded.start_date,
+             end_date     = excluded.end_date",
         rusqlite::params![
             scope.campus_id,
             scope.session_id,
@@ -1070,6 +1221,8 @@ fn upsert_section(
             section.enroll_cap,
             captured_at,
             captured_at,
+            date_to_db(section.start_date),
+            date_to_db(section.end_date),
         ],
     )?;
     let section_fk = tx.query_row(
@@ -1528,7 +1681,7 @@ mod tests {
             .conn
             .query_row("PRAGMA user_version", [], |row| row.get(0))
             .expect("user_version must be readable");
-        assert_eq!(version, 3, "all three migrations apply exactly once");
+        assert_eq!(version, 4, "all four migrations apply exactly once");
     }
 
     #[test]
@@ -1571,6 +1724,8 @@ mod tests {
                     "enroll_cap",
                     "first_seen_at",
                     "last_seen_at",
+                    "start_date",
+                    "end_date",
                 ],
             ),
             (
@@ -1977,7 +2132,7 @@ mod tests {
             .conn
             .query_row("PRAGMA user_version", [], |row| row.get(0))
             .expect("user_version must be readable");
-        assert_eq!(version, 3, "a fresh database runs all three migrations");
+        assert_eq!(version, 4, "a fresh database runs all four migrations");
         assert!(
             column_names(&store.conn, "plans").contains(&"is_sample".to_string()),
             "plans must carry the sample-data marker"
@@ -1991,7 +2146,7 @@ mod tests {
             .conn
             .query_row("PRAGMA user_version", [], |row| row.get(0))
             .expect("user_version must be readable");
-        assert_eq!(version, 3, "a fresh database runs all three migrations");
+        assert_eq!(version, 4, "a fresh database runs all four migrations");
         assert!(
             column_names(&store.conn, "plan_sections").contains(&"missing".to_string()),
             "plan_sections must carry the missing marker"
@@ -2015,7 +2170,7 @@ mod tests {
         let version: i64 = conn
             .query_row("PRAGMA user_version", [], |row| row.get(0))
             .expect("user_version");
-        assert_eq!(version, 3);
+        assert_eq!(version, 4);
         let is_sample: i64 = conn
             .query_row("SELECT is_sample FROM plans WHERE id = 'p1'", [], |row| row.get(0))
             .expect("is_sample must be readable");
@@ -2049,7 +2204,7 @@ mod tests {
         let version: i64 = conn
             .query_row("PRAGMA user_version", [], |row| row.get(0))
             .expect("user_version");
-        assert_eq!(version, 3);
+        assert_eq!(version, 4);
         let missing: i64 = conn
             .query_row("SELECT missing FROM plan_sections", [], |row| row.get(0))
             .expect("missing must be readable");
@@ -2426,6 +2581,208 @@ mod tests {
             .set_section_pinned("p1", 2923, 384, false)
             .expect("unpinning works after the restart");
         assert_eq!(pinned_flag(&reopened.conn, 384), 0);
+    }
+
+    // ---------- ICS export data path (ticket 17) ----------
+
+    /// The term span every real capture carries (`data-start-date` /
+    /// `data-end-date` on the results row).
+    fn dated_section(
+        course_id: i64,
+        section_id: i64,
+        section_code: &str,
+        teacher: Option<&str>,
+        blocks: Vec<ParsedBlock>,
+    ) -> ParsedSection {
+        let mut section = parsed_section(course_id, section_id, section_code, teacher, Some(10), blocks);
+        section.remark = Some("Bring laptop".into());
+        section.start_date = Some(chrono::NaiveDate::from_ymd_opt(2026, 7, 10).expect("start"));
+        section.end_date = Some(chrono::NaiveDate::from_ymd_opt(2026, 12, 9).expect("end"));
+        section
+    }
+
+    #[test]
+    fn captures_persist_the_sections_term_dates() {
+        let mut store = store();
+        store
+            .record_capture(&SCOPE, &[dated_section(2923, 384, "S01", None, vec![])], T1)
+            .expect("capture with dates");
+        assert_eq!(
+            store
+                .conn
+                .query_row(
+                    "SELECT start_date, end_date FROM sections WHERE section_id = 384",
+                    [],
+                    |row| Ok((row.get::<_, String>(0)?, row.get::<_, String>(1)?)),
+                )
+                .expect("dates must be stored"),
+            ("2026-07-10".into(), "2026-12-09".into()),
+            "the term span survives into storage as ISO dates"
+        );
+
+        // A later capture without dates replaces them: the store keeps what
+        // the latest capture said, exactly like it does for blocks.
+        let undated = parsed_section(2923, 384, "S01", None, Some(11), vec![]);
+        store.record_capture(&SCOPE, &[undated], T2).expect("re-capture");
+        assert_eq!(
+            store
+                .conn
+                .query_row(
+                    "SELECT COUNT(*) FROM sections WHERE section_id = 384 AND start_date IS NULL",
+                    [],
+                    |row| row.get::<_, i64>(0),
+                )
+                .expect("null date count"),
+            1,
+            "a re-capture without dates overwrites them"
+        );
+    }
+
+    #[test]
+    fn loading_a_plan_export_returns_the_plan_name_and_every_member_in_full() {
+        let mut store = store();
+        store.create_plan("p1", "T1 load", &SCOPE, T1, false).expect("plan");
+        let hybrid = dated_section(
+            2923,
+            384,
+            "S01",
+            Some("Bryant Lee"),
+            vec![
+                room_block(Day::Mon, 975, 1065, "A1103"),
+                online_block(Day::Thu, 975, 1065),
+            ],
+        );
+        let online = dated_section(
+            564,
+            737,
+            "Y11",
+            None,
+            vec![online_block(Day::Sat, 660, 750)],
+        );
+        store.record_capture(&SCOPE, &[hybrid], T1).expect("capture");
+        store.record_capture(&SCOPE, &[online], T1).expect("capture");
+        store.add_section_to_plan("p1", 2923, 384).expect("add");
+        store.add_section_to_plan("p1", 564, 737).expect("add");
+
+        let export = store.load_plan_ics_export("p1").expect("export input");
+
+        assert_eq!(export.name, "T1 load");
+        // Ordered by course id: 564 < 2923.
+        assert_eq!(
+            export
+                .sections
+                .iter()
+                .map(|s| (s.course_code.as_str(), s.section_code.as_str()))
+                .collect::<Vec<_>>(),
+            vec![("CSINTSY", "Y11"), ("CSINTSY", "S01")],
+            "members come back deterministically ordered"
+        );
+        let s01 = &export.sections[1];
+        assert_eq!(s01.course_id, 2923);
+        assert_eq!(s01.section_id, 384);
+        assert_eq!(
+            s01.teacher.as_deref(),
+            Some("Bryant Lee"),
+            "teacher comes from the latest snapshot"
+        );
+        assert_eq!(s01.remark.as_deref(), Some("Bring laptop"));
+        assert_eq!(
+            (s01.start_date, s01.end_date),
+            (
+                chrono::NaiveDate::from_ymd_opt(2026, 7, 10).unwrap(),
+                chrono::NaiveDate::from_ymd_opt(2026, 12, 9).unwrap()
+            ),
+        );
+        assert_eq!(
+            s01.blocks,
+            vec![
+                ExportBlock {
+                    day: Day::Mon,
+                    start_min: 975,
+                    end_min: 1065,
+                    location: Some("A1103".into()),
+                },
+                ExportBlock {
+                    day: Day::Thu,
+                    start_min: 975,
+                    end_min: 1065,
+                    location: None,
+                },
+            ],
+            "blocks keep day, times, and the online/room distinction"
+        );
+        let y11 = &export.sections[0];
+        assert_eq!(y11.course_id, 564);
+        assert_eq!(y11.section_id, 737);
+        assert_eq!(y11.teacher, None);
+        assert_eq!(y11.blocks.len(), 1);
+        assert_eq!(y11.blocks[0].day, Day::Sat);
+        assert_eq!(y11.blocks[0].location, None);
+    }
+
+    #[test]
+    fn the_export_carries_the_teacher_from_the_latest_snapshot_not_the_first() {
+        let mut store = store();
+        store.create_plan("p1", "T1 load", &SCOPE, T1, false).expect("plan");
+        store
+            .record_capture(
+                &SCOPE,
+                &[dated_section(2923, 384, "S01", None, vec![])],
+                T1,
+            )
+            .expect("first capture: no teacher yet");
+        store.add_section_to_plan("p1", 2923, 384).expect("add");
+
+        let before = store.load_plan_ics_export("p1").expect("export input");
+        assert_eq!(before.sections[0].teacher, None);
+
+        store
+            .record_capture(
+                &SCOPE,
+                &[dated_section(2923, 384, "S01", Some("Bryant Lee"), vec![])],
+                T2,
+            )
+            .expect("second capture: teacher populated");
+        let after = store.load_plan_ics_export("p1").expect("export input");
+        assert_eq!(
+            after.sections[0].teacher.as_deref(),
+            Some("Bryant Lee"),
+            "the newest snapshot wins; earlier ones stay history"
+        );
+    }
+
+    #[test]
+    fn a_member_without_captured_dates_is_a_loud_error_never_a_silent_skip() {
+        let mut store = store();
+        store.create_plan("p1", "T1 load", &SCOPE, T1, false).expect("plan");
+        store
+            .record_capture(
+                &SCOPE,
+                &[parsed_section(2923, 384, "S01", None, Some(10), vec![])],
+                T1,
+            )
+            .expect("capture without dates");
+        store.add_section_to_plan("p1", 2923, 384).expect("add");
+
+        let err = store
+            .load_plan_ics_export("p1")
+            .expect_err("missing term dates must fail loudly");
+        assert!(
+            matches!(
+                err,
+                StoreError::SectionDatesMissing { course_id: 2923, section_id: 384 }
+            ),
+            "got {err:?}"
+        );
+    }
+
+    #[test]
+    fn loading_an_ics_export_of_an_unknown_plan_is_a_plan_error() {
+        let store = store();
+        let err = store
+            .load_plan_ics_export("missing")
+            .expect_err("an unknown plan must error");
+        assert!(matches!(err, StoreError::PlanNotFound { .. }), "got {err:?}");
     }
 
     // ---------- capture summary ----------
