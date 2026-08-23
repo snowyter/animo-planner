@@ -2,7 +2,19 @@ import { describe, expect, it, vi } from "vitest";
 import React from "react";
 import { renderToStaticMarkup } from "react-dom/server";
 import { CreatePlanDialog } from "./CreatePlanDialog";
-import { DEFAULT_CAMPUS_OPTIONS, DEFAULT_SESSION_OPTIONS } from "../core/options";
+import type { CampusOption, SessionOption } from "../adapters/ipc/types";
+
+// Fixture data mirroring what `get_campus_options` / `get_session_options`
+// serve; the values themselves are owned by Rust (ticket 25).
+const CAMPUS_FIXTURES: CampusOption[] = [
+  { id: 7, name: "Manila" },
+  { id: 8, name: "Laguna" },
+  { id: 9, name: "Rufino" },
+];
+const SESSION_FIXTURES: SessionOption[] = [
+  { id: 155, name: "AY2026-27 T1" },
+  { id: 156, name: "AY2026-27 T2" },
+];
 
 describe("CreatePlanDialog", () => {
   it("renders when open with inputs for name, campus, and academic session", () => {
@@ -10,8 +22,8 @@ describe("CreatePlanDialog", () => {
       React.createElement(CreatePlanDialog, {
         open: true,
         onOpenChange: vi.fn(),
-        campusOptions: DEFAULT_CAMPUS_OPTIONS,
-        sessionOptions: DEFAULT_SESSION_OPTIONS,
+        campusOptions: CAMPUS_FIXTURES,
+        sessionOptions: SESSION_FIXTURES,
         onSubmit: vi.fn(),
       })
     );
@@ -31,8 +43,8 @@ describe("CreatePlanDialog", () => {
       React.createElement(CreatePlanDialog, {
         open: true,
         onOpenChange: vi.fn(),
-        campusOptions: DEFAULT_CAMPUS_OPTIONS,
-        sessionOptions: DEFAULT_SESSION_OPTIONS,
+        campusOptions: CAMPUS_FIXTURES,
+        sessionOptions: SESSION_FIXTURES,
         error: "unimplemented: create_plan",
         onSubmit: vi.fn(),
       })
@@ -46,8 +58,8 @@ describe("CreatePlanDialog", () => {
       React.createElement(CreatePlanDialog, {
         open: true,
         onOpenChange: vi.fn(),
-        campusOptions: DEFAULT_CAMPUS_OPTIONS,
-        sessionOptions: DEFAULT_SESSION_OPTIONS,
+        campusOptions: CAMPUS_FIXTURES,
+        sessionOptions: SESSION_FIXTURES,
         onSubmit: vi.fn(),
       })
     );

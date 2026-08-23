@@ -34,6 +34,7 @@ pub fn run() {
             .map_err(|err| format!("failed to start the capture listener: {err}"))?;
             app.manage(listener);
             app.manage(adapters::capture_window::CaptureWindowScope::default());
+            app.manage(interface::commands::SolveCancellation::default());
             tauri::async_runtime::spawn(async move {
                 server.serve().await;
             });

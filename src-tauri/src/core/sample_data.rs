@@ -5,13 +5,23 @@
 //! credentials. Parsing runs through the real parser (ticket 04); nothing
 //! here invents section rows.
 
+use crate::core::options;
 use crate::core::parser::{self, ParseError, ParsedSection, SelectorConfig};
 
-/// The campus and session the fixtures were captured under: Manila, AY2026-27 T1.
+/// The campus and session the fixtures were captured under: Manila,
+/// AY2026-27 T1. The ids are fixture facts; the *names* are not restated
+/// here — they come from [`crate::core::options`], the single source
+/// (ticket 25), so a rename cannot drift between surfaces.
 pub const SAMPLE_CAMPUS_ID: i64 = 7;
 pub const SAMPLE_SESSION_ID: i64 = 155;
-pub const SAMPLE_CAMPUS_NAME: &str = "Manila";
-pub const SAMPLE_SESSION_NAME: &str = "AY2026-27 T1";
+pub const SAMPLE_CAMPUS_NAME: &str = match options::campus_name(SAMPLE_CAMPUS_ID) {
+    Some(name) => name,
+    None => panic!("the sample campus id must be one of the offered campus options"),
+};
+pub const SAMPLE_SESSION_NAME: &str = match options::session_name(SAMPLE_SESSION_ID) {
+    Some(name) => name,
+    None => panic!("the sample session id must be one of the offered session options"),
+};
 
 /// Reserved plan id and display name for the seeded sample plan.
 pub const SAMPLE_PLAN_ID: &str = "sample-plan";
@@ -93,6 +103,7 @@ mod tests {
     fn sample_scope_matches_the_verified_capture_context() {
         assert_eq!(SAMPLE_CAMPUS_ID, 7);
         assert_eq!(SAMPLE_SESSION_ID, 155);
+        // Names are derived from core::options, never restated here.
         assert_eq!(SAMPLE_CAMPUS_NAME, "Manila");
         assert_eq!(SAMPLE_SESSION_NAME, "AY2026-27 T1");
     }
