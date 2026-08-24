@@ -3,6 +3,8 @@ import { AppHeader } from "./components/AppHeader";
 import { PlanList } from "./components/PlanList";
 import { CreatePlanDialog } from "./components/CreatePlanDialog";
 import { PlanWorkspace } from "./components/PlanWorkspace";
+import { AboutDialog } from "./components/AboutDialog";
+import { ReportBrokenCaptureDialog } from "./components/ReportBrokenCaptureDialog";
 import { usePlans } from "./components/usePlans";
 import { useOptions } from "./components/useOptions";
 import { usePlanDetail } from "./components/usePlanDetail";
@@ -13,6 +15,11 @@ function AppContent() {
   const [activePlanSummary, setActivePlanSummary] = useState<PlanSummary | null>(null);
   const [isCreateOpen, setIsCreateOpen] = useState(false);
   const [createError, setCreateError] = useState<string | null>(null);
+
+  // About and Report Diagnostics dialog states
+  const [isAboutOpen, setIsAboutOpen] = useState(false);
+  const [isReportOpen, setIsReportOpen] = useState(false);
+  const [reportFailureError, setReportFailureError] = useState<string | null>(null);
 
   const {
     plans,
@@ -79,11 +86,17 @@ function AppContent() {
     await handleDeletePlan(planId);
   };
 
+  const handleOpenReport = (errorText?: string) => {
+    setReportFailureError(errorText ?? null);
+    setIsReportOpen(true);
+  };
+
   return (
     <div className="min-h-screen bg-slate-50 text-slate-900 flex flex-col font-sans">
       <AppHeader
         activePlan={activePlanSummary}
         onBackToPlans={onBackToPlans}
+        onOpenAbout={() => setIsAboutOpen(true)}
       />
 
       <main className="flex-1">
@@ -95,12 +108,12 @@ function AppContent() {
             error={planDetailError}
             onBack={onBackToPlans}
             onRetry={refreshPlan}
+            onReportBrokenCapture={handleOpenReport}
             onPlanUpdated={() => {
               refreshPlan();
               fetchPlans();
             }}
           />
-
         ) : (
           <PlanList
             plans={plans}
@@ -130,6 +143,18 @@ function AppContent() {
         sessionOptions={sessionOptions}
         error={createError}
         onSubmit={onHandleCreate}
+      />
+
+      <AboutDialog
+        open={isAboutOpen}
+        onOpenChange={setIsAboutOpen}
+        onOpenReport={() => handleOpenReport()}
+      />
+
+      <ReportBrokenCaptureDialog
+        open={isReportOpen}
+        onOpenChange={setIsReportOpen}
+        captureFailure={reportFailureError}
       />
     </div>
   );
