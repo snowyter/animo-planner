@@ -42,4 +42,17 @@ describe("AppHeader", () => {
     expect(html).toContain("AY2026-27 T1");
     expect(html).toContain("All Plans");
   });
+
+  it("renders About button and calls onOpenAbout when provided", () => {
+    const onOpenAbout = vi.fn();
+    const html = renderToStaticMarkup(
+      React.createElement(AppHeader, {
+        activePlan: null,
+        onBackToPlans: vi.fn(),
+        onOpenAbout,
+      })
+    );
+
+    expect(html).toContain("About");
+  });
 });

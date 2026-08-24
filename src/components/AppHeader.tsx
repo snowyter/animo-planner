@@ -1,4 +1,4 @@
-import { ArrowLeft, Calendar, Building2, BookOpen } from "lucide-react";
+import { ArrowLeft, Calendar, Building2, BookOpen, Info } from "lucide-react";
 import { Button } from "./ui/button";
 import { Badge } from "./ui/badge";
 import type { PlanSummary } from "../adapters/ipc/types";
@@ -6,9 +6,10 @@ import type { PlanSummary } from "../adapters/ipc/types";
 export interface AppHeaderProps {
   activePlan: PlanSummary | null;
   onBackToPlans: () => void;
+  onOpenAbout?: () => void;
 }
 
-export function AppHeader({ activePlan, onBackToPlans }: AppHeaderProps) {
+export function AppHeader({ activePlan, onBackToPlans, onOpenAbout }: AppHeaderProps) {
   return (
     <header className="sticky top-0 z-40 w-full border-b border-slate-200 bg-white/95 backdrop-blur-xs">
       <div className="mx-auto flex h-16 max-w-7xl items-center justify-between px-4 sm:px-6 lg:px-8">
@@ -58,7 +59,7 @@ export function AppHeader({ activePlan, onBackToPlans }: AppHeaderProps) {
                   Animo Plan
                 </h1>
                 <p className="text-xs text-slate-500">
-                  Archer's Hub Enlistment Planner
+                  Archer&#39;s Hub Enlistment Planner
                 </p>
               </div>
             </div>
@@ -66,9 +67,20 @@ export function AppHeader({ activePlan, onBackToPlans }: AppHeaderProps) {
         </div>
 
         <div className="flex items-center gap-3">
-          <span className="text-xs text-slate-400 font-medium">
+          <span className="hidden sm:inline text-xs text-slate-400 font-medium">
             Read-only • No credentials stored
           </span>
+          {onOpenAbout && (
+            <Button
+              variant="outline"
+              size="sm"
+              onClick={onOpenAbout}
+              className="h-8 px-2.5 text-xs font-semibold text-slate-700 hover:text-slate-900 border-slate-200 flex items-center gap-1.5 shadow-2xs"
+            >
+              <Info className="h-3.5 w-3.5" />
+              <span>About</span>
+            </Button>
+          )}
         </div>
       </div>
     </header>

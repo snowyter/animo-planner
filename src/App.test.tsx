@@ -18,6 +18,13 @@ vi.mock("./adapters/ipc/client", () => ({
   getCaptureSummary: vi.fn(),
   openCaptureWindow: vi.fn(),
   undoLastCapture: vi.fn(),
+  getAppInfo: vi.fn().mockResolvedValue({
+    appVersion: "0.1.0",
+    selectorConfigVersion: "1",
+    selectorConfigSource: "bundled",
+  }),
+  buildCaptureReport: vi.fn(),
+  clearBrowserSession: vi.fn(),
   onCaptureUpdated: vi.fn().mockResolvedValue(() => {}),
   onCaptureFailed: vi.fn().mockResolvedValue(() => {}),
 }));
@@ -27,7 +34,7 @@ describe("App shell and navigation", () => {
     vi.clearAllMocks();
   });
 
-  it("renders the main app shell with header and plan list container", () => {
+  it("renders the main app shell with header, about trigger, and plan list container", () => {
     vi.mocked(client.listPlans).mockResolvedValue([]);
     vi.mocked(client.getCampusOptions).mockResolvedValue([]);
     vi.mocked(client.getSessionOptions).mockResolvedValue([]);
@@ -36,6 +43,7 @@ describe("App shell and navigation", () => {
 
     expect(html).toContain("Animo Plan");
     expect(html).toContain("Archer&#x27;s Hub Enlistment Planner");
+    expect(html).toContain("About");
   });
 
   it("displays the plan's campus and session in header and workspace when a plan is active", () => {
@@ -55,6 +63,7 @@ describe("App shell and navigation", () => {
       React.createElement(AppHeader, {
         activePlan: mockPlan,
         onBackToPlans: vi.fn(),
+        onOpenAbout: vi.fn(),
       })
     );
 
