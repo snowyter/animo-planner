@@ -370,4 +370,27 @@ describe("SectionPicker", () => {
     expect(html).toContain("Missing");
     expect(html).toContain("Remove");
   });
+
+  it("renders close button when onClose is provided", () => {
+    const html = renderToStaticMarkup(
+      React.createElement(SectionPicker, {
+        courses: mockCourses,
+        selectedCourseId: 2923,
+        sections: sampleSections,
+        planSections: [],
+        isLoadingCourses: false,
+        isLoadingSections: false,
+        isMutating: false,
+        error: null,
+        onSelectCourse: vi.fn(),
+        onAddSection: vi.fn(),
+        onRemoveSection: vi.fn(),
+        onTogglePin: vi.fn(),
+        onHoverSection: vi.fn(),
+        onClose: vi.fn(),
+      })
+    );
+
+    expect(html).toContain("Close");
+  });
 });
