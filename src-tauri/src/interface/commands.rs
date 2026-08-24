@@ -281,6 +281,18 @@ fn create_plan_impl(store: &mut Store, args: CreatePlanArgs) -> Result<PlanSumma
     if name.is_empty() {
         return Err("plan name must not be blank".to_string());
     }
+    // The sample scope is reserved for the bundled seed: a plan created in
+    // it would share the fabricated catalog while rendering "Sample Campus"
+    // as if it were a real choice (ticket 27).
+    if args.campus_id == options::SAMPLE_CAMPUS_ID
+        || args.session_id == options::SAMPLE_SESSION_ID
+    {
+        return Err(
+            "the sample campus and session are reserved for the bundled \
+             sample data; pick one of the offered options"
+                .to_string(),
+        );
+    }
     // Validate the scope against the offered options now, so an unknown id
     // fails at creation instead of breaking every later read.
     scope_names(args.campus_id, args.session_id)?;
@@ -1130,6 +1142,71 @@ mod tests {
     }
 
     #[test]
+    fn a_real_manila_plan_created_after_seeding_sees_no_sample_data() {
+        // The exact observation that motivated ticket 27: on a freshly
+        // created Manila / AY2026-27 T1 plan the capture bar used to read
+        // "47 sections from 2 courses" and the picker offered S01–S40B.
+        let (_, handle) = sink_handle(store());
+        seed_sample_and_announce(&handle, &RecordingCaptureEvents::default(), T1)
+            .expect("seed");
+
+        let mut store = store();
+        let summary = create_plan_impl(
+            &mut store,
+            CreatePlanArgs { name: "Real T1 plan".into(), campus_id: 7, session_id: 155 },
+        )
+        .expect("a real plan");
+        assert_eq!(summary.section_count, 0, "the new plan holds no sections");
+        assert_eq!(
+            (summary.campus_id, summary.campus_name.as_str(), summary.session_name.as_str()),
+            (7, "Manila", "AY2026-27 T1"),
+            "the real plan renders its real scope"
+        );
+
+        let guard = handle.lock().unwrap_or_else(|poisoned| poisoned.into_inner());
+        let counter = guard
+            .capture_summary(&CaptureScope { campus_id: 7, session_id: 155 })
+            .expect("capture bar");
+        assert_eq!(
+            (counter.section_count, counter.course_count),
+            (0, 0),
+            "the running counter reads only what the student actually captured"
+        );
+        let offered = list_captured_courses_impl(
+            &guard,
+            CaptureScope { campus_id: 7, session_id: 155 },
+        )
+        .expect("picker");
+        assert!(offered.is_empty(), "the section picker must offer no sample courses");
+    }
+
+    #[test]
+    fn create_plan_cannot_target_the_reserved_sample_scope() {
+        // Ticket 27: the sample scope is reserved for the bundled seed. A
+        // plan created in it would render "Sample Campus · Sample Term"
+        // while sharing the fabricated catalog, so creation must refuse.
+        let mut store = seeded_store();
+        let err = create_plan_impl(
+            &mut store,
+            CreatePlanArgs {
+                name: "Sneaky".into(),
+                campus_id: options::SAMPLE_CAMPUS_ID,
+                session_id: options::SAMPLE_SESSION_ID,
+            },
+        )
+        .expect_err("the reserved sample scope must be refused");
+        assert!(
+            err.to_lowercase().contains("sample"),
+            "the error must name the reservation, got: {err}"
+        );
+        assert_eq!(
+            store.list_plans().expect("list").len(),
+            1,
+            "nothing was created in the sample scope"
+        );
+    }
+
+    #[test]
     fn get_plan_delete_plan_and_membership_round_trip_through_the_seam() {
         let mut store = seeded_store();
 
@@ -1362,10 +1439,59 @@ mod tests {
         let counts = &announced[0];
         assert_eq!(counts.campus_id, summary.campus_id);
         assert_eq!(counts.session_id, summary.session_id);
+        // Ticket 27: the announced counter describes the reserved sample
+        // scope, never a real campus/term the student plans in.
+        assert_eq!(
+            (counts.campus_id, counts.session_id),
+            (options::SAMPLE_CAMPUS_ID, options::SAMPLE_SESSION_ID),
+        );
         // The counter would read zero without this announcement, which is the
         // stale reading ticket 24's first-run path made visible.
         assert!(counts.section_count > 0, "sections seeded but announced as {}", counts.section_count);
         assert!(counts.course_count > 0, "courses seeded but announced as {}", counts.course_count);
+
+        // And the real Manila / AY2026-27 T1 scope stays at zero: a genuine
+        // plan's capture bar must not count the fabricated rows.
+        let real = store_capture_summary(&handle, 7, 155);
+        assert_eq!(
+            (real.section_count, real.course_count),
+            (0, 0),
+            "a real scope must read an empty catalog while only the sample is seeded"
+        );
+    }
+
+    /// Reads one scope's capture summary through the shared handle.
+    fn store_capture_summary(handle: &StoreHandle, campus_id: i64, session_id: i64) -> CaptureSummary {
+        let store = handle.lock().unwrap_or_else(|poisoned| poisoned.into_inner());
+        store
+            .capture_summary(&CaptureScope { campus_id, session_id })
+            .expect("summary")
+    }
+
+    #[test]
+    fn the_seeded_sample_plan_renders_through_the_ordinary_plan_seam() {
+        // Ticket 27: options::campus_name/session_name resolve the reserved
+        // ids to explicitly sample-flavoured names, so the sample plan's
+        // scope renders without any UI special-casing.
+        let (_, handle) = sink_handle(store());
+        seed_sample_and_announce(&handle, &RecordingCaptureEvents::default(), T1)
+            .expect("seed");
+
+        let store = handle.lock().unwrap_or_else(|poisoned| poisoned.into_inner());
+        let listed = list_plans_impl(&store).expect("list plans");
+        let sample = listed.iter().find(|plan| plan.is_sample).expect("sample plan");
+        assert_eq!(
+            (sample.campus_id, sample.session_id),
+            (options::SAMPLE_CAMPUS_ID, options::SAMPLE_SESSION_ID),
+        );
+        assert_eq!(sample.campus_name, "Sample Campus");
+        assert_eq!(sample.session_name, "Sample Term");
+        assert_eq!(sample.section_count, 47);
+
+        let detail = get_plan_impl(&store, sample.id.as_str()).expect("get plan");
+        assert_eq!(detail.campus_name, "Sample Campus");
+        assert_eq!(detail.session_name, "Sample Term");
+        assert_eq!(detail.sections.len(), 47);
     }
 
     #[test]

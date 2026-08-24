@@ -11,8 +11,9 @@ use crate::core::ipc_types::PlanSummary;
 use crate::core::parser::{ParseError, SelectorConfig};
 use crate::core::sample_data;
 
-/// The scope the sample plan is hard-scoped to: the captures' campus and
-/// session (Manila, AY2026-27 T1).
+/// The scope the sample plan is hard-scoped to: the reserved sample
+/// campus and session (ticket 27) — ids that are not Archer's Hub ids and
+/// are never offered, so no real plan can ever read this catalog.
 pub const SAMPLE_SCOPE: CaptureScope = CaptureScope {
     campus_id: sample_data::SAMPLE_CAMPUS_ID,
     session_id: sample_data::SAMPLE_SESSION_ID,
@@ -65,7 +66,8 @@ pub fn seed_sample_plan(store: &mut Store, captured_at: &str) -> Result<PlanSumm
 }
 
 /// The storage row plus the scope names this seed knows — the sample plan is
-/// always scoped to the sample capture.
+/// always scoped to the reserved sample scope, whose explicitly
+/// sample-flavoured names come from [`crate::core::options`] (ticket 27).
 fn summary_from_row(row: PlanSummaryRow) -> PlanSummary {
     PlanSummary {
         id: row.id,
@@ -104,8 +106,8 @@ mod tests {
         assert!(summary.is_sample, "the seeded plan must be visibly marked as sample data");
         assert_eq!(summary.id, sample_data::SAMPLE_PLAN_ID);
         assert_eq!(summary.name, sample_data::SAMPLE_PLAN_NAME);
-        assert_eq!(summary.campus_name, "Manila");
-        assert_eq!(summary.session_name, "AY2026-27 T1");
+        assert_eq!(summary.campus_name, "Sample Campus");
+        assert_eq!(summary.session_name, "Sample Term");
         assert_eq!(summary.section_count, 47);
 
         assert_eq!(count(&store.conn, "SELECT COUNT(*) FROM plans"), 1);
@@ -202,8 +204,10 @@ mod tests {
     fn the_sample_plan_differs_from_student_plans_only_by_the_marker() {
         let mut store = store();
         seed_sample_plan(&mut store, T1).expect("seed");
+        // A student plan in the real Manila / AY2026-27 T1 scope — never the
+        // reserved sample scope (ticket 27).
         store
-            .create_plan("student-plan", "T1 load", &SAMPLE_SCOPE, T1, false)
+            .create_plan("student-plan", "T1 load", &REAL_SCOPE, T1, false)
             .expect("a student plan");
 
         let mut stmt = store
@@ -219,6 +223,142 @@ mod tests {
             rows,
             vec![("sample-plan".to_string(), 1), ("student-plan".to_string(), 0)],
             "both plans live in the same table; only the marker distinguishes them"
+        );
+    }
+
+    /// The real Manila / AY2026-27 T1 scope the fixtures were captured under.
+    const REAL_SCOPE: CaptureScope = CaptureScope { campus_id: 7, session_id: 155 };
+
+    #[test]
+    fn seeding_leaves_every_real_scope_catalog_empty() {
+        // Ticket 27: captured courses and sections are keyed by
+        // (campus_id, session_id). The seed must land in the reserved sample
+        // scope so a genuine Manila / AY2026-27 T1 plan reads an empty
+        // catalog while the sample plan is seeded.
+        let mut store = store();
+        let summary = seed_sample_plan(&mut store, T1).expect("seed");
+
+        assert_eq!(summary.section_count, 47, "the sample plan itself is fully populated");
+        assert_ne!(
+            (summary.campus_id, summary.session_id),
+            (REAL_SCOPE.campus_id, REAL_SCOPE.session_id),
+            "the seed must not share the real scope"
+        );
+
+        let real_summary = store.capture_summary(&REAL_SCOPE).expect("real-scope summary");
+        assert_eq!(
+            (real_summary.section_count, real_summary.course_count),
+            (0, 0),
+            "a real scope must report zero captured sections and zero courses"
+        );
+        assert!(
+            store.captured_courses(&REAL_SCOPE).expect("real courses").is_empty(),
+            "no sample course may surface in a real scope's catalog"
+        );
+        assert!(
+            store
+                .captured_sections(&REAL_SCOPE, 2923)
+                .expect("real sections")
+                .is_empty(),
+            "no sample section may be offered to a real plan"
+        );
+    }
+
+    #[test]
+    fn the_seeded_sample_plan_still_solves_conflict_free_and_exports() {
+        // Ticket 27: isolating the seed into its reserved scope must leave
+        // the sample plan's own end-to-end behaviour untouched — solve,
+        // conflicts, and export all run through the ordinary paths.
+        use crate::core::ipc_types::{Preset, SectionRef, SolveOptions, SolveStatus};
+        use crate::core::solver::{FixedSection, Solver};
+
+        let mut store = store();
+        seed_sample_plan(&mut store, T1).expect("seed");
+
+        // Trim to one chosen CSINTSY section, as a student mid-pick would,
+        // so the solve has an unassigned course to fill.
+        let detail = store.get_plan(sample_data::SAMPLE_PLAN_ID).expect("detail");
+        let mut pinned: Option<(i64, i64)> = None;
+        for section in &detail.sections {
+            if pinned.is_none() && section.course_id == 2923 {
+                pinned = Some((section.course_id, section.section_id));
+            } else {
+                store
+                    .remove_section_from_plan(
+                        sample_data::SAMPLE_PLAN_ID,
+                        section.course_id,
+                        section.section_id,
+                    )
+                    .expect("trim membership");
+            }
+        }
+
+        // The solve inputs derive from the plan itself, exactly as
+        // `begin_solve` does — including the scope read off the plan row.
+        let detail = store.get_plan(sample_data::SAMPLE_PLAN_ID).expect("trimmed detail");
+        assert_eq!(detail.sections.len(), 1, "one pinned section remains");
+        let scope = CaptureScope {
+            campus_id: detail.summary.campus_id,
+            session_id: detail.summary.session_id,
+        };
+        assert_eq!(scope, SAMPLE_SCOPE, "the sample plan solves within its reserved scope");
+        let fixed: Vec<FixedSection> = detail
+            .sections
+            .iter()
+            .map(|section| FixedSection {
+                course_id: section.course_id,
+                course_code: section.course_code.clone(),
+                section_id: section.section_id,
+                section_code: section.section_code.clone(),
+                blocks: section.blocks.clone(),
+            })
+            .collect();
+        let catalog = store.solver_courses(&scope).expect("catalog");
+        assert_eq!(catalog.len(), 2, "both sample courses remain candidates");
+
+        let options = SolveOptions {
+            preset: Preset::FewestCampusDays,
+            day_blacklist: vec![],
+            earliest_start_min: None,
+            latest_end_min: None,
+            exclude_full: false,
+            result_limit: 12,
+        };
+        let outcome = Solver::new(catalog, fixed, options).run();
+        assert_eq!(outcome.status, SolveStatus::Complete);
+        assert!(
+            !outcome.solutions.is_empty(),
+            "GEARTAP must offer sections outside the chosen CSINTSY times"
+        );
+
+        // Applying the best solution keeps the plan conflict-free...
+        let refs: Vec<SectionRef> = outcome.solutions[0]
+            .sections
+            .iter()
+            .map(|section| SectionRef {
+                course_id: section.course_id,
+                section_id: section.section_id,
+            })
+            .collect();
+        store
+            .apply_solution(sample_data::SAMPLE_PLAN_ID, &refs)
+            .expect("apply");
+        assert!(
+            store
+                .conflicts_in_plan(sample_data::SAMPLE_PLAN_ID)
+                .expect("conflicts")
+                .is_empty(),
+            "the solved sample plan is conflict-free"
+        );
+
+        // ...and it still exports a valid calendar (ticket 17 path).
+        let plan = store
+            .load_plan_ics_export(sample_data::SAMPLE_PLAN_ID)
+            .expect("every applied section carries its term dates");
+        let out = crate::core::ics::export_plan_ics(&plan.name, &plan.sections, chrono::Utc::now());
+        assert!(
+            out.contents.matches("BEGIN:VEVENT").count() >= 2,
+            "pinned + solved sections each recur per block"
         );
     }
 }

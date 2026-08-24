@@ -3,24 +3,28 @@
 //! The two scrubbed Course Finder captures from ticket 01 are embedded at
 //! compile time, so seeding works with no network connection and no ERP
 //! credentials. Parsing runs through the real parser (ticket 04); nothing
-//! here invents section rows.
+//! here invents section rows. Since ticket 27 the seed lands under a
+//! reserved scope (see [`SAMPLE_CAMPUS_ID`]) so the fabricated captures can
+//! never be mistaken for data captured from Archer's Hub.
 
 use crate::core::options;
 use crate::core::parser::{self, ParseError, ParsedSection, SelectorConfig};
 
-/// The campus and session the fixtures were captured under: Manila,
-/// AY2026-27 T1. The ids are fixture facts; the *names* are not restated
-/// here — they come from [`crate::core::options`], the single source
-/// (ticket 25), so a rename cannot drift between surfaces.
-pub const SAMPLE_CAMPUS_ID: i64 = 7;
-pub const SAMPLE_SESSION_ID: i64 = 155;
+/// The campus and session the sample data is seeded under (ticket 27):
+/// reserved ids from [`crate::core::options`] that are not Archer's Hub
+/// ids and are never offered, so nothing captured from the live site can
+/// land in the sample scope and `create_plan` can never target it. The
+/// *names* are not restated here — they come from
+/// [`crate::core::options`], the single source (ticket 25), so a rename
+/// cannot drift between surfaces.
+pub use crate::core::options::{SAMPLE_CAMPUS_ID, SAMPLE_SESSION_ID};
 pub const SAMPLE_CAMPUS_NAME: &str = match options::campus_name(SAMPLE_CAMPUS_ID) {
     Some(name) => name,
-    None => panic!("the sample campus id must be one of the offered campus options"),
+    None => panic!("the reserved sample campus id must resolve to a name"),
 };
 pub const SAMPLE_SESSION_NAME: &str = match options::session_name(SAMPLE_SESSION_ID) {
     Some(name) => name,
-    None => panic!("the sample session id must be one of the offered session options"),
+    None => panic!("the reserved sample session id must resolve to a name"),
 };
 
 /// Reserved plan id and display name for the seeded sample plan.
@@ -100,11 +104,21 @@ mod tests {
     }
 
     #[test]
-    fn sample_scope_matches_the_verified_capture_context() {
-        assert_eq!(SAMPLE_CAMPUS_ID, 7);
-        assert_eq!(SAMPLE_SESSION_ID, 155);
+    fn sample_scope_is_reserved_never_a_real_capture_context() {
+        // Ticket 27: the fixtures were captured under Manila / AY2026-27 T1,
+        // but the seed must live under ids that are NOT that real scope, or
+        // every real plan in Manila / AY2026-27 T1 reads the sample rows out
+        // of the same catalog. The reserved ids come from core::options,
+        // which resolves them to explicitly sample-flavoured names.
+        assert_eq!(SAMPLE_CAMPUS_ID, options::SAMPLE_CAMPUS_ID);
+        assert_eq!(SAMPLE_SESSION_ID, options::SAMPLE_SESSION_ID);
+        assert_ne!(
+            (SAMPLE_CAMPUS_ID, SAMPLE_SESSION_ID),
+            (7, 155),
+            "the sample scope must not be the verified Manila / AY2026-27 T1 scope"
+        );
         // Names are derived from core::options, never restated here.
-        assert_eq!(SAMPLE_CAMPUS_NAME, "Manila");
-        assert_eq!(SAMPLE_SESSION_NAME, "AY2026-27 T1");
+        assert_eq!(SAMPLE_CAMPUS_NAME, "Sample Campus");
+        assert_eq!(SAMPLE_SESSION_NAME, "Sample Term");
     }
 }

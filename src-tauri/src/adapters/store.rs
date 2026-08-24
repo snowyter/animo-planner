@@ -259,13 +259,88 @@ ALTER TABLE sections ADD COLUMN start_date TEXT;
 ALTER TABLE sections ADD COLUMN end_date TEXT;
 "#;
 
-const MIGRATIONS: &[&str] = &[MIGRATION_V1, MIGRATION_V2, MIGRATION_V3, MIGRATION_V4];
+/// Migration 5 (ticket 27): legacy sample data leaves the real scope.
+///
+/// Databases written before ticket 27 seeded the fabricated captures under
+/// the fixtures' real capture context — Manila / AY2026-27 T1 — where every
+/// genuine plan in that scope read them out of the same catalog and the
+/// capture counter counted them. This migration relocates what the seed
+/// introduced into the reserved sample scope
+/// ([`crate::core::options::SAMPLE_CAMPUS_ID`],
+/// [`crate::core::options::SAMPLE_SESSION_ID`]):
+///
+/// - a course moves only when no non-sample plan claims any of its
+///   sections; every section no non-sample plan claims then follows its
+///   course. Courses relocate atomically, so a section's course is always
+///   present in the scope the section points at;
+/// - anything a student plan claims stays exactly where it is — dedupe can
+///   have merged a real capture of GEARTAP or CSINTSY into the seeded rows,
+///   and those rows are now genuine captures;
+/// - the sample plan itself follows its data, so it renders as
+///   "Sample Campus · Sample Term" instead of claiming Manila.
+///
+/// Nothing is deleted here or anywhere (ADR-0008). Residue of a seed whose
+/// sample plan was already deleted carries no marker and stays put — it is
+/// indistinguishable from a real capture by design of the old layout.
+fn migration_v5() -> String {
+    // The scope pre-ticket-27 builds seeded into: the fixtures' verified
+    // capture context (SPEC §2). Restated here once, because they name
+    // history — where old databases' rows sit — not current state.
+    const LEGACY_CAMPUS_ID: i64 = 7;
+    const LEGACY_SESSION_ID: i64 = 155;
+    format!(
+        r#"PRAGMA defer_foreign_keys = ON;
+
+UPDATE courses SET campus_id = {sample_campus}, session_id = {sample_session}
+WHERE campus_id = {legacy_campus} AND session_id = {legacy_session}
+  AND NOT EXISTS (
+      SELECT 1 FROM sections s
+      JOIN plan_sections ps ON ps.section_fk = s.id
+      JOIN plans p ON p.id = ps.plan_id
+      WHERE s.campus_id = {legacy_campus} AND s.session_id = {legacy_session}
+        AND s.course_id = courses.course_id
+        AND p.id <> 'sample-plan'
+  );
+
+UPDATE sections SET campus_id = {sample_campus}, session_id = {sample_session}
+WHERE campus_id = {legacy_campus} AND session_id = {legacy_session}
+  AND id NOT IN (
+      SELECT ps.section_fk FROM plan_sections ps
+      JOIN plans p ON p.id = ps.plan_id
+      WHERE p.id <> 'sample-plan'
+  )
+  AND course_id IN (
+      SELECT c2.course_id FROM courses c2
+      WHERE c2.campus_id = {sample_campus} AND c2.session_id = {sample_session}
+  );
+
+UPDATE plans SET campus_id = {sample_campus}, session_id = {sample_session}
+WHERE id = 'sample-plan' AND is_sample = 1
+  AND campus_id = {legacy_campus} AND session_id = {legacy_session};
+"#,
+        sample_campus = crate::core::options::SAMPLE_CAMPUS_ID,
+        sample_session = crate::core::options::SAMPLE_SESSION_ID,
+        legacy_campus = LEGACY_CAMPUS_ID,
+        legacy_session = LEGACY_SESSION_ID,
+    )
+}
+
+fn migrations() -> Vec<String> {
+    vec![
+        MIGRATION_V1.to_string(),
+        MIGRATION_V2.to_string(),
+        MIGRATION_V3.to_string(),
+        MIGRATION_V4.to_string(),
+        migration_v5(),
+    ]
+}
 
 /// Runs every migration not yet applied, tracked by `PRAGMA user_version`.
 /// Idempotent: safe to run on a fresh database and on an existing one.
 pub fn migrate(conn: &Connection) -> Result<(), StoreError> {
+    let migrations = migrations();
     let version: i64 = conn.query_row("PRAGMA user_version", [], |row| row.get(0))?;
-    for (index, migration) in MIGRATIONS.iter().enumerate() {
+    for (index, migration) in migrations.iter().enumerate() {
         let target = (index + 1) as i64;
         if version >= target {
             continue;
@@ -1960,7 +2035,7 @@ mod tests {
             .conn
             .query_row("PRAGMA user_version", [], |row| row.get(0))
             .expect("user_version must be readable");
-        assert_eq!(version, 4, "all four migrations apply exactly once");
+        assert_eq!(version, 5, "all five migrations apply exactly once");
     }
 
     #[test]
@@ -2411,7 +2486,7 @@ mod tests {
             .conn
             .query_row("PRAGMA user_version", [], |row| row.get(0))
             .expect("user_version must be readable");
-        assert_eq!(version, 4, "a fresh database runs all four migrations");
+        assert_eq!(version, 5, "a fresh database runs all five migrations");
         assert!(
             column_names(&store.conn, "plans").contains(&"is_sample".to_string()),
             "plans must carry the sample-data marker"
@@ -2425,7 +2500,7 @@ mod tests {
             .conn
             .query_row("PRAGMA user_version", [], |row| row.get(0))
             .expect("user_version must be readable");
-        assert_eq!(version, 4, "a fresh database runs all four migrations");
+        assert_eq!(version, 5, "a fresh database runs all five migrations");
         assert!(
             column_names(&store.conn, "plan_sections").contains(&"missing".to_string()),
             "plan_sections must carry the missing marker"
@@ -2449,7 +2524,7 @@ mod tests {
         let version: i64 = conn
             .query_row("PRAGMA user_version", [], |row| row.get(0))
             .expect("user_version");
-        assert_eq!(version, 4);
+        assert_eq!(version, 5);
         let is_sample: i64 = conn
             .query_row("SELECT is_sample FROM plans WHERE id = 'p1'", [], |row| row.get(0))
             .expect("is_sample must be readable");
@@ -2483,11 +2558,141 @@ mod tests {
         let version: i64 = conn
             .query_row("PRAGMA user_version", [], |row| row.get(0))
             .expect("user_version");
-        assert_eq!(version, 4);
+        assert_eq!(version, 5);
         let missing: i64 = conn
             .query_row("SELECT missing FROM plan_sections", [], |row| row.get(0))
             .expect("missing must be readable");
         assert_eq!(missing, 0, "memberships created before v3 are not missing");
+    }
+
+    #[test]
+    fn upgrading_a_version_four_database_moves_legacy_sample_rows_to_the_reserved_scope() {
+        use crate::core::options::{SAMPLE_CAMPUS_ID, SAMPLE_SESSION_ID};
+
+        let conn = Connection::open_in_memory().expect("in-memory connection");
+        conn.execute_batch(MIGRATION_V1).expect("v1 schema must apply");
+        conn.execute_batch(MIGRATION_V2).expect("v2 schema must apply");
+        conn.execute_batch(MIGRATION_V3).expect("v3 schema must apply");
+        conn.execute_batch(MIGRATION_V4).expect("v4 schema must apply");
+        conn.pragma_update(None, "user_version", 4).expect("user_version");
+
+        // A pre-ticket-27 database: the fabricated captures were seeded into
+        // the real Manila / AY2026-27 T1 scope. Alongside them sit a genuine
+        // capture of another course, and GEARTAP captured for real too — its
+        // row is shared by the sample plan and a student plan, because dedupe
+        // merges captures on the natural key.
+        conn.execute_batch(
+            "INSERT INTO courses (campus_id, session_id, course_id, code, title) VALUES
+                (7, 155, 2923, 'CSINTSY', 'INTRODUCTION TO INTELLIGENT SYSTEMS'),
+                (7, 155, 564,  'GEARTAP', 'GENERAL ENGINEERING ARTICULATION TRACK'),
+                (7, 155, 3000, 'REALC',   'A REAL CAPTURE');
+             INSERT INTO sections (campus_id, session_id, course_id, section_id, section_code,
+                                   first_seen_at, last_seen_at) VALUES
+                (7, 155, 2923, 384, 'S01', 't', 't'),
+                (7, 155, 564,  737, 'Y11', 't', 't'),
+                (7, 155, 3000, 400, 'S01', 't', 't');
+             INSERT INTO plans (id, name, campus_id, session_id, created_at, is_sample) VALUES
+                ('sample-plan', 'Sample data', 7, 155, 't', 1),
+                ('p1',          'T1 load',     7, 155, 't', 0);
+             INSERT INTO plan_sections (plan_id, section_fk, pinned, missing) VALUES
+                ('sample-plan', 1, 0, 0),
+                ('sample-plan', 2, 0, 0),
+                ('p1',          2, 0, 0),
+                ('p1',          3, 0, 0);
+             INSERT INTO snapshots (section_fk, captured_at, enrolled, teacher) VALUES
+                (1, 't', 10, NULL),
+                (2, 't', 20, 'X'),
+                (3, 't', 30, NULL);",
+        )
+        .expect("legacy rows");
+
+        migrate(&conn).expect("the v5 migration must run on the existing database");
+
+        let version: i64 = conn
+            .query_row("PRAGMA user_version", [], |row| row.get(0))
+            .expect("user_version");
+        assert_eq!(version, 5);
+
+        // The old sample plan follows its data into the reserved scope, so
+        // it renders as Sample Campus / Sample Term instead of claiming
+        // Manila / AY2026-27 T1 — never a plan the student cannot explain.
+        let mut stmt = conn
+            .prepare("SELECT id, campus_id, session_id FROM plans ORDER BY id")
+            .expect("prepare");
+        let plans: Vec<(String, i64, i64)> = stmt
+            .query_map([], |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)))
+            .expect("query")
+            .map(|row| row.expect("row"))
+            .collect();
+        assert_eq!(
+            plans,
+            vec![
+                ("p1".to_string(), 7, 155),
+                ("sample-plan".to_string(), SAMPLE_CAMPUS_ID, SAMPLE_SESSION_ID),
+            ],
+        );
+
+        // Sample-only rows moved; anything a student plan claims stays.
+        let mut stmt = conn
+            .prepare(
+                "SELECT campus_id, session_id, course_id, section_id
+                 FROM sections ORDER BY id",
+            )
+            .expect("prepare");
+        let sections: Vec<(i64, i64, i64, i64)> = stmt
+            .query_map([], |row| {
+                Ok((row.get(0)?, row.get(1)?, row.get(2)?, row.get(3)?))
+            })
+            .expect("query")
+            .map(|row| row.expect("row"))
+            .collect();
+        assert_eq!(
+            sections,
+            vec![
+                (SAMPLE_CAMPUS_ID, SAMPLE_SESSION_ID, 2923, 384),
+                (7, 155, 564, 737),
+                (7, 155, 3000, 400),
+            ],
+            "only rows exclusively owned by the sample plan relocate"
+        );
+
+        // The course emptied by the move follows; the others stay.
+        let mut stmt = conn
+            .prepare("SELECT campus_id, session_id, course_id FROM courses ORDER BY course_id")
+            .expect("prepare");
+        let courses: Vec<(i64, i64, i64)> = stmt
+            .query_map([], |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)))
+            .expect("query")
+            .map(|row| row.expect("row"))
+            .collect();
+        assert_eq!(
+            courses,
+            vec![
+                (7, 155, 564),
+                (SAMPLE_CAMPUS_ID, SAMPLE_SESSION_ID, 2923),
+                (7, 155, 3000),
+            ],
+        );
+
+        // Nothing is hard-deleted in the process (ADR-0008).
+        assert_eq!(
+            count(&conn, "SELECT COUNT(*) FROM sections"),
+            3,
+            "every section survives the relocation"
+        );
+        assert_eq!(count(&conn, "SELECT COUNT(*) FROM snapshots"), 3);
+        assert_eq!(count(&conn, "SELECT COUNT(*) FROM plan_sections"), 4);
+
+        // After the relocation the real Manila / AY2026-27 T1 catalog holds
+        // only what the student actually captured: one course, two sections.
+        let summary_sections: i64 = conn
+            .query_row(
+                "SELECT COUNT(*) FROM sections WHERE campus_id = 7 AND session_id = 155",
+                [],
+                |row| row.get(0),
+            )
+            .expect("real-scope count");
+        assert_eq!(summary_sections, 2);
     }
 
     #[test]
@@ -2510,6 +2715,50 @@ mod tests {
             vec![("normal".to_string(), 0), ("sample".to_string(), 1)],
             "only the seeded plan carries the sample marker"
         );
+    }
+
+    #[test]
+    fn seeded_sample_rows_are_invisible_to_a_real_scope() {
+        // Ticket 27: the sample data must live under a reserved scope that
+        // no real plan reads, so the capture counter and the section picker
+        // of a genuine Manila / AY2026-27 T1 plan see an empty catalog.
+        let mut store = store();
+        let sections = [
+            parsed_section(2923, 384, "S01", None, Some(10), vec![online_block(Day::Mon, 450, 540)]),
+            parsed_section(564, 737, "Y11", None, Some(20), vec![room_block(Day::Tue, 870, 960, "L226")]),
+        ];
+        let sample_scope = CaptureScope {
+            campus_id: crate::core::sample_data::SAMPLE_CAMPUS_ID,
+            session_id: crate::core::sample_data::SAMPLE_SESSION_ID,
+        };
+        store
+            .seed_sample_plan(
+                &sample_scope,
+                crate::core::sample_data::SAMPLE_PLAN_ID,
+                "Sample data",
+                &[&sections[..]],
+                T1,
+            )
+            .expect("seed");
+
+        let summary = store.capture_summary(&SCOPE).expect("real-scope summary");
+        assert_eq!(
+            (summary.section_count, summary.course_count),
+            (0, 0),
+            "the capture counter must read only what the student actually captured"
+        );
+        assert!(
+            store.captured_courses(&SCOPE).expect("courses").is_empty(),
+            "the section picker must not offer sample courses to a real plan"
+        );
+        assert!(
+            store.captured_sections(&SCOPE, 2923).expect("sections").is_empty(),
+            "the section picker must not offer sample sections to a real plan"
+        );
+
+        let sample_summary = store.capture_summary(&sample_scope).expect("sample-scope summary");
+        assert_eq!(sample_summary.section_count, 2, "the seed lives in its own scope");
+        assert_eq!(store.captured_courses(&sample_scope).expect("sample courses").len(), 2);
     }
 
     #[test]
