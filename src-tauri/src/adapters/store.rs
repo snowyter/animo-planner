@@ -840,6 +840,15 @@ impl Store {
                     )?;
                 }
             } else {
+                // The section itself is going away, so everything pointing at
+                // it goes too. Deleting only the snapshot this batch appended
+                // left any other snapshot -- a refresh appends one without
+                // touching the journal -- referencing a row about to vanish,
+                // which surfaced as a bare "FOREIGN KEY constraint failed".
+                tx.execute(
+                    "DELETE FROM snapshots WHERE section_fk = ?1",
+                    [record.section_fk],
+                )?;
                 tx.execute(
                     "DELETE FROM schedule_blocks WHERE section_fk = ?1",
                     [record.section_fk],
@@ -848,12 +857,26 @@ impl Store {
             }
         }
         for course in &batch.courses {
-            if !course.existed_before {
-                tx.execute(
-                    "DELETE FROM courses WHERE campus_id = ?1 AND session_id = ?2 AND course_id = ?3",
-                    rusqlite::params![course.campus_id, course.session_id, course.course_id],
-                )?;
+            if course.existed_before {
+                continue;
             }
+            // A course can have gained sections since the batch introduced it
+            // -- a refresh finding one the capture never saw. Those sections
+            // reference the course row, so it is kept: undo removes what the
+            // batch introduced, not what outlived it.
+            let still_has_sections: bool = tx.query_row(
+                "SELECT EXISTS(SELECT 1 FROM sections
+                 WHERE campus_id = ?1 AND session_id = ?2 AND course_id = ?3)",
+                rusqlite::params![course.campus_id, course.session_id, course.course_id],
+                |row| row.get(0),
+            )?;
+            if still_has_sections {
+                continue;
+            }
+            tx.execute(
+                "DELETE FROM courses WHERE campus_id = ?1 AND session_id = ?2 AND course_id = ?3",
+                rusqlite::params![course.campus_id, course.session_id, course.course_id],
+            )?;
         }
         tx.commit()?;
         Ok(())
@@ -3740,6 +3763,92 @@ mod tests {
             listed.iter().map(|course| course.course_id).collect::<Vec<_>>(),
             vec![564],
             "list_captured_courses reflects the removal immediately"
+        );
+    }
+
+    /// A refresh appends a snapshot without touching the undo journal, so a
+    /// section the batch inserted can carry snapshots the batch did not.
+    /// Undo deleted only the snapshot it appended and then deleted the
+    /// section, leaving the rest pointing at nothing: "sqlite error: FOREIGN
+    /// KEY constraint failed", with no plan involved at all.
+    #[test]
+    fn undo_reverses_a_section_that_gained_snapshots_after_the_batch() {
+        let mut store = store();
+        store.create_plan("p1", "First", &SCOPE, T1, false).expect("plan");
+        store
+            .record_capture(
+                &SCOPE,
+                &[parsed_section(2923, 384, "S01", None, Some(10), vec![])],
+                T1,
+            )
+            .expect("capture inserts the section");
+
+        // A refresh of the same course appends a second snapshot.
+        store
+            .apply_refresh(
+                "p1",
+                2923,
+                &[parsed_section(2923, 384, "S01", None, Some(12), vec![])],
+                T2,
+            )
+            .expect("refresh appends a snapshot");
+        assert_eq!(count(&store.conn, "SELECT COUNT(*) FROM snapshots"), 2);
+
+        assert!(
+            store.undo_last_capture().expect("undo must not hit the foreign key"),
+            "the batch is reversible even though the section outlived its snapshot"
+        );
+
+        assert_eq!(count(&store.conn, "SELECT COUNT(*) FROM sections"), 0);
+        assert_eq!(
+            count(&store.conn, "SELECT COUNT(*) FROM snapshots"),
+            0,
+            "a removed section takes every snapshot with it"
+        );
+        assert_eq!(count(&store.conn, "SELECT COUNT(*) FROM courses"), 0);
+    }
+
+    /// Undo deletes the course rows the batch introduced, but a course can
+    /// have gained sections since. Removing it then breaks their foreign key.
+    #[test]
+    fn undo_keeps_a_course_that_still_has_sections() {
+        let mut store = store();
+        store.create_plan("p1", "First", &SCOPE, T1, false).expect("plan");
+        store
+            .record_capture(
+                &SCOPE,
+                &[parsed_section(2923, 384, "S01", None, Some(10), vec![])],
+                T1,
+            )
+            .expect("capture inserts course and section");
+
+        // The refresh finds a section the capture never saw.
+        store
+            .apply_refresh(
+                "p1",
+                2923,
+                &[
+                    parsed_section(2923, 384, "S01", None, Some(10), vec![]),
+                    parsed_section(2923, 385, "S02", None, Some(20), vec![]),
+                ],
+                T2,
+            )
+            .expect("refresh adds a second section");
+
+        assert!(
+            store.undo_last_capture().expect("undo must not hit the foreign key"),
+            "the batch reverses even though the course outlived it"
+        );
+
+        assert_eq!(
+            count(&store.conn, "SELECT COUNT(*) FROM courses"),
+            1,
+            "a course that still has sections is kept"
+        );
+        assert_eq!(
+            count(&store.conn, "SELECT COUNT(*) FROM sections"),
+            1,
+            "only what the batch introduced is removed"
         );
     }
 
