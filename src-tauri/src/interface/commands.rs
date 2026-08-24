@@ -583,7 +583,12 @@ pub fn apply_solution(
 /// scope (ticket 10). The popup is a separate window where the student
 /// signs in manually; its injected script posts captures to the loopback
 /// endpoint. The remote origin never gets Tauri IPC (ADR-0003).
-#[tauri::command]
+// Runs off the interface thread. Tauri executes a plain `#[tauri::command]`
+// on the main thread, which is the event loop thread; creating a webview
+// window there deadlocks, because `build()` waits for a window-creation the
+// blocked loop can never deliver. The symptom is a white popup that ignores
+// its own close button and a `build()` that never returns.
+#[tauri::command(async)]
 pub fn open_capture_window(
     args: CampusSessionArgs,
     app: tauri::AppHandle,
@@ -624,7 +629,9 @@ pub fn undo_last_capture(
 /// Signs the student out of the capture popup (ticket 10): destroys the
 /// window and wipes its persisted WebView profile. The control is surfaced
 /// by ticket 23; this command does the wiping.
-#[tauri::command]
+// Off the interface thread for the same reason as `open_capture_window`:
+// destroying a window also has to reach the event loop.
+#[tauri::command(async)]
 pub fn clear_browser_session(app: tauri::AppHandle) -> Result<(), String> {
     capture_window::clear_browser_session(&app)
 }
@@ -1302,6 +1309,31 @@ mod tests {
     fn sink_handle(store: Store) -> (StoreHandle, StoreHandle) {
         let handle: StoreHandle = StdArc::new(StdMutex::new(store));
         (handle.clone(), handle)
+    }
+
+    /// Creating or destroying a webview window has to reach the event loop.
+    /// Tauri runs a plain `#[tauri::command]` on the main thread -- which *is*
+    /// the event loop thread -- so `build()` there waits for a window creation
+    /// the blocked loop can never deliver: the popup renders white, ignores
+    /// its close button, and `build()` never returns. No async test can catch
+    /// this, because the deadlock needs Tauri's real main thread; a source
+    /// guard is the honest way to hold the invariant.
+    #[test]
+    fn window_commands_run_off_the_main_thread() {
+        let src = std::fs::read_to_string("src/interface/commands.rs")
+            .expect("commands.rs must be readable from the package root");
+
+        for name in ["open_capture_window", "clear_browser_session"] {
+            let decl = format!("pub fn {name}(");
+            let at = src
+                .find(&decl)
+                .unwrap_or_else(|| panic!("{name} must be declared in this file"));
+            let preceding = src[..at].trim_end();
+            assert!(
+                preceding.ends_with("#[tauri::command(async)]"),
+                "{name} touches a webview window, so it must be declared                  #[tauri::command(async)] to run off the main thread;                  a plain #[tauri::command] deadlocks the event loop"
+            );
+        }
     }
 
     // ---------- sample seed announces like any other capture ----------
