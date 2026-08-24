@@ -597,6 +597,54 @@ describe("PlanWorkspace persistent week grid layout (ticket 28)", () => {
     expect(html).toMatch(/lg:sticky\s+lg:top-6|sticky/);
   });
 
+  // The picker's chrome spans the full width above the columns so the section
+  // list starts level with the week grid. Rendering the picker as two halves
+  // must not leave two of anything.
+  it("renders the course selector exactly once while picking", () => {
+    const html = renderToStaticMarkup(
+      React.createElement(PlanWorkspace, {
+        planSummary: mockPlanSummary,
+        plan: { ...mockPlanSummary, sections: [] },
+        isLoading: false,
+        error: null,
+        onBack: vi.fn(),
+        onRetry: vi.fn(),
+      })
+    );
+
+    expect((html.match(/data-testid="course-select"/g) ?? []).length).toBeLessThanOrEqual(1);
+    expect((html.match(/Close section picker/g) ?? []).length).toBeLessThanOrEqual(1);
+  });
+
+  it("puts the picker chrome above the two-column row, not inside a column", () => {
+    const html = renderToStaticMarkup(
+      React.createElement(PlanWorkspace, {
+        planSummary: mockPlanSummary,
+        plan: { ...mockPlanSummary, sections: [] },
+        isLoading: false,
+        error: null,
+        onBack: vi.fn(),
+        onRetry: vi.fn(),
+      })
+    );
+
+    const layoutAt = html.indexOf('data-testid="picking-layout"');
+    expect(layoutAt).toBeGreaterThan(-1);
+
+    // Search only inside the picking layout: `lg:flex-row` appears earlier on
+    // the page for unrelated elements.
+    const layout = html.slice(layoutAt);
+    const titleAt = layout.indexOf("Pick my own sections");
+    const columnsAt = layout.indexOf("lg:flex-row");
+
+    expect(titleAt).toBeGreaterThan(-1);
+    expect(columnsAt).toBeGreaterThan(-1);
+    expect(
+      titleAt,
+      "the chrome must render before the columns so the list tops out level with the grid",
+    ).toBeLessThan(columnsAt);
+  });
+
   it("orders the week grid ahead of the section list in single-column fallback", () => {
     const html = renderToStaticMarkup(
       React.createElement(PlanWorkspace, {

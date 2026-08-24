@@ -203,7 +203,12 @@ export function WeekGrid({
                 return (
                   <div
                     key={startMin}
-                    className="absolute right-2 -translate-y-2 text-[11px] font-mono font-medium text-slate-400 select-none pointer-events-none"
+                    className={`absolute right-2 text-[11px] font-mono font-medium text-slate-400 select-none pointer-events-none ${
+                      // The first label sits on the canvas edge, so lifting it
+                      // the way the others are lifted clipped it against the
+                      // header above.
+                      pos.topPercent <= 0 ? "translate-y-0" : "-translate-y-2"
+                    }`}
                     style={{ top: `${pos.topPercent}%` }}
                   >
                     {formatMinutesToTime24(startMin)}

@@ -476,19 +476,39 @@ export function PlanWorkspace({
         </div>
 
         {isPickerOpen ? (
-          /* Persistent picking layout. Two columns from `lg:` (1024px), not
-             `xl:` (1280px): the app opens at 1200x800 per tauri.conf.json, so
-             an xl-gated layout leaves every fresh install stacked with the
-             grid scrolled out of view -- the exact problem this layout exists
-             to solve. The grid takes the larger share; the picker is the tool,
+          /* Picking layout. The picker's chrome -- title, course selector, and
+             the selected-course banner -- spans the full width above, so the
+             section list below starts level with the week grid instead of
+             being pushed down by its own header. Two columns from `lg:`
+             (1024px): the app ships at 1400x900, and gating this at `xl:`
+             once left every fresh install stacked with the grid scrolled out
+             of view. The grid takes the larger share; the picker is the tool,
              the grid is the artifact. */
-          <div
-            data-testid="picking-layout"
-            className="flex flex-col lg:flex-row items-stretch gap-6"
-          >
-            {/* Section picker column: left on desktop, below the grid when stacked */}
+          <div data-testid="picking-layout" className="space-y-4">
+            <SectionPicker
+              render="chrome"
+              courses={courses}
+              selectedCourseId={selectedCourseId}
+              sections={sections}
+              planSections={currentSections}
+              isLoadingCourses={isLoadingCourses}
+              isLoadingSections={isLoadingSections}
+              isMutating={isMutating}
+              error={pickerError}
+              onSelectCourse={selectCourse}
+              onAddSection={handleAddSection}
+              onRemoveSection={handleRemoveSection}
+              onRemoveCourse={handleRemoveCourse}
+              onTogglePin={handleTogglePin}
+              onHoverSection={setHoveredSection}
+              onClose={() => setIsPickerOpen(false)}
+            />
+
+            <div className="flex flex-col lg:flex-row items-start gap-6">
+            {/* Section list column: left on desktop, below the grid when stacked */}
             <div className="w-full lg:w-[380px] xl:w-[440px] lg:shrink-0 min-w-0 order-2 lg:order-1">
               <SectionPicker
+                render="list"
                 courses={courses}
                 selectedCourseId={selectedCourseId}
                 sections={sections}
@@ -531,6 +551,7 @@ export function PlanWorkspace({
                 ghostSection={hoveredSection}
                 conflicts={conflicts}
               />
+            </div>
             </div>
           </div>
         ) : (

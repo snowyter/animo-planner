@@ -73,6 +73,14 @@ export interface SectionPickerProps {
   onHoverSection: (section: Section | null) => void;
   onDismissError?: () => void;
   onClose?: () => void;
+  /**
+   * Which half to render. The chrome -- title, course selector, and the
+   * selected-course banner -- sits full width above the workspace, while the
+   * section list sits in a column beside the week grid so the two line up
+   * row for row. `"all"` renders both, which is what a single-column
+   * context wants.
+   */
+  render?: "all" | "chrome" | "list";
   className?: string;
 }
 
@@ -86,6 +94,7 @@ export function SectionPicker({
   isMutating = false,
   error = null,
   initialConfirmingRemove = false,
+  render = "all",
   onSelectCourse,
   onAddSection,
   onRemoveSection,
@@ -110,7 +119,8 @@ export function SectionPicker({
 
   return (
     <Card className={`w-full min-w-0 border-slate-200 bg-white shadow-xs ${className}`}>
-      <CardHeader className="border-b border-slate-100 pb-4">
+      {render !== "list" && (
+      <CardHeader className={render === "chrome" ? "pb-4" : "border-b border-slate-100 pb-4"}>
         {/* A plain block stack, deliberately. This card lives in the picking
             column (roughly 380-440px) and nested flex rows kept collapsing the
             title and description to a few characters wide, because Tailwind
@@ -202,7 +212,9 @@ export function SectionPicker({
           </div>
         )}
       </CardHeader>
+      )}
 
+      {render !== "chrome" && (
       <CardContent className="p-4 sm:p-5">
         {error && (
           <div
@@ -594,6 +606,7 @@ export function SectionPicker({
           </div>
         )}
       </CardContent>
+      )}
     </Card>
   );
 }
