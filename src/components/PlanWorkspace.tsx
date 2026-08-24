@@ -86,6 +86,7 @@ export function PlanWorkspace({
     isMutating,
     error: pickerError,
     fetchCourses,
+    syncCourses,
     selectCourse,
     addSection,
     removeSection,
@@ -184,6 +185,14 @@ export function PlanWorkspace({
     } catch {
       // Error handled in picker state
     }
+  };
+
+  // Undo removes captured rows, so the picker's course list is stale
+  // afterwards for the same reason a capture left it stale. It goes through
+  // the one reload path rather than a second patch.
+  const handleUndo = async () => {
+    await undoLast();
+    await syncCourses();
   };
 
   const handleRemoveCourse = async (courseId: number) => {
@@ -302,7 +311,7 @@ export function PlanWorkspace({
         isOpening={isOpeningCapture}
         isUndoing={isUndoingCapture}
         onOpenCapture={openCapture}
-        onUndo={undoLast}
+        onUndo={handleUndo}
         onDismissFailure={dismissFailure}
         onReportBrokenCapture={onReportBrokenCapture}
       />
@@ -467,13 +476,18 @@ export function PlanWorkspace({
         </div>
 
         {isPickerOpen ? (
-          /* Persistent Picking Layout: 2-columns on desktop (xl:), single column with grid above picker on narrow */
+          /* Persistent picking layout. Two columns from `lg:` (1024px), not
+             `xl:` (1280px): the app opens at 1200x800 per tauri.conf.json, so
+             an xl-gated layout leaves every fresh install stacked with the
+             grid scrolled out of view -- the exact problem this layout exists
+             to solve. The grid takes the larger share; the picker is the tool,
+             the grid is the artifact. */
           <div
             data-testid="picking-layout"
-            className="flex flex-col xl:flex-row items-start gap-6"
+            className="flex flex-col lg:flex-row items-stretch gap-6"
           >
-            {/* Section Picker Column (Desktop left, narrow bottom) */}
-            <div className="w-full xl:w-[480px] xl:shrink-0 order-2 xl:order-1">
+            {/* Section picker column: left on desktop, below the grid when stacked */}
+            <div className="w-full lg:w-[380px] xl:w-[440px] lg:shrink-0 min-w-0 order-2 lg:order-1">
               <SectionPicker
                 courses={courses}
                 selectedCourseId={selectedCourseId}
@@ -493,8 +507,9 @@ export function PlanWorkspace({
               />
             </div>
 
-            {/* Sticky Week Grid Column (Desktop right sticky, narrow top) */}
-            <div className="w-full xl:flex-1 min-w-0 order-1 xl:order-2 xl:sticky xl:top-6 space-y-3">
+            {/* Week grid column: right and sticky on desktop, above the picker
+                when stacked so the preview is never below the list. */}
+            <div className="w-full lg:flex-1 min-w-0 order-1 lg:order-2 lg:sticky lg:top-6 space-y-3">
               <div className="flex items-center justify-between">
                 <h3 className="text-base font-semibold text-slate-900">Weekly Schedule</h3>
                 <div className="flex items-center gap-3">

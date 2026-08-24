@@ -1,4 +1,4 @@
-import { useState, useCallback, useEffect } from "react";
+import { useState, useCallback, useEffect, useRef } from "react";
 import * as client from "../adapters/ipc/client";
 import type { CapturedCourse, CaptureSummary, Plan, Section } from "../adapters/ipc/types";
 import { formatErrorMessage } from "../core/error";
@@ -21,6 +21,11 @@ export interface SectionPickerState {
   error: string | null;
   hoveredSection: Section | null;
   fetchCourses: () => Promise<void>;
+  /// Reloads the captured course list, keeping the current selection when
+  /// that course still exists. Unlike `fetchCourses`, which always jumps
+  /// back to the first course, this is safe to call while the student is
+  /// browsing.
+  syncCourses: () => Promise<void>;
   selectCourse: (courseId: number) => Promise<void>;
   addSection: (section: Section) => Promise<Plan>;
   removeSection: (section: Section) => Promise<Plan>;
@@ -77,6 +82,28 @@ export function useSectionPickerState(options: SectionPickerOptions): SectionPic
       sections = [];
     } finally {
       isLoadingCourses = false;
+    }
+  };
+
+  const syncCourses = async (): Promise<void> => {
+    error = null;
+    try {
+      courses = await client.listCapturedCourses({
+        campusId: options.campusId,
+        sessionId: options.sessionId,
+      });
+      const keepsSelection =
+        selectedCourseId !== null &&
+        courses.some((course) => course.courseId === selectedCourseId);
+      const target = keepsSelection ? selectedCourseId : courses[0]?.courseId ?? null;
+      if (target === null) {
+        selectedCourseId = null;
+        sections = [];
+        return;
+      }
+      await selectCourse(target);
+    } catch (err) {
+      error = formatErrorMessage(err);
     }
   };
 
@@ -200,6 +227,7 @@ export function useSectionPickerState(options: SectionPickerOptions): SectionPic
       return hoveredSection;
     },
     fetchCourses,
+    syncCourses,
     selectCourse,
     addSection,
     removeSection,
@@ -284,6 +312,85 @@ export function useSectionPicker(options: SectionPickerOptions) {
     fetchCourses();
   }, [fetchCourses]);
 
+  // Read inside `syncCourses` without making it depend on the selection,
+  // so the subscription below is established once rather than resubscribing
+  // every time the student picks a different course.
+  const selectedCourseIdRef = useRef<number | null>(null);
+  useEffect(() => {
+    selectedCourseIdRef.current = selectedCourseId;
+  }, [selectedCourseId]);
+
+  const syncCourses = useCallback(async (): Promise<void> => {
+    try {
+      const result = await client.listCapturedCourses({
+        campusId: options.campusId,
+        sessionId: options.sessionId,
+      });
+      setCourses(result);
+
+      const current = selectedCourseIdRef.current;
+      const keepsSelection =
+        current !== null && result.some((course) => course.courseId === current);
+      const target = keepsSelection ? current : result[0]?.courseId ?? null;
+
+      if (target === null) {
+        setSelectedCourseId(null);
+        setSections([]);
+        return;
+      }
+
+      // Reloaded even when the selection is unchanged: the capture that
+      // triggered this may have been a re-search of the course on screen.
+      setSelectedCourseId(target);
+      setIsLoadingSections(true);
+      try {
+        const secs = await client.listCapturedSections({
+          campusId: options.campusId,
+          sessionId: options.sessionId,
+          courseId: target,
+        });
+        setSections(secs);
+      } finally {
+        setIsLoadingSections(false);
+      }
+    } catch (err) {
+      setError(formatErrorMessage(err));
+    }
+  }, [options.campusId, options.sessionId]);
+
+  // A capture landing from the popup must reach the dropdown. Without this
+  // the list is loaded once on mount and never again, so a course searched
+  // in Course Finder stays invisible until the picker is remounted.
+  useEffect(() => {
+    let unlisten: (() => void) | null = null;
+    let cancelled = false;
+
+    client
+      .onCaptureUpdated((summary) => {
+        if (
+          summary.campusId === options.campusId &&
+          summary.sessionId === options.sessionId
+        ) {
+          void syncCourses();
+        }
+      })
+      .then((off) => {
+        if (cancelled) {
+          off();
+          return;
+        }
+        unlisten = off;
+      })
+      .catch(() => {
+        // Outside Tauri (unit tests, browser dev) there is no event bridge.
+      });
+
+    return () => {
+      cancelled = true;
+      unlisten?.();
+    };
+  }, [options.campusId, options.sessionId, syncCourses]);
+
   const addSection = useCallback(
     async (section: Section): Promise<Plan> => {
       setIsMutating(true);
@@ -364,31 +471,10 @@ export function useSectionPicker(options: SectionPickerOptions) {
           sessionId: options.sessionId,
           courseId,
         });
-        const remainingCourses = courses.filter((c) => c.courseId !== courseId);
-        setCourses(remainingCourses);
-        if (selectedCourseId === courseId) {
-          if (remainingCourses.length > 0) {
-            const nextId = remainingCourses[0].courseId;
-            setSelectedCourseId(nextId);
-            setIsLoadingSections(true);
-            try {
-              const secs = await client.listCapturedSections({
-                campusId: options.campusId,
-                sessionId: options.sessionId,
-                courseId: nextId,
-              });
-              setSections(secs);
-            } catch (err) {
-              setError(formatErrorMessage(err));
-              setSections([]);
-            } finally {
-              setIsLoadingSections(false);
-            }
-          } else {
-            setSelectedCourseId(null);
-            setSections([]);
-          }
-        }
+        // Reloaded through the same path a capture takes, so the course
+        // list has one source of truth instead of a fetch on mount and a
+        // local patch here.
+        await syncCourses();
         options.onCaptureUpdated?.(summary);
         return summary;
       } catch (err) {
@@ -399,7 +485,7 @@ export function useSectionPicker(options: SectionPickerOptions) {
         setIsMutating(false);
       }
     },
-    [options, courses, selectedCourseId]
+    [options, syncCourses]
   );
 
   return {
@@ -412,6 +498,7 @@ export function useSectionPicker(options: SectionPickerOptions) {
     error,
     hoveredSection,
     fetchCourses,
+    syncCourses,
     selectCourse,
     addSection,
     removeSection,

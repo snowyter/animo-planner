@@ -159,7 +159,10 @@ export function WeekGrid({
     >
       {/* Scroll container for smaller viewports */}
       <div className="overflow-x-auto">
-        <div className="min-w-[760px]">
+        {/* Fits the grid column at the 1200px window the app opens at
+            (picker 380px + gap). The overflow-x-auto wrapper above stays the
+            safety net for anything narrower. */}
+        <div className="min-w-[680px]">
           {/* Day Headers (Mon–Sat) */}
           <div className="grid grid-cols-[70px_repeat(6,1fr)] border-b border-slate-200 bg-slate-50/80 sticky top-0 z-10 text-xs font-semibold text-slate-700">
             <div className="p-3 text-center text-slate-400 font-normal border-r border-slate-200">

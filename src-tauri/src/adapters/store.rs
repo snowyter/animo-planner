@@ -131,6 +131,12 @@ pub enum StoreError {
         course_id: i64,
         plan_ids: Vec<String>,
     },
+    /// Undoing the last capture would delete sections a plan still holds --
+    /// the same `plan_sections.section_fk` constraint `CourseHeldByPlans`
+    /// guards. Refusing keeps a capture-level undo from silently editing the
+    /// plan the student is building; the journal survives, so removing the
+    /// section from the plan and undoing again works.
+    UndoHeldByPlans { plan_ids: Vec<String> },
 }
 
 impl std::fmt::Display for StoreError {
@@ -196,6 +202,10 @@ impl std::fmt::Display for StoreError {
                 f,
                 "course {course_id} under campus {campus_id} session {session_id} is still \
                  held by plans {plan_ids:?} — remove its sections from those plans first"
+            ),
+            StoreError::UndoHeldByPlans { plan_ids } => write!(
+                f,
+                "the last capture cannot be undone: plans {plan_ids:?} still hold sections \n                 it introduced - remove them from those plans first"
             ),
         }
     }
@@ -595,6 +605,25 @@ impl Store {
         let Some(batch) = self.last_batch.take() else {
             return Ok(false);
         };
+
+        // `plan_sections.section_fk` references `sections (id)` with no
+        // `ON DELETE CASCADE`, so deleting a section a plan holds fails on
+        // the constraint with an unreadable message. Detect it before
+        // touching anything: the batch is refused whole rather than half
+        // reversed, and the journal goes back so undoing again after the
+        // section leaves the plan works.
+        match self.plans_holding_batch(&batch) {
+            Ok(plan_ids) if !plan_ids.is_empty() => {
+                self.last_batch = Some(batch);
+                return Err(StoreError::UndoHeldByPlans { plan_ids });
+            }
+            Ok(_) => {}
+            Err(err) => {
+                self.last_batch = Some(batch);
+                return Err(err);
+            }
+        }
+
         match self.reverse_batch(&batch) {
             Ok(()) => Ok(true),
             Err(err) => {
@@ -743,6 +772,37 @@ impl Store {
             course_count,
             can_undo: self.last_batch.is_some(),
         })
+    }
+
+    /// The plans holding any section this batch's reversal would delete.
+    ///
+    /// Only sections the batch itself inserted are deleted by
+    /// `reverse_batch`; sections that existed before are restored in place
+    /// and can never violate the foreign key, so they are not considered.
+    fn plans_holding_batch(&self, batch: &CaptureBatch) -> Result<Vec<String>, StoreError> {
+        let deleted: Vec<i64> = batch
+            .sections
+            .iter()
+            .filter(|record| !record.existed_before)
+            .map(|record| record.section_fk)
+            .collect();
+        if deleted.is_empty() {
+            return Ok(Vec::new());
+        }
+
+        // Sorted and deduplicated so the refusal names each plan once, in a
+        // stable order.
+        let mut plan_ids = std::collections::BTreeSet::new();
+        let mut stmt = self
+            .conn
+            .prepare("SELECT DISTINCT plan_id FROM plan_sections WHERE section_fk = ?1")?;
+        for section_fk in deleted {
+            let rows = stmt.query_map([section_fk], |row| row.get::<_, String>(0))?;
+            for plan_id in rows {
+                plan_ids.insert(plan_id?);
+            }
+        }
+        Ok(plan_ids.into_iter().collect())
     }
 
     fn reverse_batch(&self, batch: &CaptureBatch) -> Result<(), StoreError> {
@@ -3680,6 +3740,141 @@ mod tests {
             listed.iter().map(|course| course.course_id).collect::<Vec<_>>(),
             vec![564],
             "list_captured_courses reflects the removal immediately"
+        );
+    }
+
+    /// `reverse_batch` deletes the sections a batch introduced, and
+    /// `plan_sections.section_fk` has no `ON DELETE CASCADE`, so a plan
+    /// holding one turned Undo into a raw SQLite constraint error.
+    #[test]
+    fn undo_is_refused_naming_the_plans_that_hold_the_batch() {
+        let mut store = store();
+        store.create_plan("p1", "First", &SCOPE, T1, false).expect("plan p1");
+        store.create_plan("p2", "Second", &SCOPE, T1, false).expect("plan p2");
+        store
+            .record_capture(
+                &SCOPE,
+                &[
+                    parsed_section(2923, 384, "S01", None, Some(10), vec![]),
+                    parsed_section(2923, 385, "S02", None, Some(20), vec![]),
+                ],
+                T1,
+            )
+            .expect("capture");
+        store.add_section_to_plan("p1", 2923, 384).expect("p1 holds S01");
+        store.add_section_to_plan("p2", 2923, 385).expect("p2 holds S02");
+
+        let err = store.undo_last_capture().expect_err("a held batch must refuse");
+
+        match err {
+            StoreError::UndoHeldByPlans { ref plan_ids } => {
+                assert_eq!(
+                    *plan_ids,
+                    vec!["p1".to_string(), "p2".to_string()],
+                    "every holder is named once, in a stable order"
+                );
+            }
+            other => panic!("expected UndoHeldByPlans, got {other:?}"),
+        }
+        assert!(
+            !err.to_string().contains("sqlite"),
+            "the student must not see a raw constraint error: {err}"
+        );
+
+        // Refused whole: nothing reversed, nothing half-applied.
+        assert_eq!(count(&store.conn, "SELECT COUNT(*) FROM sections"), 2);
+        assert_eq!(count(&store.conn, "SELECT COUNT(*) FROM snapshots"), 2);
+        assert_eq!(count(&store.conn, "SELECT COUNT(*) FROM plan_sections"), 2);
+    }
+
+    /// A batch is refused whole, never partially: a half-reversed capture is
+    /// worse than a refused one.
+    #[test]
+    fn a_batch_with_one_held_section_is_refused_whole() {
+        let mut store = store();
+        store.create_plan("p1", "First", &SCOPE, T1, false).expect("plan");
+        store
+            .record_capture(
+                &SCOPE,
+                &[
+                    parsed_section(2923, 384, "S01", None, Some(10), vec![]),
+                    parsed_section(2923, 385, "S02", None, Some(20), vec![]),
+                    parsed_section(2923, 386, "S03", None, Some(30), vec![]),
+                ],
+                T1,
+            )
+            .expect("capture");
+        // Only one of the three is held.
+        store.add_section_to_plan("p1", 2923, 385).expect("p1 holds S02");
+
+        store.undo_last_capture().expect_err("one held section refuses the batch");
+
+        assert_eq!(
+            count(&store.conn, "SELECT COUNT(*) FROM sections"),
+            3,
+            "the unheld sections must not be reversed either"
+        );
+    }
+
+    /// The journal survives a refusal, so the documented way out actually
+    /// works: take the section out of the plan, then undo.
+    #[test]
+    fn undo_succeeds_once_the_section_leaves_the_plan() {
+        let mut store = store();
+        store.create_plan("p1", "First", &SCOPE, T1, false).expect("plan");
+        store
+            .record_capture(
+                &SCOPE,
+                &[parsed_section(2923, 384, "S01", None, Some(10), vec![])],
+                T1,
+            )
+            .expect("capture");
+        store.add_section_to_plan("p1", 2923, 384).expect("p1 holds S01");
+
+        store.undo_last_capture().expect_err("held batch refuses");
+        store
+            .remove_section_from_plan("p1", 2923, 384)
+            .expect("the student takes it out of the plan");
+
+        assert!(
+            store.undo_last_capture().expect("the journal survived the refusal"),
+            "undo must work once nothing holds the batch"
+        );
+        assert_eq!(count(&store.conn, "SELECT COUNT(*) FROM sections"), 0);
+        assert_eq!(count(&store.conn, "SELECT COUNT(*) FROM courses"), 0);
+    }
+
+    /// A re-capture updates a pre-existing section rather than inserting one,
+    /// and `reverse_batch` restores those in place instead of deleting them.
+    /// Plan membership therefore cannot block that undo.
+    #[test]
+    fn undo_of_a_recapture_is_allowed_even_while_a_plan_holds_the_section() {
+        let mut store = store();
+        store.create_plan("p1", "First", &SCOPE, T1, false).expect("plan");
+        store
+            .record_capture(
+                &SCOPE,
+                &[parsed_section(2923, 384, "S01", None, Some(10), vec![])],
+                T1,
+            )
+            .expect("first capture");
+        store.add_section_to_plan("p1", 2923, 384).expect("p1 holds S01");
+        store
+            .record_capture(
+                &SCOPE,
+                &[parsed_section(2923, 384, "S01", None, Some(11), vec![])],
+                T2,
+            )
+            .expect("re-capture updates in place");
+
+        assert!(
+            store.undo_last_capture().expect("a restore-in-place undo is not blocked"),
+            "only sections the batch inserted can violate the foreign key"
+        );
+        assert_eq!(
+            count(&store.conn, "SELECT COUNT(*) FROM plan_sections"),
+            1,
+            "the plan keeps its section"
         );
     }
 

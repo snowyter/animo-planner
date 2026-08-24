@@ -202,6 +202,74 @@ describe("useSectionPickerState", () => {
     expect(updatedPlan).toEqual(mockPlan);
   });
 
+  // The picker loaded its course list once on mount and never again, so a
+  // course captured in Course Finder stayed invisible in the dropdown until
+  // the picker was remounted while the counter updated correctly.
+  it("syncCourses picks up a newly captured course without a remount", async () => {
+    vi.mocked(client.listCapturedCourses).mockResolvedValueOnce([mockCourses[0]]);
+    vi.mocked(client.listCapturedSections).mockResolvedValue(mockGeartapSections);
+
+    const state = useSectionPickerState({ campusId: 7, sessionId: 155, planId: "p1" });
+    await state.fetchCourses();
+    expect(state.courses).toHaveLength(1);
+
+    // A capture lands: the catalog now holds a second course.
+    vi.mocked(client.listCapturedCourses).mockResolvedValueOnce(mockCourses);
+    await state.syncCourses();
+
+    expect(state.courses).toHaveLength(2);
+    expect(state.courses.map((course) => course.courseId)).toContain(564);
+  });
+
+  // Reloading must not yank the student out of the course they are reading.
+  it("syncCourses keeps the current selection when that course still exists", async () => {
+    vi.mocked(client.listCapturedCourses).mockResolvedValue(mockCourses);
+    vi.mocked(client.listCapturedSections).mockResolvedValue(mockGeartapSections);
+
+    const state = useSectionPickerState({ campusId: 7, sessionId: 155, planId: "p1" });
+    await state.fetchCourses();
+    await state.selectCourse(564);
+    expect(state.selectedCourseId).toBe(564);
+
+    await state.syncCourses();
+
+    expect(
+      state.selectedCourseId,
+      "a capture elsewhere must not move the student off the course they are on",
+    ).toBe(564);
+  });
+
+  // The selected course can disappear -- removed here, or undone.
+  it("syncCourses falls back to the first course when the selection is gone", async () => {
+    vi.mocked(client.listCapturedCourses).mockResolvedValue(mockCourses);
+    vi.mocked(client.listCapturedSections).mockResolvedValue(mockGeartapSections);
+
+    const state = useSectionPickerState({ campusId: 7, sessionId: 155, planId: "p1" });
+    await state.fetchCourses();
+    await state.selectCourse(564);
+
+    vi.mocked(client.listCapturedCourses).mockResolvedValue([mockCourses[0]]);
+    await state.syncCourses();
+
+    expect(state.selectedCourseId).toBe(2923);
+  });
+
+  it("syncCourses leaves an empty catalog in its ordinary empty state", async () => {
+    vi.mocked(client.listCapturedCourses).mockResolvedValue(mockCourses);
+    vi.mocked(client.listCapturedSections).mockResolvedValue(mockGeartapSections);
+
+    const state = useSectionPickerState({ campusId: 7, sessionId: 155, planId: "p1" });
+    await state.fetchCourses();
+
+    vi.mocked(client.listCapturedCourses).mockResolvedValue([]);
+    await state.syncCourses();
+
+    expect(state.courses).toEqual([]);
+    expect(state.selectedCourseId).toBeNull();
+    expect(state.sections).toEqual([]);
+    expect(state.error).toBeNull();
+  });
+
   it("forgets captured course, updates course list and selects next course", async () => {
     vi.mocked(client.listCapturedCourses).mockResolvedValue(mockCourses);
     vi.mocked(client.listCapturedSections).mockResolvedValue(mockGeartapSections);

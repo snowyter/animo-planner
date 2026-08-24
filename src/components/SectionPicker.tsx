@@ -111,7 +111,11 @@ export function SectionPicker({
   return (
     <Card className={`border-slate-200 bg-white shadow-xs ${className}`}>
       <CardHeader className="border-b border-slate-100 pb-4">
-        <div className="flex flex-col sm:flex-row sm:items-start sm:justify-between gap-3">
+        {/* Always stacked. This card lives in the picking column, roughly
+            380-440px wide, while Tailwind's `sm:` keys off the viewport --
+            so a `sm:flex-row` header went sideways inside a narrow column and
+            wrapped its description one word per line. */}
+        <div className="flex flex-col gap-3">
           <div className="flex-1 min-w-0">
             <div className="flex items-center justify-between gap-2">
               <CardTitle className="text-lg font-bold text-slate-900 flex items-center gap-2">
@@ -124,7 +128,7 @@ export function SectionPicker({
                   variant="ghost"
                   size="sm"
                   onClick={onClose}
-                  className="h-8 px-2 text-xs text-slate-500 hover:text-slate-900 sm:hidden"
+                  className="h-8 px-2 text-xs text-slate-500 hover:text-slate-900"
                   title="Close section picker"
                 >
                   <X className="h-4 w-4 mr-1" />
@@ -137,7 +141,7 @@ export function SectionPicker({
             </p>
           </div>
 
-          <div className="flex items-center gap-2 shrink-0">
+          <div className="flex w-full items-center gap-2">
             {/* Course Selector Dropdown / Switcher */}
             {courses.length > 0 && (
               <div className="flex items-center gap-2">
@@ -162,20 +166,6 @@ export function SectionPicker({
                   ))}
                 </select>
               </div>
-            )}
-
-            {onClose && (
-              <Button
-                type="button"
-                variant="ghost"
-                size="sm"
-                onClick={onClose}
-                className="hidden sm:inline-flex h-9 px-2.5 text-xs text-slate-500 hover:text-slate-900 hover:bg-slate-100"
-                title="Close section picker"
-              >
-                <X className="h-4 w-4 mr-1" />
-                <span>Close</span>
-              </Button>
             )}
           </div>
         </div>
@@ -336,7 +326,13 @@ export function SectionPicker({
           </div>
         ) : (
 
-          <div className="space-y-3">
+          /* Bounded and scrolled in two-column mode so a 42-section course
+             cannot push the week grid off screen. Stacked, the grid sits
+             above the list, so the list is free to run on. */
+          <div
+            data-testid="section-list"
+            className="space-y-3 lg:max-h-[600px] lg:overflow-y-auto lg:pr-1"
+          >
             {sections.map((section) => {
               const inPlan = isSectionInPlan(
                 { courseId: section.courseId, sectionId: section.sectionId },

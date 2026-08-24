@@ -293,6 +293,7 @@ describe("PlanWorkspace", () => {
       hoveredSection: null,
       setHoveredSection: vi.fn(),
       fetchCourses: vi.fn(),
+      syncCourses: vi.fn(),
       selectCourse: vi.fn(),
       addSection: vi.fn(),
       removeSection: vi.fn(),
@@ -581,10 +582,19 @@ describe("PlanWorkspace persistent week grid layout (ticket 28)", () => {
 
     // Responsive 2-column container exists
     expect(html).toContain("data-testid=\"picking-layout\"");
-    expect(html).toMatch(/xl:flex-row|xl:grid/);
 
-    // Week grid container has sticky positioning for desktop scrolling
-    expect(html).toMatch(/xl:sticky\s+xl:top-6|sticky/);
+    // The app opens at 1200x800 (tauri.conf.json), so the two-column layout
+    // must engage at lg (1024px). Gating it at xl (1280px) left every fresh
+    // install stacked with the grid scrolled out of view while hovering --
+    // the exact problem this layout exists to solve.
+    expect(html).toMatch(/lg:flex-row|lg:grid/);
+    expect(
+      html,
+      "the layout must not be gated above the window width the app ships with",
+    ).not.toMatch(/xl:flex-row|xl:grid/);
+
+    // Week grid container is sticky so it stays put while the list scrolls
+    expect(html).toMatch(/lg:sticky\s+lg:top-6|sticky/);
   });
 
   it("orders the week grid ahead of the section list in single-column fallback", () => {
@@ -675,6 +685,7 @@ describe("PlanWorkspace persistent week grid layout (ticket 28)", () => {
       hoveredSection: null,
       setHoveredSection: vi.fn(),
       fetchCourses: vi.fn(),
+      syncCourses: vi.fn(),
       selectCourse: vi.fn(),
       addSection: vi.fn(),
       removeSection: vi.fn(),

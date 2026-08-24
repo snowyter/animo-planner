@@ -394,6 +394,84 @@ describe("SectionPicker", () => {
     expect(html).toContain("Close");
   });
 
+  // The picker sits in a ~380-440px column while Tailwind's `sm:` keys off
+  // the viewport, so a `sm:flex-row` header went sideways inside a narrow
+  // column: the description wrapped one word per line and the course
+  // dropdown overlapped the title.
+  it("stacks its header so it survives the narrow picking column", () => {
+    const html = renderToStaticMarkup(
+      React.createElement(SectionPicker, {
+        courses: mockCourses,
+        selectedCourseId: 2923,
+        sections: sampleSections,
+        planSections: [],
+        isLoadingCourses: false,
+        isLoadingSections: false,
+        isMutating: false,
+        error: null,
+        onSelectCourse: vi.fn(),
+        onAddSection: vi.fn(),
+        onRemoveSection: vi.fn(),
+        onTogglePin: vi.fn(),
+        onHoverSection: vi.fn(),
+      })
+    );
+
+    expect(html).not.toMatch(/sm:flex-row/);
+    expect(html).toMatch(/flex flex-col gap-3/);
+  });
+
+  it("offers exactly one close control", () => {
+    const html = renderToStaticMarkup(
+      React.createElement(SectionPicker, {
+        courses: mockCourses,
+        selectedCourseId: 2923,
+        sections: sampleSections,
+        planSections: [],
+        isLoadingCourses: false,
+        isLoadingSections: false,
+        isMutating: false,
+        error: null,
+        onSelectCourse: vi.fn(),
+        onAddSection: vi.fn(),
+        onRemoveSection: vi.fn(),
+        onTogglePin: vi.fn(),
+        onHoverSection: vi.fn(),
+        onClose: vi.fn(),
+      })
+    );
+
+    expect(
+      (html.match(/Close section picker/g) ?? []).length,
+      "the stacked header keeps one Close, not the wide layout's second copy",
+    ).toBe(1);
+  });
+
+  // A 42-section course must not push the week grid off screen beside it.
+  it("bounds and scrolls the section list in two-column mode", () => {
+    const html = renderToStaticMarkup(
+      React.createElement(SectionPicker, {
+        courses: mockCourses,
+        selectedCourseId: 2923,
+        sections: sampleSections,
+        planSections: [],
+        isLoadingCourses: false,
+        isLoadingSections: false,
+        isMutating: false,
+        error: null,
+        onSelectCourse: vi.fn(),
+        onAddSection: vi.fn(),
+        onRemoveSection: vi.fn(),
+        onTogglePin: vi.fn(),
+        onHoverSection: vi.fn(),
+      })
+    );
+
+    expect(html).toContain('data-testid="section-list"');
+    expect(html).toMatch(/lg:max-h-\[600px\]/);
+    expect(html).toMatch(/lg:overflow-y-auto/);
+  });
+
   it("renders a remove course from catalog button for the selected course, distinct from plan section removal", () => {
     const html = renderToStaticMarkup(
       React.createElement(SectionPicker, {
