@@ -12,7 +12,7 @@
  * - Sections in the plan can be pinned/unpinned or removed.
  */
 
-import { useMemo } from "react";
+import { useState, useEffect, useMemo } from "react";
 import {
   Building2,
   Globe,
@@ -32,6 +32,14 @@ import {
 import { Button } from "./ui/button";
 import { Badge } from "./ui/badge";
 import { Card, CardHeader, CardTitle, CardContent } from "./ui/card";
+import {
+  Dialog,
+  DialogContent,
+  DialogHeader,
+  DialogTitle,
+  DialogDescription,
+  DialogFooter,
+} from "./ui/dialog";
 import type {
   CapturedCourse,
   PlanSection,
@@ -56,11 +64,14 @@ export interface SectionPickerProps {
   isLoadingSections?: boolean;
   isMutating?: boolean;
   error?: string | null;
+  initialConfirmingRemove?: boolean;
   onSelectCourse: (courseId: number) => void;
   onAddSection: (section: Section) => void;
   onRemoveSection: (section: Section) => void;
+  onRemoveCourse?: (courseId: number) => void | Promise<void>;
   onTogglePin: (section: Section, pinned: boolean) => void;
   onHoverSection: (section: Section | null) => void;
+  onDismissError?: () => void;
   onClose?: () => void;
   className?: string;
 }
@@ -74,14 +85,25 @@ export function SectionPicker({
   isLoadingSections = false,
   isMutating = false,
   error = null,
+  initialConfirmingRemove = false,
   onSelectCourse,
   onAddSection,
   onRemoveSection,
+  onRemoveCourse,
   onTogglePin,
   onHoverSection,
+  onDismissError,
   onClose,
   className = "",
 }: SectionPickerProps) {
+  const [isConfirmingRemove, setIsConfirmingRemove] = useState<boolean>(
+    () => initialConfirmingRemove
+  );
+
+  useEffect(() => {
+    setIsConfirmingRemove(false);
+  }, [selectedCourseId]);
+
   const selectedCourse = useMemo(() => {
     return courses.find((c) => c.courseId === selectedCourseId) ?? null;
   }, [courses, selectedCourseId]);
@@ -167,8 +189,25 @@ export function SectionPicker({
               </span>
               <span className="text-slate-600">— {selectedCourse.title}</span>
             </div>
-            <div className="text-slate-500 font-medium">
-              {sections.length} {sections.length === 1 ? "section available" : "sections available"}
+            <div className="flex items-center gap-3">
+              <div className="text-slate-500 font-medium">
+                {sections.length} {sections.length === 1 ? "section available" : "sections available"}
+              </div>
+              {onRemoveCourse && (
+                <Button
+                  type="button"
+                  variant="outline"
+                  size="sm"
+                  disabled={isMutating || isLoadingCourses || isLoadingSections}
+                  onClick={() => setIsConfirmingRemove(true)}
+                  className="h-7 px-2 text-xs border-red-200 text-red-700 hover:bg-red-50 hover:text-red-800 hover:border-red-300 flex items-center gap-1 shrink-0"
+                  title={`Remove ${selectedCourse.code} from captured catalog`}
+                  data-testid="remove-course-button"
+                >
+                  <Trash2 className="h-3.5 w-3.5" />
+                  <span>Remove course from catalog</span>
+                </Button>
+              )}
             </div>
           </div>
         )}
@@ -176,9 +215,94 @@ export function SectionPicker({
 
       <CardContent className="p-4 sm:p-5">
         {error && (
-          <div className="mb-4 rounded-lg border border-red-200 bg-red-50 p-3 text-xs text-red-700">
-            {error}
+          <div
+            className="mb-4 rounded-lg border border-red-200 bg-red-50 p-3 text-xs text-red-700 flex items-start justify-between gap-2"
+            role="alert"
+          >
+            <div className="flex items-start gap-2">
+              <AlertTriangle className="h-4 w-4 text-red-600 shrink-0 mt-0.5" />
+              <div className="space-y-0.5">
+                <span className="font-semibold block">Notice</span>
+                <span className="font-mono">{error}</span>
+              </div>
+            </div>
+            {onDismissError && (
+              <button
+                type="button"
+                onClick={onDismissError}
+                className="text-red-500 hover:text-red-700 p-0.5 rounded-sm"
+                aria-label="Dismiss notice"
+              >
+                <X className="h-3.5 w-3.5" />
+              </button>
+            )}
           </div>
+        )}
+
+        {/* Confirmation Dialog for Removing Course from Catalog */}
+        {selectedCourse && (
+          <Dialog
+            open={isConfirmingRemove}
+            onOpenChange={setIsConfirmingRemove}
+          >
+            <DialogContent className="max-w-md p-6" data-testid="remove-course-dialog">
+              <DialogHeader className="space-y-2 text-left">
+                <div className="flex items-center gap-2 text-red-600">
+                  <AlertTriangle className="h-5 w-5 shrink-0" />
+                  <DialogTitle className="text-base font-bold text-slate-900">
+                    Remove {selectedCourse.code} from catalog?
+                  </DialogTitle>
+                </div>
+                <DialogDescription className="text-xs text-slate-600 leading-relaxed">
+                  This will remove{" "}
+                  <strong className="text-slate-900 font-semibold">
+                    {selectedCourse.code} ({selectedCourse.title})
+                  </strong>{" "}
+                  and its{" "}
+                  <strong className="text-slate-900 font-semibold">
+                    {selectedCourse.sectionCount}{" "}
+                    {selectedCourse.sectionCount === 1 ? "captured section" : "captured sections"}
+                  </strong>{" "}
+                  from your local database.
+                  <br />
+                  <br />
+                  This action is destructive and removes captured sections from your catalog.
+                </DialogDescription>
+              </DialogHeader>
+              <DialogFooter className="flex flex-row items-center justify-end gap-2 pt-4 border-t border-slate-100">
+                <Button
+                  type="button"
+                  variant="ghost"
+                  size="sm"
+                  disabled={isMutating}
+                  onClick={() => setIsConfirmingRemove(false)}
+                  className="h-8 text-xs text-slate-600 hover:text-slate-900"
+                  data-testid="cancel-remove-course"
+                >
+                  Cancel
+                </Button>
+                <Button
+                  type="button"
+                  variant="destructive"
+                  size="sm"
+                  disabled={isMutating}
+                  onClick={async () => {
+                    try {
+                      await onRemoveCourse?.(selectedCourse.courseId);
+                      setIsConfirmingRemove(false);
+                    } catch {
+                      setIsConfirmingRemove(false);
+                    }
+                  }}
+                  className="h-8 text-xs bg-red-600 hover:bg-red-700 text-white flex items-center gap-1"
+                  data-testid="confirm-remove-course"
+                >
+                  <Trash2 className="h-3.5 w-3.5" />
+                  <span>Remove course</span>
+                </Button>
+              </DialogFooter>
+            </DialogContent>
+          </Dialog>
         )}
 
         {isLoadingCourses ? (

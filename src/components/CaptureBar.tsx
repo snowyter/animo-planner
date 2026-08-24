@@ -146,7 +146,11 @@ export function CaptureBar({
                 disabled={!canUndo || isUndoing}
                 onClick={onUndo}
                 className="h-7 px-2 text-xs flex items-center gap-1 text-slate-600 hover:text-slate-900 disabled:opacity-40"
-                title="Undo last captured course batch"
+                title={
+                  canUndo
+                    ? "Undo last captured course batch"
+                    : "Undo is only available for the most recent capture in this session and is not available after a restart"
+                }
               >
                 {isUndoing ? (
                   <RefreshCw className="h-3 w-3 animate-spin" />

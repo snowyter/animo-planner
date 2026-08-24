@@ -1,6 +1,6 @@
 import { useState, useCallback, useEffect } from "react";
 import * as client from "../adapters/ipc/client";
-import type { CapturedCourse, Plan, Section } from "../adapters/ipc/types";
+import type { CapturedCourse, CaptureSummary, Plan, Section } from "../adapters/ipc/types";
 import { formatErrorMessage } from "../core/error";
 
 export interface SectionPickerOptions {
@@ -8,6 +8,7 @@ export interface SectionPickerOptions {
   sessionId: number;
   planId: string;
   onPlanUpdated?: (plan: Plan) => void;
+  onCaptureUpdated?: (summary: CaptureSummary) => void;
 }
 
 export interface SectionPickerState {
@@ -24,6 +25,7 @@ export interface SectionPickerState {
   addSection: (section: Section) => Promise<Plan>;
   removeSection: (section: Section) => Promise<Plan>;
   togglePin: (section: Section, pinned: boolean) => Promise<Plan>;
+  forgetCourse: (courseId: number) => Promise<CaptureSummary>;
   setHoveredSection: (section: Section | null) => void;
 }
 
@@ -139,6 +141,35 @@ export function useSectionPickerState(options: SectionPickerOptions): SectionPic
     }
   };
 
+  const forgetCourse = async (courseId: number): Promise<CaptureSummary> => {
+    isMutating = true;
+    error = null;
+    try {
+      const summary = await client.forgetCapturedCourse({
+        campusId: options.campusId,
+        sessionId: options.sessionId,
+        courseId,
+      });
+      courses = courses.filter((c) => c.courseId !== courseId);
+      if (selectedCourseId === courseId) {
+        if (courses.length > 0) {
+          await selectCourse(courses[0].courseId);
+        } else {
+          selectedCourseId = null;
+          sections = [];
+        }
+      }
+      options.onCaptureUpdated?.(summary);
+      return summary;
+    } catch (err) {
+      const msg = formatErrorMessage(err);
+      error = msg;
+      throw err;
+    } finally {
+      isMutating = false;
+    }
+  };
+
   const setHoveredSection = (section: Section | null) => {
     hoveredSection = section;
   };
@@ -173,6 +204,7 @@ export function useSectionPickerState(options: SectionPickerOptions): SectionPic
     addSection,
     removeSection,
     togglePin,
+    forgetCourse,
     setHoveredSection,
   };
 }
@@ -322,6 +354,54 @@ export function useSectionPicker(options: SectionPickerOptions) {
     [options]
   );
 
+  const forgetCourse = useCallback(
+    async (courseId: number): Promise<CaptureSummary> => {
+      setIsMutating(true);
+      setError(null);
+      try {
+        const summary = await client.forgetCapturedCourse({
+          campusId: options.campusId,
+          sessionId: options.sessionId,
+          courseId,
+        });
+        const remainingCourses = courses.filter((c) => c.courseId !== courseId);
+        setCourses(remainingCourses);
+        if (selectedCourseId === courseId) {
+          if (remainingCourses.length > 0) {
+            const nextId = remainingCourses[0].courseId;
+            setSelectedCourseId(nextId);
+            setIsLoadingSections(true);
+            try {
+              const secs = await client.listCapturedSections({
+                campusId: options.campusId,
+                sessionId: options.sessionId,
+                courseId: nextId,
+              });
+              setSections(secs);
+            } catch (err) {
+              setError(formatErrorMessage(err));
+              setSections([]);
+            } finally {
+              setIsLoadingSections(false);
+            }
+          } else {
+            setSelectedCourseId(null);
+            setSections([]);
+          }
+        }
+        options.onCaptureUpdated?.(summary);
+        return summary;
+      } catch (err) {
+        const msg = formatErrorMessage(err);
+        setError(msg);
+        throw err;
+      } finally {
+        setIsMutating(false);
+      }
+    },
+    [options, courses, selectedCourseId]
+  );
+
   return {
     courses,
     selectedCourseId,
@@ -336,6 +416,7 @@ export function useSectionPicker(options: SectionPickerOptions) {
     addSection,
     removeSection,
     togglePin,
+    forgetCourse,
     setHoveredSection,
   };
 }

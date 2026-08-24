@@ -9,6 +9,7 @@ vi.mock("../adapters/ipc/client", () => ({
   getCaptureSummary: vi.fn(),
   openCaptureWindow: vi.fn(),
   undoLastCapture: vi.fn(),
+  forgetCapturedCourse: vi.fn(),
   listCapturedCourses: vi.fn().mockResolvedValue([]),
   listCapturedSections: vi.fn().mockResolvedValue([]),
   addSectionToPlan: vi.fn(),
@@ -268,6 +269,57 @@ describe("PlanWorkspace", () => {
     );
 
     expect(html).toContain("Pick my own sections");
+  });
+
+  it("renders SectionPicker with remove course action wired", async () => {
+    const useSectionPickerModule = await import("./useSectionPicker");
+    const spy = vi.spyOn(useSectionPickerModule, "useSectionPicker").mockReturnValue({
+      courses: [
+        {
+          courseId: 2923,
+          code: "GEARTAP",
+          title: "Art Appreciation",
+          sectionCount: 2,
+          firstSeenAt: "2026-08-22T00:00:00Z",
+          lastSeenAt: "2026-08-22T00:00:00Z",
+        },
+      ],
+      selectedCourseId: 2923,
+      sections: [],
+      isLoadingCourses: false,
+      isLoadingSections: false,
+      isMutating: false,
+      error: null,
+      hoveredSection: null,
+      setHoveredSection: vi.fn(),
+      fetchCourses: vi.fn(),
+      selectCourse: vi.fn(),
+      addSection: vi.fn(),
+      removeSection: vi.fn(),
+      togglePin: vi.fn(),
+      forgetCourse: vi.fn(),
+    });
+
+    const mockFullPlan: Plan = {
+      ...mockPlanSummary,
+      sections: [],
+    };
+
+    const html = renderToStaticMarkup(
+      React.createElement(PlanWorkspace, {
+        planSummary: mockPlanSummary,
+        plan: mockFullPlan,
+        isLoading: false,
+        error: null,
+        onBack: vi.fn(),
+        onRetry: vi.fn(),
+      })
+    );
+
+    expect(html).toContain("Remove course from catalog");
+    expect(html).toContain('data-testid="remove-course-button"');
+
+    spy.mockRestore();
   });
 
   it("renders Solve the rest button for triggering solver", () => {
@@ -627,6 +679,7 @@ describe("PlanWorkspace persistent week grid layout (ticket 28)", () => {
       addSection: vi.fn(),
       removeSection: vi.fn(),
       togglePin: vi.fn(),
+      forgetCourse: vi.fn(),
     });
 
     const html = renderToStaticMarkup(
