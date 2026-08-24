@@ -6,6 +6,7 @@
  */
 import { describe, expect, it } from "vitest";
 import contractSource from "../../../docs/ipc-contract.md?raw";
+import clientSource from "./client.ts?raw";
 import * as client from "./client";
 
 function contractText(): string {
@@ -92,6 +93,23 @@ describe("ipc contract", () => {
       clientCommands.add(camelToSnake(name));
     }
     expect(clientCommands).toEqual(declared);
+  });
+
+  // Tauri routes a command's arguments by the Rust *parameter* name. Every
+  // command that takes a payload declares it as `args: XArgs`, so the client
+  // must wrap the payload in an `args` envelope. Sending the fields flat is
+  // rejected at runtime with "missing required key args" -- which is what
+  // shipped, because both sides were tested only against their own mocks and
+  // nothing crossed the real serialization boundary.
+  it("wraps every command payload in the args envelope", () => {
+    const flat = [...clientSource.matchAll(/invoke\(("[a-z_0-9]+"), args\)/g)].map(
+      (match) => match[1],
+    );
+    expect(
+      flat,
+      "these commands pass their payload flat; Rust will reject them with " +
+        "\"missing required key args\" -- wrap them as invoke(name, { args })",
+    ).toEqual([]);
   });
 
   it("exposes exactly the declared events", () => {

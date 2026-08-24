@@ -2,7 +2,14 @@
  * Typed TypeScript client for the Tauri IPC seam.
  *
  * One function per command declared in `docs/ipc-contract.md`, with argument
- * and return types mirroring the Rust serde types. This module only calls
+ * and return types mirroring the Rust serde types.
+ *
+ * Payloads cross the seam wrapped in an `args` envelope: Tauri routes a
+ * command's arguments by the *parameter name* on the Rust side, and every
+ * command that takes a payload declares it as `args: XArgs`. Passing the
+ * fields flat makes Rust reject the call with "missing required key args".
+ * The fields inside stay camelCase, matching the `#[serde(rename_all =
+ * "camelCase")]` on each Args struct. This module only calls
  * commands that the contract declares; inventing one here is a contract
  * violation. Until the matching headless tickets land, every command rejects
  * with an identifiable `unimplemented: <name>` error from Rust — the client
@@ -57,15 +64,15 @@ export function createPlan(args: {
   campusId: number;
   sessionId: number;
 }): Promise<PlanSummary> {
-  return invoke("create_plan", args);
+  return invoke("create_plan", { args });
 }
 
 export function deletePlan(args: { planId: string }): Promise<void> {
-  return invoke("delete_plan", args);
+  return invoke("delete_plan", { args });
 }
 
 export function getPlan(args: { planId: string }): Promise<Plan> {
-  return invoke("get_plan", args);
+  return invoke("get_plan", { args });
 }
 
 export function seedSamplePlan(): Promise<PlanSummary> {
@@ -78,7 +85,7 @@ export function listCapturedCourses(args: {
   campusId: number;
   sessionId: number;
 }): Promise<CapturedCourse[]> {
-  return invoke("list_captured_courses", args);
+  return invoke("list_captured_courses", { args });
 }
 
 export function listCapturedSections(args: {
@@ -86,7 +93,7 @@ export function listCapturedSections(args: {
   sessionId: number;
   courseId: number;
 }): Promise<Section[]> {
-  return invoke("list_captured_sections", args);
+  return invoke("list_captured_sections", { args });
 }
 
 // Plan membership
@@ -96,7 +103,7 @@ export function addSectionToPlan(args: {
   courseId: number;
   sectionId: number;
 }): Promise<Plan> {
-  return invoke("add_section_to_plan", args);
+  return invoke("add_section_to_plan", { args });
 }
 
 export function removeSectionFromPlan(args: {
@@ -104,7 +111,7 @@ export function removeSectionFromPlan(args: {
   courseId: number;
   sectionId: number;
 }): Promise<Plan> {
-  return invoke("remove_section_from_plan", args);
+  return invoke("remove_section_from_plan", { args });
 }
 
 export function setSectionPinned(args: {
@@ -113,18 +120,18 @@ export function setSectionPinned(args: {
   sectionId: number;
   pinned: boolean;
 }): Promise<Plan> {
-  return invoke("set_section_pinned", args);
+  return invoke("set_section_pinned", { args });
 }
 
 export function getPlanConflicts(args: { planId: string }): Promise<Conflict[]> {
-  return invoke("get_plan_conflicts", args);
+  return invoke("get_plan_conflicts", { args });
 }
 
 export function applySolution(args: {
   planId: string;
   sections: SectionRef[];
 }): Promise<Plan> {
-  return invoke("apply_solution", args);
+  return invoke("apply_solution", { args });
 }
 
 // Capture window & undo
@@ -133,21 +140,21 @@ export function openCaptureWindow(args: {
   campusId: number;
   sessionId: number;
 }): Promise<void> {
-  return invoke("open_capture_window", args);
+  return invoke("open_capture_window", { args });
 }
 
 export function getCaptureSummary(args: {
   campusId: number;
   sessionId: number;
 }): Promise<CaptureSummary> {
-  return invoke("get_capture_summary", args);
+  return invoke("get_capture_summary", { args });
 }
 
 export function undoLastCapture(args: {
   campusId: number;
   sessionId: number;
 }): Promise<CaptureSummary> {
-  return invoke("undo_last_capture", args);
+  return invoke("undo_last_capture", { args });
 }
 
 export function clearBrowserSession(): Promise<void> {
@@ -167,14 +174,14 @@ export function solvePlan(args: {
     resultLimit: number;
   };
 }): Promise<SolveResult> {
-  return invoke("solve_plan", args);
+  return invoke("solve_plan", { args });
 }
 
 export function continueSolve(args: {
   planId: string;
   resumeToken: string;
 }): Promise<SolveResult> {
-  return invoke("continue_solve", args);
+  return invoke("continue_solve", { args });
 }
 
 export function cancelSolve(): Promise<void> {
@@ -184,23 +191,23 @@ export function cancelSolve(): Promise<void> {
 // Refresh (async commands — never block the UI thread)
 
 export function startRefresh(args: { planId: string }): Promise<RefreshOutcome> {
-  return invoke("start_refresh", args);
+  return invoke("start_refresh", { args });
 }
 
 export function resumeRefresh(args: { planId: string }): Promise<RefreshOutcome> {
-  return invoke("resume_refresh", args);
+  return invoke("resume_refresh", { args });
 }
 
 export function getMissingSections(args: {
   planId: string;
 }): Promise<MissingSection[]> {
-  return invoke("get_missing_sections", args);
+  return invoke("get_missing_sections", { args });
 }
 
 // Export & diagnostics
 
 export function exportPlanIcs(args: { planId: string }): Promise<IcsExport> {
-  return invoke("export_plan_ics", args);
+  return invoke("export_plan_ics", { args });
 }
 
 /**
@@ -211,7 +218,7 @@ export function exportPlanIcs(args: { planId: string }): Promise<IcsExport> {
  * transmitted by this command.
  */
 export function buildCaptureReport(args: { error: string }): Promise<CaptureReport> {
-  return invoke("build_capture_report", args);
+  return invoke("build_capture_report", { args });
 }
 
 // Events (Rust → main window)

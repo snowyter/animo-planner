@@ -161,7 +161,15 @@ describe("ipc client", () => {
       invokeMock.mockClear();
       await call();
       expect(invokeMock).toHaveBeenCalledTimes(1);
-      expect(invokeMock).toHaveBeenCalledWith(name, ...args);
+      // Tauri routes arguments by the Rust *parameter* name, and every
+      // command taking a payload declares it as `args: XArgs`. The payload
+      // therefore crosses the seam inside an `args` envelope; sending the
+      // fields flat is rejected with "missing required key args", which is
+      // what shipped until it was caught by running the app.
+      expect(invokeMock).toHaveBeenCalledWith(
+        name,
+        ...(args.length === 0 ? [] : [{ args: args[0] }])
+      );
     }
   });
 

@@ -29,6 +29,24 @@
 | `capture:failed` | `{ "error": string }` |
 | `refresh:progress` | `{ "courseIndex": number, "courseTotal": number, "courseCode": string }` |
 
+## Argument envelope
+
+Every command that takes a payload declares it on the Rust side as a single
+`args: XArgs` parameter, and **Tauri routes arguments by that parameter name**.
+The client therefore sends the payload wrapped:
+
+```ts
+invoke("create_plan", { args: { name, campusId, sessionId } });
+```
+
+Passing the fields flat is rejected at runtime with
+`command create_plan missing required key args`. Fields *inside* the envelope
+are camelCase, matching `#[serde(rename_all = "camelCase")]` on each Args
+struct. Commands taking no payload pass nothing at all.
+
+Guarded by `wraps every command payload in the args envelope` in
+`src/adapters/ipc/contract.test.ts`.
+
 ## Commands
 
 ### Options & app info
