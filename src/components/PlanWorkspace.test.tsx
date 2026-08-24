@@ -9,6 +9,20 @@ vi.mock("../adapters/ipc/client", () => ({
   getCaptureSummary: vi.fn(),
   openCaptureWindow: vi.fn(),
   undoLastCapture: vi.fn(),
+  listCapturedCourses: vi.fn().mockResolvedValue([]),
+  listCapturedSections: vi.fn().mockResolvedValue([]),
+  addSectionToPlan: vi.fn(),
+  removeSectionFromPlan: vi.fn(),
+  setSectionPinned: vi.fn(),
+  solvePlan: vi.fn().mockResolvedValue({
+    status: "complete",
+    solutions: [],
+    resumeToken: null,
+    unsatisfiableCourses: [],
+  }),
+  continueSolve: vi.fn(),
+  cancelSolve: vi.fn(),
+  applySolution: vi.fn(),
   onCaptureUpdated: vi.fn().mockResolvedValue(() => {}),
   onCaptureFailed: vi.fn().mockResolvedValue(() => {}),
 }));
@@ -254,6 +268,26 @@ describe("PlanWorkspace", () => {
     );
 
     expect(html).toContain("Pick my own sections");
+  });
+
+  it("renders Solve the rest button for triggering solver", () => {
+    const mockFullPlan: Plan = {
+      ...mockPlanSummary,
+      sections: [],
+    };
+
+    const html = renderToStaticMarkup(
+      React.createElement(PlanWorkspace, {
+        planSummary: mockPlanSummary,
+        plan: mockFullPlan,
+        isLoading: false,
+        error: null,
+        onBack: vi.fn(),
+        onRetry: vi.fn(),
+      })
+    );
+
+    expect(html).toContain("Solve the rest");
   });
 });
 
