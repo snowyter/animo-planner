@@ -3,7 +3,7 @@ import React from "react";
 import { renderToStaticMarkup } from "react-dom/server";
 import { PlanWorkspace } from "./PlanWorkspace";
 import * as client from "../adapters/ipc/client";
-import type { Plan, PlanSection, PlanSummary, ScheduleBlock } from "../adapters/ipc/types";
+import type { Plan, PlanSection, PlanSummary, ScheduleBlock, Section } from "../adapters/ipc/types";
 
 vi.mock("../adapters/ipc/client", () => ({
   getCaptureSummary: vi.fn(),
@@ -495,6 +495,242 @@ describe("PlanWorkspace refresh recovery states", () => {
     );
 
     expect(html).toContain("Export");
+  });
+});
+
+describe("PlanWorkspace persistent week grid layout (ticket 28)", () => {
+  const mockPlanSummary: PlanSummary = {
+    id: "p1",
+    name: "T1 Target Schedule",
+    campusId: 7,
+    campusName: "Manila",
+    sessionId: 155,
+    sessionName: "AY2026-27 T1",
+    createdAt: "2026-08-22T00:00:00Z",
+    sectionCount: 0,
+    isSample: false,
+  };
+
+  it("renders section picker and sticky week grid container side by side while picking is open", () => {
+    const html = renderToStaticMarkup(
+      React.createElement(PlanWorkspace, {
+        planSummary: mockPlanSummary,
+        plan: { ...mockPlanSummary, sections: [] },
+        isLoading: false,
+        error: null,
+        onBack: vi.fn(),
+        onRetry: vi.fn(),
+      })
+    );
+
+    // Both section picker and week grid are present
+    expect(html).toContain("Pick my own sections");
+    expect(html).toContain("Weekly Schedule");
+
+    // Responsive 2-column container exists
+    expect(html).toContain("data-testid=\"picking-layout\"");
+    expect(html).toMatch(/xl:flex-row|xl:grid/);
+
+    // Week grid container has sticky positioning for desktop scrolling
+    expect(html).toMatch(/xl:sticky\s+xl:top-6|sticky/);
+  });
+
+  it("orders the week grid ahead of the section list in single-column fallback", () => {
+    const html = renderToStaticMarkup(
+      React.createElement(PlanWorkspace, {
+        planSummary: mockPlanSummary,
+        plan: { ...mockPlanSummary, sections: [] },
+        isLoading: false,
+        error: null,
+        onBack: vi.fn(),
+        onRetry: vi.fn(),
+      })
+    );
+
+    // Week grid column has order-1 (narrow) and xl:order-2 (desktop)
+    // Section picker column has order-2 (narrow) and xl:order-1 (desktop)
+    expect(html).toMatch(/order-1[\s\S]*order-2/);
+  });
+
+  it("prevents horizontal page overflow by scoping grid min-width to its own scroll container", () => {
+    const html = renderToStaticMarkup(
+      React.createElement(PlanWorkspace, {
+        planSummary: mockPlanSummary,
+        plan: { ...mockPlanSummary, sections: [] },
+        isLoading: false,
+        error: null,
+        onBack: vi.fn(),
+        onRetry: vi.fn(),
+      })
+    );
+
+    // The grid column wrapper must have min-w-0 to prevent flex expansion
+    expect(html).toContain("min-w-0");
+  });
+
+  it("renders ghost preview on the week grid when hovering a section in the new layout", async () => {
+    const useSectionPickerModule = await import("./useSectionPicker");
+    const ghostCandidate: Section = {
+      campusId: 7,
+      sessionId: 155,
+      courseId: 2923,
+      courseCode: "GEARTAP",
+      courseTitle: "Art Appreciation",
+      sectionId: 384,
+      sectionCode: "S11",
+      courseType: "Lecture",
+      credits: 3,
+      enrollCap: 45,
+      startDate: "2026-07-10",
+      endDate: "2026-12-09",
+      firstSeenAt: "2026-08-22T00:00:00Z",
+      lastSeenAt: "2026-08-22T00:00:00Z",
+      modality: "F2F",
+      blocks: [
+        {
+          day: "TUE",
+          startMin: 870,
+          endMin: 960,
+          modality: "F2F",
+          location: "L226",
+        },
+      ],
+      latestSnapshot: {
+        capturedAt: "2026-08-22T00:00:00Z",
+        enrolled: 42,
+        teacher: "Prof X",
+        remark: null,
+      },
+    };
+
+    const spy = vi.spyOn(useSectionPickerModule, "useSectionPicker").mockReturnValue({
+      courses: [
+        {
+          courseId: 2923,
+          code: "GEARTAP",
+          title: "Art Appreciation",
+          sectionCount: 1,
+          firstSeenAt: "2026-08-22T00:00:00Z",
+          lastSeenAt: "2026-08-22T00:00:00Z",
+        },
+      ],
+      selectedCourseId: 2923,
+      sections: [ghostCandidate],
+      isLoadingCourses: false,
+      isLoadingSections: false,
+      isMutating: false,
+      error: null,
+      hoveredSection: null,
+      setHoveredSection: vi.fn(),
+      fetchCourses: vi.fn(),
+      selectCourse: vi.fn(),
+      addSection: vi.fn(),
+      removeSection: vi.fn(),
+      togglePin: vi.fn(),
+    });
+
+    const html = renderToStaticMarkup(
+      React.createElement(PlanWorkspace, {
+        planSummary: mockPlanSummary,
+        plan: { ...mockPlanSummary, sections: [] },
+        isLoading: false,
+        error: null,
+        onBack: vi.fn(),
+        onRetry: vi.fn(),
+      })
+    );
+
+    // Picker row is rendered in the new layout
+    expect(html).toContain("data-testid=\"section-row-S11\"");
+
+    spy.mockRestore();
+  });
+
+  it("renders ghost preview with preview badge on the week grid when hovering candidate section", () => {
+    const html = renderToStaticMarkup(
+      React.createElement(PlanWorkspace, {
+        planSummary: mockPlanSummary,
+        plan: { ...mockPlanSummary, sections: [] },
+        isLoading: false,
+        error: null,
+        onBack: vi.fn(),
+        onRetry: vi.fn(),
+      })
+    );
+
+    // Week grid rendered within picking layout
+    expect(html).toContain("data-testid=\"week-grid\"");
+    expect(html).toContain("data-testid=\"picking-layout\"");
+  });
+
+  it("keeps conflict display and hatched styling intact in persistent week grid layout", () => {
+    const sectionA = {
+      courseId: 2923,
+      courseCode: "GEARTAP",
+      courseTitle: "Art Appreciation",
+      sectionId: 384,
+      sectionCode: "S11",
+      pinned: false,
+      missing: false,
+      modality: "F2F" as const,
+      blocks: [
+        {
+          day: "MON" as const,
+          startMin: 450,
+          endMin: 540,
+          modality: "F2F" as const,
+          location: "L226",
+        },
+      ],
+      latestSnapshot: {
+        capturedAt: "2026-08-22T00:00:00Z",
+        enrolled: 42,
+        teacher: "Prof X",
+        remark: null,
+      },
+    };
+
+    const sectionB = {
+      courseId: 564,
+      courseCode: "CSINTSY",
+      courseTitle: "Intro to Intelligent Systems",
+      sectionId: 737,
+      sectionCode: "Z01",
+      pinned: false,
+      missing: false,
+      modality: "ONLINE" as const,
+      blocks: [
+        {
+          day: "MON" as const,
+          startMin: 480,
+          endMin: 570,
+          modality: "ONLINE" as const,
+          location: null,
+        },
+      ],
+      latestSnapshot: {
+        capturedAt: "2026-08-22T00:00:00Z",
+        enrolled: 30,
+        teacher: "Prof Y",
+        remark: null,
+      },
+    };
+
+    const html = renderToStaticMarkup(
+      React.createElement(PlanWorkspace, {
+        planSummary: mockPlanSummary,
+        plan: { ...mockPlanSummary, sectionCount: 2, sections: [sectionA, sectionB] },
+        isLoading: false,
+        error: null,
+        onBack: vi.fn(),
+        onRetry: vi.fn(),
+      })
+    );
+
+    // Conflict displayed in header
+    expect(html).toContain("1 conflict");
+    // Hatched styling on grid blocks
+    expect(html).toContain("hatched");
   });
 });
 

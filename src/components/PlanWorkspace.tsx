@@ -9,6 +9,7 @@ import {
   AlertTriangle,
   CheckCircle2,
   Sparkles,
+  BookOpen,
 } from "lucide-react";
 
 import { Button } from "./ui/button";
@@ -55,6 +56,7 @@ export function PlanWorkspace({
 }: PlanWorkspaceProps) {
   const [hoveredSection, setHoveredSection] = useState<Section | null>(null);
   const [isSolveOpen, setIsSolveOpen] = useState<boolean>(false);
+  const [isPickerOpen, setIsPickerOpen] = useState<boolean>(true);
 
   const currentSections = plan?.sections ?? [];
 
@@ -420,7 +422,7 @@ export function PlanWorkspace({
         </div>
       )}
 
-      {/* Main workspace layout: Section Picker + Week Grid (SPEC §7, ADR-0011, ADR-0012, ADR-0014) */}
+      {/* Main workspace layout: Section Picker + Week Grid (SPEC §7, ADR-0011, ADR-0012, ADR-0014, Ticket 28) */}
       <div className="space-y-6">
         {/* Solver affordance / Entry point ("Let the solver build it" / "Solve the rest") */}
         <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3 rounded-xl border border-blue-100 bg-blue-50/50 p-4">
@@ -449,47 +451,112 @@ export function PlanWorkspace({
           </Button>
         </div>
 
-        {/* Section Picker (Ticket 13: default entry point for browsing & picking sections) */}
-        <SectionPicker
-          courses={courses}
-          selectedCourseId={selectedCourseId}
-          sections={sections}
-          planSections={currentSections}
-          isLoadingCourses={isLoadingCourses}
-          isLoadingSections={isLoadingSections}
-          isMutating={isMutating}
-          error={pickerError}
-          onSelectCourse={selectCourse}
-          onAddSection={handleAddSection}
-          onRemoveSection={handleRemoveSection}
-          onTogglePin={handleTogglePin}
-          onHoverSection={setHoveredSection}
-        />
+        {isPickerOpen ? (
+          /* Persistent Picking Layout: 2-columns on desktop (xl:), single column with grid above picker on narrow */
+          <div
+            data-testid="picking-layout"
+            className="flex flex-col xl:flex-row items-start gap-6"
+          >
+            {/* Section Picker Column (Desktop left, narrow bottom) */}
+            <div className="w-full xl:w-[480px] xl:shrink-0 order-2 xl:order-1">
+              <SectionPicker
+                courses={courses}
+                selectedCourseId={selectedCourseId}
+                sections={sections}
+                planSections={currentSections}
+                isLoadingCourses={isLoadingCourses}
+                isLoadingSections={isLoadingSections}
+                isMutating={isMutating}
+                error={pickerError}
+                onSelectCourse={selectCourse}
+                onAddSection={handleAddSection}
+                onRemoveSection={handleRemoveSection}
+                onTogglePin={handleTogglePin}
+                onHoverSection={setHoveredSection}
+                onClose={() => setIsPickerOpen(false)}
+              />
+            </div>
 
-        {/* Week Grid */}
-        <div className="space-y-3">
-          <div className="flex items-center justify-between">
-            <h3 className="text-base font-semibold text-slate-900">Weekly Schedule</h3>
-            <div className="flex items-center gap-3">
-              <span className="text-xs text-slate-500">
-                {currentSections.length === 0
-                  ? "No sections added yet"
-                  : formatSectionCount(currentSections.length)}
-              </span>
-              <ExportMenu
-                planSummary={planSummary}
-                plan={plan}
+            {/* Sticky Week Grid Column (Desktop right sticky, narrow top) */}
+            <div className="w-full xl:flex-1 min-w-0 order-1 xl:order-2 xl:sticky xl:top-6 space-y-3">
+              <div className="flex items-center justify-between">
+                <h3 className="text-base font-semibold text-slate-900">Weekly Schedule</h3>
+                <div className="flex items-center gap-3">
+                  <span className="text-xs text-slate-500">
+                    {currentSections.length === 0
+                      ? "No sections added yet"
+                      : formatSectionCount(currentSections.length)}
+                  </span>
+                  <ExportMenu
+                    planSummary={planSummary}
+                    plan={plan}
+                    conflicts={conflicts}
+                  />
+                </div>
+              </div>
+
+              <WeekGrid
+                sections={currentSections}
+                ghostSection={hoveredSection}
                 conflicts={conflicts}
               />
             </div>
           </div>
+        ) : (
+          /* Single-column reading order when picker is closed */
+          <div className="space-y-6">
+            {/* Pick my own sections affordance */}
+            <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3 rounded-xl border border-emerald-100 bg-emerald-50/50 p-4">
+              <div className="flex items-start sm:items-center gap-3">
+                <div className="flex h-9 w-9 items-center justify-center rounded-lg bg-emerald-100 text-emerald-700 shrink-0">
+                  <BookOpen className="h-4 w-4" />
+                </div>
+                <div>
+                  <h4 className="text-sm font-semibold text-slate-900">
+                    Pick my own sections
+                  </h4>
+                  <p className="text-xs text-slate-500">
+                    Browse captured sections course by course and preview ghosts on the week grid.
+                  </p>
+                </div>
+              </div>
+              <Button
+                variant="outline"
+                size="sm"
+                onClick={() => setIsPickerOpen(true)}
+                className="text-xs shrink-0 bg-white hover:bg-slate-50 text-emerald-700 border-emerald-200"
+              >
+                <BookOpen className="h-3.5 w-3.5 mr-1" />
+                Open picker
+              </Button>
+            </div>
 
-          <WeekGrid
-            sections={currentSections}
-            ghostSection={hoveredSection}
-            conflicts={conflicts}
-          />
-        </div>
+            {/* Week Grid in full width single column */}
+            <div className="space-y-3">
+              <div className="flex items-center justify-between">
+                <h3 className="text-base font-semibold text-slate-900">Weekly Schedule</h3>
+                <div className="flex items-center gap-3">
+                  <span className="text-xs text-slate-500">
+                    {currentSections.length === 0
+                      ? "No sections added yet"
+                      : formatSectionCount(currentSections.length)}
+                  </span>
+                  <ExportMenu
+                    planSummary={planSummary}
+                    plan={plan}
+                    conflicts={conflicts}
+                  />
+                </div>
+              </div>
+
+              <WeekGrid
+                sections={currentSections}
+                ghostSection={hoveredSection}
+                conflicts={conflicts}
+              />
+            </div>
+          </div>
+        )}
       </div>
 
       {/* Solve The Rest Dialog (Ticket 20) */}

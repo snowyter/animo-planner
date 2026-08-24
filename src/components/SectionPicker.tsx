@@ -27,6 +27,7 @@ import {
   MessageSquare,
   Check,
   Search,
+  X,
 } from "lucide-react";
 import { Button } from "./ui/button";
 import { Badge } from "./ui/badge";
@@ -60,6 +61,7 @@ export interface SectionPickerProps {
   onRemoveSection: (section: Section) => void;
   onTogglePin: (section: Section, pinned: boolean) => void;
   onHoverSection: (section: Section | null) => void;
+  onClose?: () => void;
   className?: string;
 }
 
@@ -77,6 +79,7 @@ export function SectionPicker({
   onRemoveSection,
   onTogglePin,
   onHoverSection,
+  onClose,
   className = "",
 }: SectionPickerProps) {
   const selectedCourse = useMemo(() => {
@@ -86,44 +89,73 @@ export function SectionPicker({
   return (
     <Card className={`border-slate-200 bg-white shadow-xs ${className}`}>
       <CardHeader className="border-b border-slate-100 pb-4">
-        <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3">
-          <div>
-            <CardTitle className="text-lg font-bold text-slate-900 flex items-center gap-2">
-              <BookOpen className="h-5 w-5 text-emerald-700" />
-              <span>Pick my own sections</span>
-            </CardTitle>
+        <div className="flex flex-col sm:flex-row sm:items-start sm:justify-between gap-3">
+          <div className="flex-1 min-w-0">
+            <div className="flex items-center justify-between gap-2">
+              <CardTitle className="text-lg font-bold text-slate-900 flex items-center gap-2">
+                <BookOpen className="h-5 w-5 text-emerald-700 shrink-0" />
+                <span>Pick my own sections</span>
+              </CardTitle>
+              {onClose && (
+                <Button
+                  type="button"
+                  variant="ghost"
+                  size="sm"
+                  onClick={onClose}
+                  className="h-8 px-2 text-xs text-slate-500 hover:text-slate-900 sm:hidden"
+                  title="Close section picker"
+                >
+                  <X className="h-4 w-4 mr-1" />
+                  <span>Close</span>
+                </Button>
+              )}
+            </div>
             <p className="text-xs text-slate-500 mt-0.5">
               Browse captured sections course by course, preview ghosts on the week grid, and select sections manually.
             </p>
-
           </div>
 
+          <div className="flex items-center gap-2 shrink-0">
+            {/* Course Selector Dropdown / Switcher */}
+            {courses.length > 0 && (
+              <div className="flex items-center gap-2">
+                <label
+                  htmlFor="course-select"
+                  className="text-xs font-semibold text-slate-600 uppercase tracking-wider shrink-0"
+                >
+                  Course:
+                </label>
+                <select
+                  id="course-select"
+                  data-testid="course-select"
+                  value={selectedCourseId ?? ""}
+                  onChange={(e) => onSelectCourse(Number(e.target.value))}
+                  disabled={isLoadingCourses || isLoadingSections}
+                  className="h-9 rounded-md border border-slate-200 bg-white px-3 py-1 text-sm font-medium text-slate-900 shadow-xs focus:border-emerald-600 focus:outline-hidden focus:ring-1 focus:ring-emerald-600"
+                >
+                  {courses.map((c) => (
+                    <option key={c.courseId} value={c.courseId}>
+                      {c.code} — {c.title} ({c.sectionCount} {c.sectionCount === 1 ? "section" : "sections"})
+                    </option>
+                  ))}
+                </select>
+              </div>
+            )}
 
-          {/* Course Selector Dropdown / Switcher */}
-          {courses.length > 0 && (
-            <div className="flex items-center gap-2">
-              <label
-                htmlFor="course-select"
-                className="text-xs font-semibold text-slate-600 uppercase tracking-wider shrink-0"
+            {onClose && (
+              <Button
+                type="button"
+                variant="ghost"
+                size="sm"
+                onClick={onClose}
+                className="hidden sm:inline-flex h-9 px-2.5 text-xs text-slate-500 hover:text-slate-900 hover:bg-slate-100"
+                title="Close section picker"
               >
-                Course:
-              </label>
-              <select
-                id="course-select"
-                data-testid="course-select"
-                value={selectedCourseId ?? ""}
-                onChange={(e) => onSelectCourse(Number(e.target.value))}
-                disabled={isLoadingCourses || isLoadingSections}
-                className="h-9 rounded-md border border-slate-200 bg-white px-3 py-1 text-sm font-medium text-slate-900 shadow-xs focus:border-emerald-600 focus:outline-hidden focus:ring-1 focus:ring-emerald-600"
-              >
-                {courses.map((c) => (
-                  <option key={c.courseId} value={c.courseId}>
-                    {c.code} — {c.title} ({c.sectionCount} {c.sectionCount === 1 ? "section" : "sections"})
-                  </option>
-                ))}
-              </select>
-            </div>
-          )}
+                <X className="h-4 w-4 mr-1" />
+                <span>Close</span>
+              </Button>
+            )}
+          </div>
         </div>
 
         {/* Selected Course Header Banner */}
