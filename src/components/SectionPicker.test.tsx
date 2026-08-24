@@ -479,6 +479,38 @@ describe("SectionPicker", () => {
     expect(html).toMatch(/data-testid="course-select"[^>]*class="[^"]*min-w-0/);
   });
 
+  // The remove button lives in the chrome half. Its confirmation dialog lived
+  // in the list half, so rendering chrome-only left the button setting state
+  // with no dialog mounted -- the button simply did nothing.
+  it("keeps the remove confirmation dialog in the same half as its trigger", () => {
+    const chrome = renderToStaticMarkup(
+      React.createElement(SectionPicker, {
+        courses: mockCourses,
+        selectedCourseId: 2923,
+        sections: sampleSections,
+        planSections: [],
+        isLoadingCourses: false,
+        isLoadingSections: false,
+        isMutating: false,
+        error: null,
+        initialConfirmingRemove: true,
+        render: "chrome",
+        onSelectCourse: vi.fn(),
+        onAddSection: vi.fn(),
+        onRemoveSection: vi.fn(),
+        onRemoveCourse: vi.fn(),
+        onTogglePin: vi.fn(),
+        onHoverSection: vi.fn(),
+      })
+    );
+
+    expect(chrome).toContain("remove-course-button");
+    expect(
+      chrome,
+      "the dialog must render in whichever half holds the button",
+    ).toContain("remove-course-dialog");
+  });
+
   it("offers exactly one close control", () => {
     const html = renderToStaticMarkup(
       React.createElement(SectionPicker, {

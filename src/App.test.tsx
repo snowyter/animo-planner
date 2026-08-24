@@ -17,7 +17,6 @@ vi.mock("./adapters/ipc/client", () => ({
   seedSamplePlan: vi.fn(),
   getCaptureSummary: vi.fn(),
   openCaptureWindow: vi.fn(),
-  undoLastCapture: vi.fn(),
   getAppInfo: vi.fn().mockResolvedValue({
     appVersion: "0.1.0",
     selectorConfigVersion: "1",

@@ -15,15 +15,12 @@ describe("CaptureBar", () => {
       sessionId: 155,
       sectionCount: 42,
       courseCount: 8,
-      canUndo: true,
     } as CaptureSummary,
     isLoading: false,
     error: null,
     captureFailure: null,
     isOpening: false,
-    isUndoing: false,
     onOpenCapture: vi.fn(),
-    onUndo: vi.fn(),
     onDismissFailure: vi.fn(),
     onReportBrokenCapture: vi.fn(),
   };
@@ -47,7 +44,6 @@ describe("CaptureBar", () => {
           sessionId: 155,
           sectionCount: 42,
           courseCount: 8,
-          canUndo: true,
         },
       })
     );
@@ -64,45 +60,6 @@ describe("CaptureBar", () => {
     );
 
     expect(html).toContain("0 sections from 0 courses");
-  });
-
-  it("renders undo button next to counter and enables it when canUndo is true with active tooltip", () => {
-    const html = renderToStaticMarkup(
-      React.createElement(CaptureBar, {
-        ...defaultProps,
-        summary: {
-          campusId: 7,
-          sessionId: 155,
-          sectionCount: 42,
-          courseCount: 8,
-          canUndo: true,
-        },
-      })
-    );
-
-    expect(html).toContain("Undo");
-    expect(html).toContain('title="Undo last captured course batch"');
-    // Should not have disabled attribute on the undo button
-    expect(html).not.toMatch(/<button[^>]*disabled[^>]*>[^<]*Undo/i);
-  });
-
-  it("disables undo button when canUndo is false and explains that undo covers only the most recent capture and is not available after restart", () => {
-    const html = renderToStaticMarkup(
-      React.createElement(CaptureBar, {
-        ...defaultProps,
-        summary: {
-          campusId: 7,
-          sessionId: 155,
-          sectionCount: 0,
-          courseCount: 0,
-          canUndo: false,
-        },
-      })
-    );
-
-    expect(html).toContain("Undo");
-    expect(html).toMatch(/<button[^>]*disabled/);
-    expect(html).toMatch(/title="Undo is only available for the most recent capture in this session and is not available after a restart"/i);
   });
 
   it("renders open Archer's Hub button scoped to campus and session", () => {

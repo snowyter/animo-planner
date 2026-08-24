@@ -175,7 +175,7 @@ impl CaptureListener {
     /// refresh run (ticket 26): while one is active for a scope, posted
     /// batches matching that scope are routed into the run — to be stored by
     /// `Store::apply_refresh` through the runner — instead of journaled as
-    /// undoable captures.
+    /// ordinary captures.
     pub fn bind<E: CaptureEvents, C: CurrentSelectorConfig>(
         store: StoreHandle,
         events: E,
@@ -552,9 +552,7 @@ fn process_capture<E: CaptureEvents, C: CurrentSelectorConfig>(
 ) -> Response {
     // Ticket 26: while a refresh run is active for this scope, the posted
     // batch belongs to that run. The runner validates it and stores it via
-    // `Store::apply_refresh` — never the undoable journal — so a refresh can
-    // never be reverted by an Undo meant for the student's last search, and
-    // no capture event fires for it.
+    // `Store::apply_refresh`, and no capture event fires for it.
     if state.active_refresh.deliver(
         &CaptureScope {
             campus_id: payload.campus_id,
@@ -652,8 +650,6 @@ mod tests {
 
     const CSINTSY_FIXTURE: &str =
         include_str!("../../tests/fixtures/ArchersHub-Course-Finder-CSINTSY.html");
-    const GEARTAP_FIXTURE: &str =
-        include_str!("../../tests/fixtures/ArchersHub-Course-Finder-GEARTAP.html");
 
     /// Event sink that records what the listener announced.
     #[derive(Clone, Default)]
@@ -706,10 +702,6 @@ mod tests {
             "INTRODUCTION TO INTELLIGENT SYSTEMS",
             CSINTSY_FIXTURE,
         )
-    }
-
-    fn geartap_payload() -> String {
-        payload(7, 155, 564, "GEARTAP", "ART APPRECIATION", GEARTAP_FIXTURE)
     }
 
     /// Minimal raw-HTTP client so the tests exercise a real socket, not the
@@ -881,7 +873,6 @@ mod tests {
 
         let counts = summary(&store, 7, 155);
         assert_eq!((counts.section_count, counts.course_count), (5, 1));
-        assert!(counts.can_undo, "a real batch is undoable");
         let updated = events.updated.lock().unwrap().clone();
         assert_eq!(updated.len(), 1, "exactly one capture:updated event");
         assert_eq!(
@@ -913,7 +904,6 @@ mod tests {
 
         let counts = summary(&store, 7, 155);
         assert_eq!((counts.section_count, counts.course_count), (0, 0));
-        assert!(!counts.can_undo);
         assert!(events.updated.lock().unwrap().is_empty());
         assert!(
             events.failed.lock().unwrap().is_empty(),
@@ -1015,7 +1005,6 @@ mod tests {
 
         let counts = summary(&store, 7, 155);
         assert_eq!((counts.section_count, counts.course_count), (0, 0), "nothing partial");
-        assert!(!counts.can_undo);
         assert!(events.updated.lock().unwrap().is_empty());
         assert_eq!(
             events.failed.lock().unwrap().len(),
@@ -1052,52 +1041,6 @@ mod tests {
             "the same capture twice yields the same counts"
         );
         assert_eq!(events.updated.lock().unwrap().len(), 2, "two batches, two events");
-    }
-
-    // ---------- undo ----------
-
-    #[tokio::test]
-    async fn undo_restores_the_prior_state_end_to_end() {
-        let store = in_memory_store();
-        let (listener, server) = bind(store.clone(), RecordingEvents::default());
-        spawn(server);
-
-        for (payload, expected) in [(csintsy_payload(), (5, 1)), (geartap_payload(), (47, 2))] {
-            let (status, _) = raw_request(
-                listener.port(),
-                "POST",
-                "/capture",
-                &[("Authorization", &auth(listener.token()))],
-                payload.as_bytes(),
-            )
-            .await;
-            assert_eq!(status, 204);
-            let counts = summary(&store, 7, 155);
-            assert_eq!((counts.section_count, counts.course_count), expected);
-        }
-
-        let undone = store
-            .lock()
-            .unwrap()
-            .undo_last_capture()
-            .expect("undo must succeed");
-        assert!(undone);
-        let counts = summary(&store, 7, 155);
-        assert_eq!(
-            (counts.section_count, counts.course_count),
-            (5, 1),
-            "the most recent batch is reversed, the earlier one survives"
-        );
-        assert!(!counts.can_undo, "undo consumes the batch");
-
-        let again = store
-            .lock()
-            .unwrap()
-            .undo_last_capture()
-            .expect("undo with nothing to undo is safe");
-        assert!(!again, "there is nothing left to undo");
-        let counts = summary(&store, 7, 155);
-        assert_eq!((counts.section_count, counts.course_count), (5, 1));
     }
 
     // ---------- the loaded selector config drives parsing (ticket 18) ----------
@@ -1285,7 +1228,7 @@ mod tests {
     //
     // While a refresh run is active for a plan's scope, a posted batch
     // belongs to that run — stored later by `apply_refresh`, never as an
-    // undoable capture batch — and no capture event fires. A post outside
+    // ordinary capture — and no capture event fires. A post outside
     // the run's scope is an ordinary capture, exactly as before.
 
     #[tokio::test]
@@ -1319,11 +1262,10 @@ mod tests {
         assert_eq!(batch.course_code, "CSINTSY");
         assert_eq!(batch.html, CSINTSY_FIXTURE);
 
-        // Nothing was journaled: not stored as a capture, nothing undoable,
+        // Not stored as an ordinary capture,
         // and no capture event fired.
         let counts = summary(&store, 7, 155);
         assert_eq!((counts.section_count, counts.course_count), (0, 0));
-        assert!(!counts.can_undo);
         assert!(events.updated.lock().unwrap().is_empty());
         assert!(events.failed.lock().unwrap().is_empty());
     }
@@ -1353,10 +1295,6 @@ mod tests {
 
         let counts = summary(&store, 7, 155);
         assert_eq!((counts.section_count, counts.course_count), (5, 1));
-        assert!(
-            counts.can_undo,
-            "an ordinary search during a run stays an undoable capture"
-        );
         assert_eq!(events.updated.lock().unwrap().len(), 1);
         assert_eq!(
             receiver.try_recv().err(),

@@ -8,7 +8,6 @@ import type { Plan, PlanSection, PlanSummary, ScheduleBlock, Section } from "../
 vi.mock("../adapters/ipc/client", () => ({
   getCaptureSummary: vi.fn(),
   openCaptureWindow: vi.fn(),
-  undoLastCapture: vi.fn(),
   forgetCapturedCourse: vi.fn(),
   listCapturedCourses: vi.fn().mockResolvedValue([]),
   listCapturedSections: vi.fn().mockResolvedValue([]),
@@ -36,7 +35,6 @@ describe("PlanWorkspace", () => {
       sessionId: 155,
       sectionCount: 42,
       courseCount: 8,
-      canUndo: true,
     });
     vi.mocked(client.onCaptureUpdated).mockResolvedValue(() => {});
     vi.mocked(client.onCaptureFailed).mockResolvedValue(() => {});
@@ -233,7 +231,7 @@ describe("PlanWorkspace", () => {
     expect(html).toContain("No conflicts");
   });
 
-  it("renders the capture bar with open Archer's Hub button, credential disclaimer, and undo control", () => {
+  it("renders the capture bar with open Archer's Hub button and credential disclaimer", () => {
     const html = renderToStaticMarkup(
       React.createElement(PlanWorkspace, {
         planSummary: mockPlanSummary,
@@ -248,7 +246,6 @@ describe("PlanWorkspace", () => {
     expect(html).toContain("Open Archer&#x27;s Hub");
     expect(html).toContain("Capture Sections");
     expect(html).toMatch(/never (?:sees, captures, or )?stores (?:your )?credentials/i);
-    expect(html).toContain("Undo");
   });
 
   it("renders SectionPicker with captured courses inside PlanWorkspace", () => {

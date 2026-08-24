@@ -211,37 +211,9 @@ export function SectionPicker({
             </div>
           </div>
         )}
-      </CardHeader>
-      )}
-
-      {render !== "chrome" && (
-      <CardContent className="p-4 sm:p-5">
-        {error && (
-          <div
-            className="mb-4 rounded-lg border border-red-200 bg-red-50 p-3 text-xs text-red-700 flex items-start justify-between gap-2"
-            role="alert"
-          >
-            <div className="flex items-start gap-2">
-              <AlertTriangle className="h-4 w-4 text-red-600 shrink-0 mt-0.5" />
-              <div className="space-y-0.5">
-                <span className="font-semibold block">Notice</span>
-                <span className="font-mono">{error}</span>
-              </div>
-            </div>
-            {onDismissError && (
-              <button
-                type="button"
-                onClick={onDismissError}
-                className="text-red-500 hover:text-red-700 p-0.5 rounded-sm"
-                aria-label="Dismiss notice"
-              >
-                <X className="h-3.5 w-3.5" />
-              </button>
-            )}
-          </div>
-        )}
-
-        {/* Confirmation Dialog for Removing Course from Catalog */}
+        {/* Confirmation dialog, beside the button that opens it: it lived in
+           the list half while its trigger lived here, so the chrome-only
+           render set the state with no dialog mounted to show. */}
         {selectedCourse && (
           <Dialog
             open={isConfirmingRemove}
@@ -306,6 +278,36 @@ export function SectionPicker({
             </DialogContent>
           </Dialog>
         )}
+      </CardHeader>
+      )}
+
+      {render !== "chrome" && (
+      <CardContent className="p-4 sm:p-5">
+        {error && (
+          <div
+            className="mb-4 rounded-lg border border-red-200 bg-red-50 p-3 text-xs text-red-700 flex items-start justify-between gap-2"
+            role="alert"
+          >
+            <div className="flex items-start gap-2">
+              <AlertTriangle className="h-4 w-4 text-red-600 shrink-0 mt-0.5" />
+              <div className="space-y-0.5">
+                <span className="font-semibold block">Notice</span>
+                <span className="font-mono">{error}</span>
+              </div>
+            </div>
+            {onDismissError && (
+              <button
+                type="button"
+                onClick={onDismissError}
+                className="text-red-500 hover:text-red-700 p-0.5 rounded-sm"
+                aria-label="Dismiss notice"
+              >
+                <X className="h-3.5 w-3.5" />
+              </button>
+            )}
+          </div>
+        )}
+
 
         {isLoadingCourses ? (
           <div className="flex min-h-[200px] flex-col items-center justify-center space-y-2 py-8 text-center text-slate-400">

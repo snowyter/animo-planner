@@ -14,10 +14,8 @@ export interface CaptureState {
   error: string | null;
   captureFailure: string | null;
   isOpening: boolean;
-  isUndoing: boolean;
   fetchSummary: () => Promise<void>;
   openCapture: () => Promise<void>;
-  undoLast: () => Promise<void>;
   dismissFailure: () => void;
   handleCaptureUpdated: (summary: CaptureSummary) => void;
   handleCaptureFailed: (payload: { error: string }) => void;
@@ -29,7 +27,6 @@ export function useCaptureState(scope: CaptureScope): CaptureState {
   let error: string | null = null;
   let captureFailure: string | null = null;
   let isOpening = false;
-  let isUndoing = false;
 
   return {
     get summary() {
@@ -46,9 +43,6 @@ export function useCaptureState(scope: CaptureScope): CaptureState {
     },
     get isOpening() {
       return isOpening;
-    },
-    get isUndoing() {
-      return isUndoing;
     },
     fetchSummary: async () => {
       isLoading = true;
@@ -74,18 +68,6 @@ export function useCaptureState(scope: CaptureScope): CaptureState {
         isOpening = false;
       }
     },
-    undoLast: async () => {
-      isUndoing = true;
-      error = null;
-      try {
-        summary = await client.undoLastCapture(scope);
-      } catch (err) {
-        error = formatErrorMessage(err);
-        throw error;
-      } finally {
-        isUndoing = false;
-      }
-    },
     dismissFailure: () => {
       captureFailure = null;
     },
@@ -109,7 +91,6 @@ export function useCapture(campusId: number, sessionId: number) {
   const [error, setError] = useState<string | null>(null);
   const [captureFailure, setCaptureFailure] = useState<string | null>(null);
   const [isOpening, setIsOpening] = useState<boolean>(false);
-  const [isUndoing, setIsUndoing] = useState<boolean>(false);
 
   const fetchSummary = useCallback(async () => {
     if (!campusId || !sessionId) return;
@@ -141,21 +122,6 @@ export function useCapture(campusId: number, sessionId: number) {
     }
   }, [campusId, sessionId]);
 
-  const undoLast = useCallback(async () => {
-    if (!campusId || !sessionId) return;
-    setIsUndoing(true);
-    setError(null);
-    try {
-      const result = await client.undoLastCapture({ campusId, sessionId });
-      setSummary(result);
-    } catch (err) {
-      const msg = formatErrorMessage(err);
-      setError(msg);
-      throw msg;
-    } finally {
-      setIsUndoing(false);
-    }
-  }, [campusId, sessionId]);
 
   const dismissFailure = useCallback(() => {
     setCaptureFailure(null);
@@ -208,10 +174,8 @@ export function useCapture(campusId: number, sessionId: number) {
     error,
     captureFailure,
     isOpening,
-    isUndoing,
     fetchSummary,
     openCapture,
-    undoLast,
     dismissFailure,
   };
 }

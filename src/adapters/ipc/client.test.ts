@@ -99,11 +99,6 @@ describe("ipc client", () => {
         [{ campusId: 7, sessionId: 155 }],
       ],
       [
-        () => client.undoLastCapture({ campusId: 7, sessionId: 155 }),
-        "undo_last_capture",
-        [{ campusId: 7, sessionId: 155 }],
-      ],
-      [
         () =>
           client.solvePlan({
             planId: "p1",
@@ -206,7 +201,7 @@ describe("ipc client", () => {
     const registered = listenMock.mock.calls[0][1] as (event: {
       payload: unknown;
     }) => void;
-    const payload = { campusId: 7, sessionId: 155, sectionCount: 42, courseCount: 8, canUndo: true };
+    const payload = { campusId: 7, sessionId: 155, sectionCount: 42, courseCount: 8 };
     registered({ payload });
     expect(handler).toHaveBeenCalledWith(payload);
     expect(result).toBe(unlisten);

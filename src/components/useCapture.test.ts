@@ -6,7 +6,6 @@ import type { CaptureSummary } from "../adapters/ipc/types";
 vi.mock("../adapters/ipc/client", () => ({
   getCaptureSummary: vi.fn(),
   openCaptureWindow: vi.fn(),
-  undoLastCapture: vi.fn(),
   onCaptureUpdated: vi.fn(),
   onCaptureFailed: vi.fn(),
 }));
@@ -24,7 +23,6 @@ describe("useCaptureState logic", () => {
       sessionId: 155,
       sectionCount: 42,
       courseCount: 8,
-      canUndo: true,
     };
 
     vi.mocked(client.getCaptureSummary).mockResolvedValue(mockSummary);
@@ -70,33 +68,6 @@ describe("useCaptureState logic", () => {
     expect(state.error).toBe("Failed to open capture window");
   });
 
-  it("executes undo and updates capture summary", async () => {
-    const afterUndoSummary: CaptureSummary = {
-      campusId: 7,
-      sessionId: 155,
-      sectionCount: 0,
-      courseCount: 0,
-      canUndo: false,
-    };
-
-    vi.mocked(client.undoLastCapture).mockResolvedValue(afterUndoSummary);
-
-    const state = useCaptureState(scope);
-    await state.undoLast();
-
-    expect(client.undoLastCapture).toHaveBeenCalledWith(scope);
-    expect(state.summary).toEqual(afterUndoSummary);
-    expect(state.error).toBeNull();
-  });
-
-  it("surfaces error when undoLastCapture fails", async () => {
-    vi.mocked(client.undoLastCapture).mockRejectedValue("Nothing to undo");
-
-    const state = useCaptureState(scope);
-    await expect(state.undoLast()).rejects.toBe("Nothing to undo");
-    expect(state.error).toBe("Nothing to undo");
-  });
-
   it("updates summary live when capture:updated event is received for matching scope", () => {
     const state = useCaptureState(scope);
     const updatedSummary: CaptureSummary = {
@@ -104,7 +75,6 @@ describe("useCaptureState logic", () => {
       sessionId: 155,
       sectionCount: 42,
       courseCount: 8,
-      canUndo: true,
     };
 
     state.handleCaptureUpdated(updatedSummary);
@@ -118,7 +88,6 @@ describe("useCaptureState logic", () => {
       sessionId: 156,
       sectionCount: 10,
       courseCount: 2,
-      canUndo: true,
     };
 
     state.handleCaptureUpdated(otherScopeSummary);

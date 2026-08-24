@@ -293,7 +293,6 @@ pub struct CaptureSummary {
     pub session_id: i64,
     pub section_count: i64,
     pub course_count: i64,
-    pub can_undo: bool,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]

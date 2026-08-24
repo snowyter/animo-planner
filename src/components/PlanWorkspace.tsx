@@ -70,9 +70,7 @@ export function PlanWorkspace({
     error: captureError,
     captureFailure,
     isOpening: isOpeningCapture,
-    isUndoing: isUndoingCapture,
     openCapture,
-    undoLast,
     dismissFailure,
     fetchSummary,
   } = useCapture(planSummary.campusId, planSummary.sessionId);
@@ -86,7 +84,6 @@ export function PlanWorkspace({
     isMutating,
     error: pickerError,
     fetchCourses,
-    syncCourses,
     selectCourse,
     addSection,
     removeSection,
@@ -185,14 +182,6 @@ export function PlanWorkspace({
     } catch {
       // Error handled in picker state
     }
-  };
-
-  // Undo removes captured rows, so the picker's course list is stale
-  // afterwards for the same reason a capture left it stale. It goes through
-  // the one reload path rather than a second patch.
-  const handleUndo = async () => {
-    await undoLast();
-    await syncCourses();
   };
 
   const handleRemoveCourse = async (courseId: number) => {
@@ -298,7 +287,7 @@ export function PlanWorkspace({
         </div>
       </div>
 
-      {/* Capture Launch, Running Counter, and Undo (Ticket 12, SPEC §4) */}
+      {/* Capture launch and running counter (ticket 12, SPEC section 4) */}
       <CaptureBar
         campusId={planSummary.campusId}
         sessionId={planSummary.sessionId}
@@ -309,9 +298,7 @@ export function PlanWorkspace({
         error={captureError}
         captureFailure={captureFailure}
         isOpening={isOpeningCapture}
-        isUndoing={isUndoingCapture}
         onOpenCapture={openCapture}
-        onUndo={handleUndo}
         onDismissFailure={dismissFailure}
         onReportBrokenCapture={onReportBrokenCapture}
       />

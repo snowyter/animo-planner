@@ -206,7 +206,6 @@ export interface CaptureSummary {
   sessionId: number;
   sectionCount: number;
   courseCount: number;
-  canUndo: boolean;
 }
 
 export type RefreshStatus = "complete" | "session_expired" | "offline";

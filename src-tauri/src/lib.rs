@@ -89,7 +89,6 @@ pub fn run() {
             apply_solution,
             open_capture_window,
             get_capture_summary,
-            undo_last_capture,
             clear_browser_session,
             solve_plan,
             continue_solve,

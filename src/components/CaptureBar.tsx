@@ -1,7 +1,6 @@
 import {
   ExternalLink,
   ShieldCheck,
-  Undo2,
   AlertTriangle,
   X,
   RefreshCw,
@@ -24,9 +23,7 @@ export interface CaptureBarProps {
   error: string | null;
   captureFailure: string | null;
   isOpening?: boolean;
-  isUndoing?: boolean;
   onOpenCapture: () => void;
-  onUndo: () => void;
   onDismissFailure: () => void;
   onReportBrokenCapture?: (error: string) => void;
 }
@@ -39,15 +36,12 @@ export function CaptureBar({
   error,
   captureFailure,
   isOpening = false,
-  isUndoing = false,
   onOpenCapture,
-  onUndo,
   onDismissFailure,
   onReportBrokenCapture,
 }: CaptureBarProps) {
   const sectionCount = summary?.sectionCount ?? 0;
   const courseCount = summary?.courseCount ?? 0;
-  const canUndo = summary?.canUndo ?? false;
 
   const counterText = formatCaptureCounter(sectionCount, courseCount);
 
@@ -138,27 +132,6 @@ export function CaptureBar({
                 {isLoading ? "Loading..." : counterText}
               </span>
 
-              {/* Discoverable Undo Button next to counter */}
-              <div className="h-4 w-px bg-slate-200 mx-0.5" />
-              <Button
-                variant="ghost"
-                size="sm"
-                disabled={!canUndo || isUndoing}
-                onClick={onUndo}
-                className="h-7 px-2 text-xs flex items-center gap-1 text-slate-600 hover:text-slate-900 disabled:opacity-40"
-                title={
-                  canUndo
-                    ? "Undo last captured course batch"
-                    : "Undo is only available for the most recent capture in this session and is not available after a restart"
-                }
-              >
-                {isUndoing ? (
-                  <RefreshCw className="h-3 w-3 animate-spin" />
-                ) : (
-                  <Undo2 className="h-3 w-3" />
-                )}
-                <span>Undo</span>
-              </Button>
             </div>
 
             {/* Launch Archer's Hub Popup Button */}

@@ -149,7 +149,7 @@ export function applySolution(args: {
   return invoke("apply_solution", { args });
 }
 
-// Capture window & undo
+// Capture window
 
 export function openCaptureWindow(args: {
   campusId: number;
@@ -163,13 +163,6 @@ export function getCaptureSummary(args: {
   sessionId: number;
 }): Promise<CaptureSummary> {
   return invoke("get_capture_summary", { args });
-}
-
-export function undoLastCapture(args: {
-  campusId: number;
-  sessionId: number;
-}): Promise<CaptureSummary> {
-  return invoke("undo_last_capture", { args });
 }
 
 export function clearBrowserSession(): Promise<void> {

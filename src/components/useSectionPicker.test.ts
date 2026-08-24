@@ -239,7 +239,7 @@ describe("useSectionPickerState", () => {
     ).toBe(564);
   });
 
-  // The selected course can disappear -- removed here, or undone.
+  // The selected course can disappear once it is removed from the catalog.
   it("syncCourses falls back to the first course when the selection is gone", async () => {
     vi.mocked(client.listCapturedCourses).mockResolvedValue(mockCourses);
     vi.mocked(client.listCapturedSections).mockResolvedValue(mockGeartapSections);
@@ -278,7 +278,6 @@ describe("useSectionPickerState", () => {
       sessionId: 155,
       sectionCount: 5,
       courseCount: 1,
-      canUndo: false,
     };
     vi.mocked(client.forgetCapturedCourse).mockResolvedValue(mockSummary);
 
@@ -321,7 +320,6 @@ describe("useSectionPickerState", () => {
       sessionId: 155,
       sectionCount: 0,
       courseCount: 0,
-      canUndo: false,
     };
     vi.mocked(client.forgetCapturedCourse).mockResolvedValue(mockSummary);
 

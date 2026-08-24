@@ -654,18 +654,6 @@ pub fn get_capture_summary(
         .map_err(|err| err.to_string())
 }
 
-#[tauri::command]
-pub fn undo_last_capture(
-    args: CampusSessionArgs,
-    store: tauri::State<'_, StoreHandle>,
-) -> Result<CaptureSummary, String> {
-    let mut store = store.lock().unwrap_or_else(|poisoned| poisoned.into_inner());
-    store.undo_last_capture().map_err(|err| err.to_string())?;
-    store
-        .capture_summary(&capture_scope(&args))
-        .map_err(|err| err.to_string())
-}
-
 /// Signs the student out of the capture popup (ticket 10): destroys the
 /// window and wipes its persisted WebView profile. The control is surfaced
 /// by ticket 23; this command does the wiping.
@@ -1598,10 +1586,6 @@ mod tests {
         store.apply_refresh("p1", 2923, &initial, T1).expect("baseline");
         store.add_section_to_plan("p1", 2923, 384).expect("choose");
 
-        assert!(
-            !store.capture_summary(&scope).expect("summary").can_undo,
-            "fixture check: nothing journaled yet"
-        );
 
         let (sink_store, read_store) = sink_handle(store);
         let sink = LiveRefreshSink { store: sink_store, events: RecordingRefreshEvents::default() };
@@ -1612,11 +1596,6 @@ mod tests {
         sink.persist("p1", 2923, &fresh).expect("the step persists");
 
         let read = read_store.lock().unwrap();
-        let summary = read.capture_summary(&scope).expect("summary");
-        assert!(
-            !summary.can_undo,
-            "a refreshed step must never become an undoable capture batch"
-        );
 
         let missing = read.missing_sections("p1").expect("missing query");
         assert_eq!(missing.len(), 1, "the vanished plan section is flagged");

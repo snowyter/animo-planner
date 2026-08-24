@@ -90,13 +90,12 @@ identifiable error naming those plans; removing the sections from a plan is neve
 | `get_plan_conflicts` | `{ planId }` | `Conflict[]` |
 | `apply_solution` | `{ planId, sections }` | `Plan` |
 
-### Capture window & undo
+### Capture window
 
 | Command | Arguments | Returns |
 |---|---|---|
 | `open_capture_window` | `{ campusId, sessionId }` | `null` |
 | `get_capture_summary` | `{ campusId, sessionId }` | `CaptureSummary` |
-| `undo_last_capture` | `{ campusId, sessionId }` | `CaptureSummary` |
 | `clear_browser_session` | — | `null` |
 
 ### Solver (async — never blocks the UI thread)
@@ -284,7 +283,7 @@ type ScheduleBlock =
 ### `CaptureSummary`
 
 ```json
-{ "campusId": 7, "sessionId": 155, "sectionCount": 42, "courseCount": 8, "canUndo": true }
+{ "campusId": 7, "sessionId": 155, "sectionCount": 42, "courseCount": 8 }
 ```
 
 ### `RefreshOutcome`
