@@ -22,6 +22,7 @@ import { useSectionPicker } from "./useSectionPicker";
 import type { Plan, PlanSummary, Section } from "../adapters/ipc/types";
 import { formatSectionCount } from "../core/plan";
 import { findConflicts } from "../core/conflicts";
+import { ExportMenu } from "./ExportMenu";
 
 export interface PlanWorkspaceProps {
   planSummary: PlanSummary;
@@ -143,38 +144,46 @@ export function PlanWorkspace({
             </div>
           </div>
 
-          {/* Persistent stats & conflict indicator (ADR-0009) */}
-          <div className="flex flex-wrap items-center gap-4 text-sm text-slate-600 bg-slate-50 rounded-lg p-3 border border-slate-100">
-            <div className="flex items-center gap-1.5">
-              <Layers className="h-4 w-4 text-emerald-700" />
-              <span className="font-semibold text-slate-900">
-                {formatSectionCount(currentSections.length || planSummary.sectionCount)}
-              </span>
-            </div>
-
-            <div className="h-4 w-px bg-slate-200" />
-
-            {/* Persistent Conflict Count in Plan Header */}
-            {conflicts.length > 0 ? (
-              <div className="flex items-center gap-1.5 text-red-600 font-semibold">
-                <AlertTriangle className="h-4 w-4" />
-                <span>
-                  {conflicts.length} {conflicts.length === 1 ? "conflict" : "conflicts"}
+          {/* Persistent stats & conflict indicator (ADR-0009) + Export Menu (Ticket 22) */}
+          <div className="flex flex-wrap items-center gap-3">
+            <div className="flex flex-wrap items-center gap-4 text-sm text-slate-600 bg-slate-50 rounded-lg p-3 border border-slate-100">
+              <div className="flex items-center gap-1.5">
+                <Layers className="h-4 w-4 text-emerald-700" />
+                <span className="font-semibold text-slate-900">
+                  {formatSectionCount(currentSections.length || planSummary.sectionCount)}
                 </span>
               </div>
-            ) : (
-              <div className="flex items-center gap-1.5 text-slate-600">
-                <CheckCircle2 className="h-4 w-4 text-emerald-600" />
-                <span>No conflicts</span>
+
+              <div className="h-4 w-px bg-slate-200" />
+
+              {/* Persistent Conflict Count in Plan Header */}
+              {conflicts.length > 0 ? (
+                <div className="flex items-center gap-1.5 text-red-600 font-semibold">
+                  <AlertTriangle className="h-4 w-4" />
+                  <span>
+                    {conflicts.length} {conflicts.length === 1 ? "conflict" : "conflicts"}
+                  </span>
+                </div>
+              ) : (
+                <div className="flex items-center gap-1.5 text-slate-600">
+                  <CheckCircle2 className="h-4 w-4 text-emerald-600" />
+                  <span>No conflicts</span>
+                </div>
+              )}
+
+              <div className="h-4 w-px bg-slate-200" />
+
+              <div className="flex items-center gap-1.5">
+                <Clock className="h-4 w-4 text-slate-400" />
+                <span>Created {new Date(planSummary.createdAt).toLocaleDateString()}</span>
               </div>
-            )}
-
-            <div className="h-4 w-px bg-slate-200" />
-
-            <div className="flex items-center gap-1.5">
-              <Clock className="h-4 w-4 text-slate-400" />
-              <span>Created {new Date(planSummary.createdAt).toLocaleDateString()}</span>
             </div>
+
+            <ExportMenu
+              planSummary={planSummary}
+              plan={plan}
+              conflicts={conflicts}
+            />
           </div>
         </div>
       </div>
@@ -275,11 +284,18 @@ export function PlanWorkspace({
         <div className="space-y-3">
           <div className="flex items-center justify-between">
             <h3 className="text-base font-semibold text-slate-900">Weekly Schedule</h3>
-            <span className="text-xs text-slate-500">
-              {currentSections.length === 0
-                ? "No sections added yet"
-                : formatSectionCount(currentSections.length)}
-            </span>
+            <div className="flex items-center gap-3">
+              <span className="text-xs text-slate-500">
+                {currentSections.length === 0
+                  ? "No sections added yet"
+                  : formatSectionCount(currentSections.length)}
+              </span>
+              <ExportMenu
+                planSummary={planSummary}
+                plan={plan}
+                conflicts={conflicts}
+              />
+            </div>
           </div>
 
           <WeekGrid
