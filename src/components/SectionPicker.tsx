@@ -141,10 +141,10 @@ export function SectionPicker({
             </p>
           </div>
 
-          <div className="flex w-full items-center gap-2">
+          <div className="flex w-full min-w-0 items-center gap-2">
             {/* Course Selector Dropdown / Switcher */}
             {courses.length > 0 && (
-              <div className="flex items-center gap-2">
+              <div className="flex w-full min-w-0 items-center gap-2">
                 <label
                   htmlFor="course-select"
                   className="text-xs font-semibold text-slate-600 uppercase tracking-wider shrink-0"
@@ -157,7 +157,7 @@ export function SectionPicker({
                   value={selectedCourseId ?? ""}
                   onChange={(e) => onSelectCourse(Number(e.target.value))}
                   disabled={isLoadingCourses || isLoadingSections}
-                  className="h-9 rounded-md border border-slate-200 bg-white px-3 py-1 text-sm font-medium text-slate-900 shadow-xs focus:border-emerald-600 focus:outline-hidden focus:ring-1 focus:ring-emerald-600"
+                  className="h-9 w-full min-w-0 flex-1 truncate rounded-md border border-slate-200 bg-white px-3 py-1 text-sm font-medium text-slate-900 shadow-xs focus:border-emerald-600 focus:outline-hidden focus:ring-1 focus:ring-emerald-600"
                 >
                   {courses.map((c) => (
                     <option key={c.courseId} value={c.courseId}>
@@ -172,14 +172,14 @@ export function SectionPicker({
 
         {/* Selected Course Header Banner */}
         {selectedCourse && (
-          <div className="mt-3 flex flex-wrap items-center justify-between gap-2 rounded-lg bg-slate-50 px-3 py-2 border border-slate-100 text-xs">
+          <div className="mt-3 flex flex-col items-start gap-2 rounded-lg bg-slate-50 px-3 py-2 border border-slate-100 text-xs">
             <div className="flex items-center gap-2">
               <span className="font-bold text-slate-900 text-sm">
                 {selectedCourse.code}
               </span>
               <span className="text-slate-600">— {selectedCourse.title}</span>
             </div>
-            <div className="flex items-center gap-3">
+            <div className="flex w-full flex-wrap items-center justify-between gap-2">
               <div className="text-slate-500 font-medium">
                 {sections.length} {sections.length === 1 ? "section available" : "sections available"}
               </div>
@@ -377,7 +377,11 @@ export function SectionPicker({
                       : "border-slate-200 bg-white hover:border-slate-300 hover:shadow-xs"
                   }`}
                 >
-                  <div className="flex flex-col lg:flex-row lg:items-center lg:justify-between gap-4">
+                  {/* Always stacked. This card sits in the picking column,
+                      roughly 380-440px wide, and Tailwind's `lg:` keys off the
+                      viewport -- so going horizontal here squeezed the schedule
+                      blocks until "9:15 AM - 10:45 AM" broke across lines. */}
+                  <div className="flex flex-col gap-3">
                     {/* Left: Identity, Modality, Blocks, Details */}
                     <div className="space-y-2.5 flex-1 min-w-0">
                       {/* Row 1: Section Code, Modality, Type, Credits, In-Plan / Conflict Badges */}
@@ -468,7 +472,7 @@ export function SectionPicker({
                                 {block.day}
                               </span>
                               <span className="text-slate-400">•</span>
-                              <span className="font-mono text-[11px] text-slate-700">
+                              <span className="font-mono text-[11px] text-slate-700 whitespace-nowrap">
                                 {formatMinutesToTime12(block.startMin)} –{" "}
                                 {formatMinutesToTime12(block.endMin)}
                               </span>
@@ -531,8 +535,8 @@ export function SectionPicker({
                       </div>
                     </div>
 
-                    {/* Right: Actions */}
-                    <div className="flex items-center gap-2 shrink-0 pt-2 lg:pt-0 border-t lg:border-t-0 border-slate-100">
+                    {/* Actions, below the details now that the card stacks. */}
+                    <div className="flex flex-wrap items-center justify-end gap-2 border-t border-slate-100 pt-3">
                       {inPlan ? (
                         <>
                           <Button

@@ -421,6 +421,62 @@ describe("SectionPicker", () => {
     expect(html).toMatch(/flex flex-col gap-3/);
   });
 
+  // Tailwind breakpoints key off the viewport, not the container. This card
+  // always lives in the ~380-440px picking column, so any responsive
+  // direction switch inside it fires on a wide viewport and lays the content
+  // out sideways in a narrow column -- which squeezed the schedule blocks
+  // until "9:15 AM - 10:45 AM" broke across four lines, and pushed the
+  // course dropdown past the column edge.
+  it("never switches to a horizontal layout on a viewport breakpoint", () => {
+    const html = renderToStaticMarkup(
+      React.createElement(SectionPicker, {
+        courses: mockCourses,
+        selectedCourseId: 2923,
+        sections: sampleSections,
+        planSections: [],
+        isLoadingCourses: false,
+        isLoadingSections: false,
+        isMutating: false,
+        error: null,
+        onSelectCourse: vi.fn(),
+        onAddSection: vi.fn(),
+        onRemoveSection: vi.fn(),
+        onTogglePin: vi.fn(),
+        onHoverSection: vi.fn(),
+      })
+    );
+
+    expect(
+      html,
+      "a container this narrow must not go horizontal on a viewport breakpoint",
+    ).not.toMatch(/(sm|md|lg|xl):flex-row/);
+  });
+
+  it("keeps a schedule time on one line and the course select inside the column", () => {
+    const html = renderToStaticMarkup(
+      React.createElement(SectionPicker, {
+        courses: mockCourses,
+        selectedCourseId: 2923,
+        sections: sampleSections,
+        planSections: [],
+        isLoadingCourses: false,
+        isLoadingSections: false,
+        isMutating: false,
+        error: null,
+        onSelectCourse: vi.fn(),
+        onAddSection: vi.fn(),
+        onRemoveSection: vi.fn(),
+        onTogglePin: vi.fn(),
+        onHoverSection: vi.fn(),
+      })
+    );
+
+    // A time is one value; breaking it across lines makes it unreadable.
+    expect(html).toMatch(/whitespace-nowrap/);
+    // The select must shrink with the column instead of overflowing it.
+    expect(html).toMatch(/data-testid="course-select"[^>]*class="[^"]*min-w-0/);
+  });
+
   it("offers exactly one close control", () => {
     const html = renderToStaticMarkup(
       React.createElement(SectionPicker, {
