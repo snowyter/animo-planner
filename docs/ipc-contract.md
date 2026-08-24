@@ -73,6 +73,12 @@ Guarded by `wraps every command payload in the args envelope` in
 |---|---|---|
 | `list_captured_courses` | `{ campusId, sessionId }` | `CapturedCourse[]` |
 | `list_captured_sections` | `{ campusId, sessionId, courseId }` | `Section[]` |
+| `forget_captured_course` | `{ campusId, sessionId, courseId }` | `CaptureSummary` |
+
+**Amended in ticket 29:** `forget_captured_course` removes one captured course — its
+sections, blocks, and snapshots under exactly the given `(campusId, sessionId)` — and returns the
+updated `CaptureSummary`. When any plan still holds a section of the course it fails with an
+identifiable error naming those plans; removing the sections from a plan is never done implicitly.
 
 ### Plan membership
 
