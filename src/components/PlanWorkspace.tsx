@@ -19,6 +19,7 @@ import { CaptureBar } from "./CaptureBar";
 import { useCapture } from "./useCapture";
 import { SectionPicker } from "./SectionPicker";
 import { useSectionPicker } from "./useSectionPicker";
+import { SolveDialog } from "./SolveDialog";
 import type { Plan, PlanSummary, Section } from "../adapters/ipc/types";
 import { formatSectionCount } from "../core/plan";
 import { findConflicts } from "../core/conflicts";
@@ -44,6 +45,7 @@ export function PlanWorkspace({
   onPlanUpdated,
 }: PlanWorkspaceProps) {
   const [hoveredSection, setHoveredSection] = useState<Section | null>(null);
+  const [isSolveOpen, setIsSolveOpen] = useState<boolean>(false);
 
   const currentSections = plan?.sections ?? [];
 
@@ -246,6 +248,7 @@ export function PlanWorkspace({
             variant="outline"
             size="sm"
             disabled={isLoading}
+            onClick={() => setIsSolveOpen(true)}
             className="text-xs shrink-0 bg-white hover:bg-slate-50 text-blue-700 border-blue-200"
           >
             <Sparkles className="h-3.5 w-3.5 mr-1" />
@@ -270,7 +273,6 @@ export function PlanWorkspace({
           onHoverSection={setHoveredSection}
         />
 
-
         {/* Week Grid */}
         <div className="space-y-3">
           <div className="flex items-center justify-between">
@@ -289,6 +291,17 @@ export function PlanWorkspace({
           />
         </div>
       </div>
+
+      {/* Solve The Rest Dialog (Ticket 20) */}
+      <SolveDialog
+        open={isSolveOpen}
+        onOpenChange={setIsSolveOpen}
+        planId={planSummary.id}
+        onPlanUpdated={(updatedPlan) => {
+          onPlanUpdated?.(updatedPlan);
+          onRetry();
+        }}
+      />
     </div>
   );
 }
