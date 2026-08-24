@@ -190,6 +190,9 @@ export function SectionPicker({
                 { courseId: section.courseId, sectionId: section.sectionId },
                 planSections
               );
+              const isMissing = inPlan && planSections.some(
+                (ps) => ps.courseId === section.courseId && ps.sectionId === section.sectionId && ps.missing
+              );
               const candidateConflicts = !inPlan
                 ? findCandidateConflicts(section, planSections)
                 : [];
@@ -209,12 +212,15 @@ export function SectionPicker({
                   data-testid={`section-row-${section.sectionCode}`}
                   data-in-plan={inPlan ? "true" : "false"}
                   data-pinned={pinned ? "true" : "false"}
+                  data-missing={isMissing ? "true" : "false"}
                   onMouseEnter={() => onHoverSection(section)}
                   onMouseLeave={() => onHoverSection(null)}
                   onFocus={() => onHoverSection(section)}
                   onBlur={() => onHoverSection(null)}
                   className={`rounded-xl border transition-all duration-150 p-4 ${
-                    inPlan
+                    isMissing
+                      ? "border-amber-300 bg-amber-50/40 shadow-xs"
+                      : inPlan
                       ? "border-emerald-200 bg-emerald-50/40 shadow-xs"
                       : "border-slate-200 bg-white hover:border-slate-300 hover:shadow-xs"
                   }`}
@@ -270,6 +276,16 @@ export function SectionPicker({
                           >
                             <Pin className="h-3 w-3" />
                             <span>Pinned</span>
+                          </Badge>
+                        )}
+
+                        {isMissing && (
+                          <Badge
+                            variant="destructive"
+                            className="bg-amber-100 text-amber-900 border border-amber-300 flex items-center gap-1 text-[11px]"
+                          >
+                            <AlertTriangle className="h-3 w-3 text-amber-700" />
+                            <span>Missing</span>
                           </Badge>
                         )}
 

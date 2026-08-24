@@ -248,6 +248,7 @@ export function WeekGrid({
                     const theme = getCourseTheme(section.courseId, uniqueCourseIds);
                     const isF2F = block.modality === "F2F";
                     const isPinned = !isGhost && ("pinned" in section ? section.pinned : false);
+                    const isMissing = !isGhost && ("missing" in section ? section.missing : false);
                     const enrolled = section.latestSnapshot?.enrolled ?? 0;
                     const enrollCap = "enrollCap" in section ? (section.enrollCap as number | undefined) : undefined;
                     const enrollLabel = enrollCap !== undefined ? `${enrolled}/${enrollCap}` : `${enrolled}`;
@@ -257,9 +258,11 @@ export function WeekGrid({
                       ? "border-l-solid border-l-[4px]"
                       : "border-l-dashed border-l-[4px]";
 
-                    // Pinned vs tentative vs ghost styling
+                    // Pinned vs tentative vs ghost vs missing styling
                     const visualClass = isGhost
                       ? "opacity-75 ring-2 ring-dashed ring-slate-400/70 shadow-sm"
+                      : isMissing
+                      ? "ring-2 ring-amber-500/80 opacity-90 shadow-xs"
                       : isPinned
                       ? "ring-1 ring-slate-400/50 shadow-xs opacity-100"
                       : "opacity-95";
@@ -280,6 +283,7 @@ export function WeekGrid({
                       <div
                         key={`${isGhost ? "ghost-" : ""}${section.courseId}-${section.sectionId}-${block.day}-${block.startMin}`}
                         data-pinned={isPinned ? "true" : "false"}
+                        data-missing={isMissing ? "true" : "false"}
                         data-ghost={isGhost ? "true" : "false"}
                         data-conflicting={isConflicting ? "true" : "false"}
                         data-modality={block.modality}
@@ -293,11 +297,11 @@ export function WeekGrid({
                           top: `${pos.topPercent}%`,
                           height: `calc(${pos.heightPercent}% - 4px)`,
                           minHeight: "56px",
-                          borderLeftColor: isConflicting ? "#ef4444" : theme.borderHex,
+                          borderLeftColor: isConflicting ? "#ef4444" : isMissing ? "#f59e0b" : theme.borderHex,
                           borderLeftStyle: isF2F ? "solid" : "dashed",
                           ...hatchedBgStyle,
                         }}
-                        title={`${section.courseCode} ${section.sectionCode} (${formatMinutesRange(block.startMin, block.endMin)}) — ${isF2F ? block.location ?? "Room" : "Online"}${isGhost ? " [Preview]" : ""}`}
+                        title={`${section.courseCode} ${section.sectionCode} (${formatMinutesRange(block.startMin, block.endMin)}) — ${isF2F ? block.location ?? "Room" : "Online"}${isGhost ? " [Preview]" : ""}${isMissing ? " [Missing from catalog]" : ""}`}
                       >
                         {/* Top row: Course Code, Section Code, Badges */}
                         <div className="flex items-start justify-between gap-1 leading-tight">
@@ -311,6 +315,11 @@ export function WeekGrid({
                             {isGhost && (
                               <span className="text-[9px] uppercase tracking-wider font-semibold opacity-75 bg-black/5 dark:bg-white/10 px-1 rounded ml-0.5">
                                 Preview
+                              </span>
+                            )}
+                            {isMissing && (
+                              <span className="text-[9px] uppercase tracking-wider font-semibold bg-amber-200 text-amber-900 dark:bg-amber-900/50 dark:text-amber-200 px-1 rounded ml-0.5">
+                                Missing
                               </span>
                             )}
                           </div>

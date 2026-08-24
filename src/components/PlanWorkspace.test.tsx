@@ -289,6 +289,193 @@ describe("PlanWorkspace", () => {
 
     expect(html).toContain("Solve the rest");
   });
+
+  it("renders explicit Refresh control button on the plan", () => {
+    const mockFullPlan: Plan = {
+      ...mockPlanSummary,
+      sections: [],
+    };
+
+    const html = renderToStaticMarkup(
+      React.createElement(PlanWorkspace, {
+        planSummary: mockPlanSummary,
+        plan: mockFullPlan,
+        isLoading: false,
+        error: null,
+        onBack: vi.fn(),
+        onRetry: vi.fn(),
+      })
+    );
+
+    expect(html).toContain("Refresh");
+  });
+
+  it("renders persistent missing section banner when plan has missing sections", () => {
+    const missingSection = makeSection(
+      2923,
+      384,
+      "GEARTAP",
+      "S11",
+      [makeBlock("MON", 450, 540, "F2F", "L226")]
+    );
+    missingSection.missing = true;
+
+    const mockPlanWithMissing: Plan = {
+      ...mockPlanSummary,
+      sectionCount: 1,
+      sections: [missingSection],
+    };
+
+    const html = renderToStaticMarkup(
+      React.createElement(PlanWorkspace, {
+        planSummary: mockPlanSummary,
+        plan: mockPlanWithMissing,
+        isLoading: false,
+        error: null,
+        onBack: vi.fn(),
+        onRetry: vi.fn(),
+      })
+    );
+
+    expect(html).toContain("GEARTAP");
+    expect(html).toContain("S11");
+    expect(html).toContain("missing from the catalog");
+  });
+});
+
+describe("PlanWorkspace refresh recovery states", () => {
+  const mockPlanSummary: PlanSummary = {
+    id: "p1",
+    name: "T1 Target Schedule",
+    campusId: 7,
+    campusName: "Manila",
+    sessionId: 155,
+    sessionName: "AY2026-27 T1",
+    createdAt: "2026-08-22T00:00:00Z",
+    sectionCount: 0,
+    isSample: false,
+  };
+
+  it("renders session expiry notice with exact phrase and Resume button", async () => {
+    const usePlanRefreshModule = await import("./usePlanRefresh");
+    const spy = vi.spyOn(usePlanRefreshModule, "usePlanRefresh").mockReturnValue({
+      isRefreshing: false,
+      isResuming: false,
+      progress: null,
+      outcome: {
+        status: "session_expired",
+        refreshedCourses: 2,
+        totalCourses: 3,
+        haltedAfterCourseCode: "GEARTAP",
+      },
+      sessionExpired: true,
+      offline: false,
+      error: null,
+      missingSections: [],
+      isLoadingMissing: false,
+      startRefresh: vi.fn(),
+      resumeRefresh: vi.fn(),
+      fetchMissingSections: vi.fn(),
+      dismissNotice: vi.fn(),
+    });
+
+    const html = renderToStaticMarkup(
+      React.createElement(PlanWorkspace, {
+        planSummary: mockPlanSummary,
+        plan: { ...mockPlanSummary, sections: [] },
+        isLoading: false,
+        error: null,
+        onBack: vi.fn(),
+        onRetry: vi.fn(),
+      })
+    );
+
+    expect(html).toContain("Session expired — sign in to continue");
+    expect(html).toContain("Resume");
+    expect(html).toContain("Open Archer&#x27;s Hub");
+    expect(html).toContain("halted after GEARTAP");
+
+    spy.mockRestore();
+  });
+
+  it("renders progress display showing course being refreshed and how many remain", async () => {
+    const usePlanRefreshModule = await import("./usePlanRefresh");
+    const spy = vi.spyOn(usePlanRefreshModule, "usePlanRefresh").mockReturnValue({
+      isRefreshing: true,
+      isResuming: false,
+      progress: {
+        courseIndex: 0,
+        courseTotal: 3,
+        courseCode: "CSINTSY",
+      },
+      outcome: null,
+      sessionExpired: false,
+      offline: false,
+      error: null,
+      missingSections: [],
+      isLoadingMissing: false,
+      startRefresh: vi.fn(),
+      resumeRefresh: vi.fn(),
+      fetchMissingSections: vi.fn(),
+      dismissNotice: vi.fn(),
+    });
+
+    const html = renderToStaticMarkup(
+      React.createElement(PlanWorkspace, {
+        planSummary: mockPlanSummary,
+        plan: { ...mockPlanSummary, sections: [] },
+        isLoading: false,
+        error: null,
+        onBack: vi.fn(),
+        onRetry: vi.fn(),
+      })
+    );
+
+    expect(html).toContain("Refreshing CSINTSY (1 of 3, 2 remaining)");
+
+    spy.mockRestore();
+  });
+
+  it("renders plain offline notice when refresh is offline", async () => {
+    const usePlanRefreshModule = await import("./usePlanRefresh");
+    const spy = vi.spyOn(usePlanRefreshModule, "usePlanRefresh").mockReturnValue({
+      isRefreshing: false,
+      isResuming: false,
+      progress: null,
+      outcome: {
+        status: "offline",
+        refreshedCourses: 0,
+        totalCourses: 3,
+        haltedAfterCourseCode: null,
+      },
+      sessionExpired: false,
+      offline: true,
+      error: null,
+      missingSections: [],
+      isLoadingMissing: false,
+      startRefresh: vi.fn(),
+      resumeRefresh: vi.fn(),
+      fetchMissingSections: vi.fn(),
+      dismissNotice: vi.fn(),
+    });
+
+    const html = renderToStaticMarkup(
+      React.createElement(PlanWorkspace, {
+        planSummary: mockPlanSummary,
+        plan: { ...mockPlanSummary, sections: [] },
+        isLoading: false,
+        error: null,
+        onBack: vi.fn(),
+        onRetry: vi.fn(),
+      })
+    );
+
+    expect(html).toContain("Offline");
+    expect(html).toContain("No network connection");
+    expect(html).toContain("plan was not changed");
+
+    spy.mockRestore();
+  });
 });
 
 
