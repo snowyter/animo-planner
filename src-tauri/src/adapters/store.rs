@@ -112,6 +112,25 @@ pub enum StoreError {
     /// spanning its term cannot be produced. Exporting would silently drop
     /// the section's classes, so this fails instead (ticket 17).
     SectionDatesMissing { course_id: i64, section_id: i64 },
+    /// Forget-course found neither a course row nor any section of it under
+    /// the scope (ticket 29). Failing loudly means an unknown course can
+    /// never read as a successful no-op removal.
+    CourseNotFound {
+        campus_id: i64,
+        session_id: i64,
+        course_id: i64,
+    },
+    /// Forget-course refused because one or more plans still hold sections
+    /// of the course (ticket 29). A raw delete would trip the
+    /// `plan_sections.section_fk` constraint; detecting first and naming the
+    /// plans keeps removing a section from its plan an explicit student act
+    /// instead of a silent gutting.
+    CourseHeldByPlans {
+        campus_id: i64,
+        session_id: i64,
+        course_id: i64,
+        plan_ids: Vec<String>,
+    },
 }
 
 impl std::fmt::Display for StoreError {
@@ -158,6 +177,25 @@ impl std::fmt::Display for StoreError {
                 f,
                 "section (course {course_id}, section {section_id}) has no captured \
                  start/end dates — refresh the course and export again"
+            ),
+            StoreError::CourseNotFound {
+                campus_id,
+                session_id,
+                course_id,
+            } => write!(
+                f,
+                "no course {course_id} is captured under campus {campus_id} session \
+                 {session_id}, so there is nothing to forget"
+            ),
+            StoreError::CourseHeldByPlans {
+                campus_id,
+                session_id,
+                course_id,
+                plan_ids,
+            } => write!(
+                f,
+                "course {course_id} under campus {campus_id} session {session_id} is still \
+                 held by plans {plan_ids:?} — remove its sections from those plans first"
             ),
         }
     }
@@ -566,6 +604,122 @@ impl Store {
                 Err(err)
             }
         }
+    }
+
+    /// Removes one captured course — the course row and every section,
+    /// schedule block, and snapshot it owns, under exactly one
+    /// `(campus, session)` (ticket 29). This is the explicit removal path
+    /// alongside undo: the student names one course, and only what they
+    /// named is removed. ADR-0008 is untouched — that rule bars capture-side
+    /// inference deletes; this is a direct user instruction.
+    ///
+    /// A plan still holding any section of the course vetoes the removal:
+    /// `plan_sections.section_fk` has no cascade and foreign keys are on, so
+    /// the alternative is a raw constraint error or a silently gutted plan.
+    /// The error names every holding plan so the student can remove the
+    /// sections themselves.
+    ///
+    /// The whole removal is one transaction, and a pending undo batch whose
+    /// rows went away is dropped rather than left dangling. Returns the
+    /// updated [`CaptureSummary`] so the counter re-renders from one source
+    /// of truth.
+    pub fn forget_course(
+        &mut self,
+        scope: &CaptureScope,
+        course_id: i64,
+    ) -> Result<CaptureSummary, StoreError> {
+        // The section row ids this removal will take, collected up front:
+        // the membership guard needs them and so does the journal check.
+        let section_fks: Vec<i64> = {
+            let mut stmt = self.conn.prepare(
+                "SELECT id FROM sections
+                 WHERE campus_id = ?1 AND session_id = ?2 AND course_id = ?3",
+            )?;
+            let rows = stmt.query_map(
+                rusqlite::params![scope.campus_id, scope.session_id, course_id],
+                |row| row.get::<_, i64>(0),
+            )?;
+            rows.collect::<Result<Vec<i64>, _>>()?
+        };
+
+        // Detect plan membership first: a raw delete would fail on the
+        // foreign key with an unhelpful constraint message, and detecting
+        // here keeps the catalog untouched instead of half-removed.
+        let plan_ids: Vec<String> = if section_fks.is_empty() {
+            Vec::new()
+        } else {
+            let mut stmt = self.conn.prepare(
+                "SELECT DISTINCT ps.plan_id FROM plan_sections ps
+                 JOIN sections s ON s.id = ps.section_fk
+                 WHERE s.campus_id = ?1 AND s.session_id = ?2 AND s.course_id = ?3
+                 ORDER BY ps.plan_id",
+            )?;
+            let rows = stmt.query_map(
+                rusqlite::params![scope.campus_id, scope.session_id, course_id],
+                |row| row.get::<_, String>(0),
+            )?;
+            rows.collect::<Result<Vec<String>, _>>()?
+        };
+        if !plan_ids.is_empty() {
+            return Err(StoreError::CourseHeldByPlans {
+                campus_id: scope.campus_id,
+                session_id: scope.session_id,
+                course_id,
+                plan_ids,
+            });
+        }
+
+        // Loud rather than a silent no-op when nothing under this scope
+        // matches — consistent with delete_plan, unlike the deliberately
+        // idempotent remove_section_from_plan.
+        let course_exists: bool = self.conn.query_row(
+            "SELECT EXISTS(SELECT 1 FROM courses
+             WHERE campus_id = ?1 AND session_id = ?2 AND course_id = ?3)",
+            rusqlite::params![scope.campus_id, scope.session_id, course_id],
+            |row| row.get(0),
+        )?;
+        if !course_exists && section_fks.is_empty() {
+            return Err(StoreError::CourseNotFound {
+                campus_id: scope.campus_id,
+                session_id: scope.session_id,
+                course_id,
+            });
+        }
+
+        // One transaction: children first, then the sections, then the
+        // course row. Any failure part-way rolls the whole removal back.
+        let tx = self.conn.transaction()?;
+        for &section_fk in &section_fks {
+            tx.execute("DELETE FROM snapshots WHERE section_fk = ?1", [section_fk])?;
+            tx.execute("DELETE FROM schedule_blocks WHERE section_fk = ?1", [section_fk])?;
+        }
+        tx.execute(
+            "DELETE FROM sections WHERE campus_id = ?1 AND session_id = ?2 AND course_id = ?3",
+            rusqlite::params![scope.campus_id, scope.session_id, course_id],
+        )?;
+        tx.execute(
+            "DELETE FROM courses WHERE campus_id = ?1 AND session_id = ?2 AND course_id = ?3",
+            rusqlite::params![scope.campus_id, scope.session_id, course_id],
+        )?;
+        tx.commit()?;
+
+        // A pending undo batch pointing at rows that no longer exist would
+        // dangle, so it is dropped; batches for other courses stay usable.
+        let journal_dangles = self.last_batch.as_ref().is_some_and(|batch| {
+            batch.courses.iter().any(|course| {
+                course.campus_id == scope.campus_id
+                    && course.session_id == scope.session_id
+                    && course.course_id == course_id
+            }) || batch
+                .sections
+                .iter()
+                .any(|section| section_fks.contains(&section.section_fk))
+        });
+        if journal_dangles {
+            self.last_batch = None;
+        }
+
+        self.capture_summary(scope)
     }
 
     /// Running counts for the capture counter: sections and distinct
@@ -3469,6 +3623,289 @@ mod tests {
         let s01 = rows.iter().find(|r| r.3 == 384).expect("S01");
         assert_eq!(s01.6, T1, "S01 last_seen_at restored");
         assert_eq!(s01.5, T1, "S01 first_seen_at untouched");
+    }
+
+    // ---------- forget a captured course (ticket 29) ----------
+
+    #[test]
+    fn forgetting_a_course_removes_its_sections_blocks_snapshots_and_nothing_else() {
+        let mut store = store();
+        store
+            .record_capture(
+                &SCOPE,
+                &[
+                    parsed_section(2923, 384, "S01", None, Some(10), vec![online_block(Day::Mon, 450, 540)]),
+                    parsed_section(2923, 385, "S02", Some("Bryant Lee"), Some(20), vec![
+                        room_block(Day::Tue, 870, 960, "L226"),
+                    ]),
+                ],
+                T1,
+            )
+            .expect("capture the course to forget");
+        store
+            .record_capture(
+                &SCOPE,
+                &[parsed_section(564, 737, "Y11", None, Some(30), vec![room_block(Day::Wed, 450, 540, "V501")])],
+                T2,
+            )
+            .expect("capture a course that stays");
+
+        let summary = store.forget_course(&SCOPE, 2923).expect("forget must succeed");
+
+        assert_eq!(
+            (summary.campus_id, summary.session_id),
+            (7, 155),
+            "the summary describes the scope the removal ran in"
+        );
+        assert_eq!(summary.section_count, 1, "only the surviving section is counted");
+        assert_eq!(summary.course_count, 1, "only the surviving course is counted");
+
+        assert_eq!(
+            section_rows(&store.conn),
+            vec![(7, 155, 564, 737, "Y11".into(), T2.into(), T2.into())],
+            "every row of the forgotten course goes; the other course keeps its rows"
+        );
+        assert_eq!(
+            snapshot_rows(&store.conn),
+            vec![(737, T2.to_string(), Some(30), None)],
+            "the forgotten sections' snapshots go with them"
+        );
+        assert_eq!(
+            block_rows(&store.conn),
+            vec![(737, "WED".into(), 450, 540, Some("V501".into()), Some("F2F".into()))],
+            "the forgotten sections' blocks go with them; others stay"
+        );
+        let listed = store.captured_courses(&SCOPE).expect("captured courses");
+        assert_eq!(
+            listed.iter().map(|course| course.course_id).collect::<Vec<_>>(),
+            vec![564],
+            "list_captured_courses reflects the removal immediately"
+        );
+    }
+
+    #[test]
+    fn forgetting_a_course_whose_sections_plans_hold_is_refused_naming_them() {
+        let mut store = store();
+        store.create_plan("p1", "First", &SCOPE, T1, false).expect("plan p1");
+        store.create_plan("p2", "Second", &SCOPE, T1, false).expect("plan p2");
+        store
+            .record_capture(
+                &SCOPE,
+                &[
+                    parsed_section(2923, 384, "S01", None, Some(10), vec![]),
+                    parsed_section(2923, 385, "S02", None, Some(20), vec![]),
+                ],
+                T1,
+            )
+            .expect("capture");
+        store.add_section_to_plan("p1", 2923, 384).expect("p1 holds S01");
+        store.add_section_to_plan("p2", 2923, 385).expect("p2 holds S02");
+
+        let err = store.forget_course(&SCOPE, 2923).expect_err("a held course must refuse");
+
+        match err {
+            StoreError::CourseHeldByPlans { ref plan_ids, .. } => {
+                assert_eq!(*plan_ids, vec!["p1".to_string(), "p2".to_string()], "every holder is named");
+            }
+            other => panic!("expected CourseHeldByPlans, got {other:?}"),
+        }
+        assert!(err.to_string().contains("p1") && err.to_string().contains("p2"));
+
+        // The refusal wrote nothing: the catalog is exactly as it was.
+        assert_eq!(count(&store.conn, "SELECT COUNT(*) FROM sections"), 2);
+        assert_eq!(count(&store.conn, "SELECT COUNT(*) FROM snapshots"), 2);
+        assert_eq!(count(&store.conn, "SELECT COUNT(*) FROM plan_sections"), 2);
+        assert_eq!(count(&store.conn, "SELECT COUNT(*) FROM courses"), 1);
+    }
+
+    #[test]
+    fn forgetting_in_one_scope_leaves_the_same_course_id_in_another_scope_alone() {
+        let mut store = store();
+        store
+            .record_capture(&SCOPE, &[parsed_section(2923, 384, "S01", None, Some(10), vec![])], T1)
+            .expect("scope A capture");
+        store
+            .record_capture(
+                &OTHER_SCOPE,
+                &[parsed_section(2923, 384, "S01", Some("Elsewhere"), Some(20), vec![])],
+                T1,
+            )
+            .expect("scope B capture of the same course id");
+        store.create_plan("pb", "Other term", &OTHER_SCOPE, T1, false).expect("other plan");
+        store.add_section_to_plan("pb", 2923, 384).expect("the other plan holds its scope's section");
+
+        store.forget_course(&SCOPE, 2923).expect("forget in scope A");
+
+        let rows = section_rows(&store.conn);
+        assert_eq!(rows.len(), 1, "only the named scope's rows went");
+        assert_eq!(
+            rows[0],
+            (8, 156, 2923, 384, "S01".into(), T1.into(), T1.into()),
+            "the same course id under another campus/session is untouched"
+        );
+        let summary = store.capture_summary(&OTHER_SCOPE).expect("other-scope summary");
+        assert_eq!((summary.section_count, summary.course_count), (1, 1));
+    }
+
+    #[test]
+    fn detection_catches_a_membership_whatever_plan_holds_it() {
+        // add_section_to_plan can never produce this state — membership is
+        // always scope-checked — but the guard must not depend on that: it
+        // keys on the section rows being removed, so a plan of any scope
+        // holding one of them is refused and named, never FK-crashed or
+        // silently gutted.
+        let mut store = store();
+        store
+            .record_capture(&SCOPE, &[parsed_section(2923, 384, "S01", None, Some(10), vec![])], T1)
+            .expect("capture");
+        store.create_plan("pb", "Other term", &OTHER_SCOPE, T1, false).expect("other-scope plan");
+        let section_fk: i64 = store
+            .conn
+            .query_row("SELECT id FROM sections WHERE section_id = 384", [], |row| row.get(0))
+            .expect("section row");
+        store
+            .conn
+            .execute(
+                "INSERT INTO plan_sections (plan_id, section_fk, pinned) VALUES ('pb', ?1, 0)",
+                [section_fk],
+            )
+            .expect("the out-of-band membership");
+
+        let err = store.forget_course(&SCOPE, 2923).expect_err("any holder must refuse");
+        match err {
+            StoreError::CourseHeldByPlans { ref plan_ids, .. } => {
+                assert_eq!(plan_ids, &vec!["pb".to_string()]);
+            }
+            other => panic!("expected CourseHeldByPlans, got {other:?}"),
+        }
+        assert_eq!(count(&store.conn, "SELECT COUNT(*) FROM sections"), 1, "nothing was deleted");
+    }
+
+    #[test]
+    fn forgetting_the_subject_of_the_pending_undo_batch_drops_the_journal() {
+        let mut store = store();
+        store
+            .record_capture(&SCOPE, &[parsed_section(2923, 384, "S01", None, Some(10), vec![])], T1)
+            .expect("the journaled batch introduces the course");
+        assert!(store.capture_summary(&SCOPE).expect("summary").can_undo);
+
+        let summary = store.forget_course(&SCOPE, 2923).expect("forget");
+        assert!(
+            !summary.can_undo,
+            "the journal must not survive pointing at rows that no longer exist"
+        );
+        assert!(
+            !store.undo_last_capture().expect("undo after forget"),
+            "there is nothing left to undo"
+        );
+    }
+
+    #[test]
+    fn forgetting_a_course_outside_the_pending_batch_keeps_the_journal_usable() {
+        let mut store = store();
+        store
+            .record_capture(&SCOPE, &[parsed_section(2923, 384, "S01", None, Some(10), vec![])], T1)
+            .expect("batch one: the undo journal's subject");
+        store
+            .record_capture(
+                &SCOPE,
+                &[{
+                    let mut section = parsed_section(564, 737, "Y11", None, Some(10), vec![]);
+                    section.course_code = "GEARTAP".into();
+                    section
+                }],
+                T2,
+            )
+            .expect("batch two: the most recent batch");
+        store
+            .record_capture(
+                &OTHER_SCOPE,
+                &[parsed_section(999, 500, "X01", None, Some(5), vec![])],
+                T1,
+            )
+            .expect("another scope's batch");
+
+        let summary = store.forget_course(&SCOPE, 564).expect("forget the latest course");
+        assert!(
+            summary.can_undo,
+            "a journal for another course must not be dropped by this removal"
+        );
+        assert!(
+            store.undo_last_capture().expect("undo still works"),
+            "the surviving batch stays reversible"
+        );
+    }
+
+    #[test]
+    fn forgetting_an_unknown_course_is_a_loud_error() {
+        let mut store = store();
+        let err = store
+            .forget_course(&SCOPE, 2923)
+            .expect_err("there is nothing to forget");
+        assert!(
+            matches!(
+                err,
+                StoreError::CourseNotFound {
+                    campus_id: 7,
+                    session_id: 155,
+                    course_id: 2923
+                }
+            ),
+            "got {err:?}"
+        );
+        assert!(err.to_string().contains("2923"));
+    }
+
+    #[test]
+    fn sample_data_is_subject_to_the_same_rules_and_removal_disturbs_no_real_scope() {
+        use crate::core::options::{SAMPLE_CAMPUS_ID, SAMPLE_SESSION_ID};
+        let sample_scope = CaptureScope {
+            campus_id: SAMPLE_CAMPUS_ID,
+            session_id: SAMPLE_SESSION_ID,
+        };
+        let mut store = store();
+        let sample_sections = [
+            parsed_section(2923, 384, "S01", None, Some(10), vec![online_block(Day::Mon, 450, 540)]),
+            parsed_section(564, 737, "Y11", None, Some(20), vec![]),
+        ];
+        store
+            .seed_sample_plan(&sample_scope, "sample-plan", "Sample data", &[&sample_sections[..]], T1)
+            .expect("seed");
+        store
+            .record_capture(
+                &SCOPE,
+                &[{
+                    let mut section = parsed_section(3000, 400, "S01", None, Some(5), vec![]);
+                    section.course_code = "REALC".into();
+                    section
+                }],
+                T1,
+            )
+            .expect("a real capture alongside the samples");
+
+        // Same rule as anywhere else: the sample plan holds these sections.
+        let err = store
+            .forget_course(&sample_scope, 564)
+            .expect_err("a held sample course refuses like any held course");
+        match err {
+            StoreError::CourseHeldByPlans { plan_ids, .. } => {
+                assert_eq!(plan_ids, vec!["sample-plan".to_string()]);
+            }
+            other => panic!("expected CourseHeldByPlans, got {other:?}"),
+        }
+
+        // With the plan gone the sample data is removable like anything else.
+        store.delete_plan("sample-plan").expect("delete the sample plan");
+        store.forget_course(&sample_scope, 564).expect("removable after unheld");
+        store.forget_course(&sample_scope, 2923).expect("the rest of the seed too");
+
+        let real = store.capture_summary(&SCOPE).expect("real-scope summary");
+        assert_eq!(
+            (real.section_count, real.course_count),
+            (1, 1),
+            "emptying the sample scope never disturbs a real scope"
+        );
+        assert!(store.captured_courses(&sample_scope).expect("sample list").is_empty());
     }
 
     // ---------- refresh (ticket 16) ----------

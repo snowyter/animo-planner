@@ -54,6 +54,12 @@ describe("ipc client", () => {
         [{ campusId: 7, sessionId: 155, courseId: 2923 }],
       ],
       [
+        () =>
+          client.forgetCapturedCourse({ campusId: 7, sessionId: 155, courseId: 2923 }),
+        "forget_captured_course",
+        [{ campusId: 7, sessionId: 155, courseId: 2923 }],
+      ],
+      [
         () => client.addSectionToPlan({ planId: "p1", courseId: 2923, sectionId: 384 }),
         "add_section_to_plan",
         [{ planId: "p1", courseId: 2923, sectionId: 384 }],

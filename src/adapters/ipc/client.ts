@@ -96,6 +96,21 @@ export function listCapturedSections(args: {
   return invoke("list_captured_sections", { args });
 }
 
+/**
+ * Forgets one captured course (ticket 29): its sections, blocks, and
+ * snapshots are removed for exactly the given campus/session, and the
+ * updated `CaptureSummary` comes back for the counter. Rejects with an
+ * error naming the plans that hold the course's sections when any plan
+ * still claims one — removal from those plans stays the student's act.
+ */
+export function forgetCapturedCourse(args: {
+  campusId: number;
+  sessionId: number;
+  courseId: number;
+}): Promise<CaptureSummary> {
+  return invoke("forget_captured_course", { args });
+}
+
 // Plan membership
 
 export function addSectionToPlan(args: {

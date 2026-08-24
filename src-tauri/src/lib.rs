@@ -81,6 +81,7 @@ pub fn run() {
             seed_sample_plan,
             list_captured_courses,
             list_captured_sections,
+            forget_captured_course,
             add_section_to_plan,
             remove_section_from_plan,
             set_section_pinned,

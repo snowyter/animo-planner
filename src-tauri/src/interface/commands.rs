@@ -399,6 +399,25 @@ fn list_captured_sections_impl(
         .map_err(|err| err.to_string())
 }
 
+/// Forgets one captured course (ticket 29): the course and its sections'
+/// rows go; a plan still holding any of its sections refuses with the plans
+/// named. The returned [`CaptureSummary`] is what the counter re-renders
+/// from — the same source of truth as capture and undo.
+fn forget_captured_course_impl(
+    store: &mut Store,
+    args: CapturedSectionsArgs,
+) -> Result<CaptureSummary, String> {
+    store
+        .forget_course(
+            &CaptureScope {
+                campus_id: args.campus_id,
+                session_id: args.session_id,
+            },
+            args.course_id,
+        )
+        .map_err(|err| err.to_string())
+}
+
 // ---------- commands: options & app info ----------
 
 #[tauri::command]
@@ -542,6 +561,15 @@ pub fn list_captured_sections(
 ) -> Result<Vec<Section>, String> {
     let store = store.lock().unwrap_or_else(|poisoned| poisoned.into_inner());
     list_captured_sections_impl(&store, args)
+}
+
+#[tauri::command]
+pub fn forget_captured_course(
+    args: CapturedSectionsArgs,
+    store: tauri::State<'_, StoreHandle>,
+) -> Result<CaptureSummary, String> {
+    let mut store = store.lock().unwrap_or_else(|poisoned| poisoned.into_inner());
+    forget_captured_course_impl(&mut store, args)
 }
 
 // ---------- commands: plan membership ----------
@@ -1267,6 +1295,45 @@ mod tests {
         let err =
             get_plan_impl(&store, "p1").expect_err("a deleted plan cannot be fetched any more");
         assert!(err.contains("not found"), "got: {err}");
+    }
+
+    #[test]
+    fn forget_captured_course_returns_the_updated_summary_and_names_blockers() {
+        let mut store = seeded_store();
+        store.add_section_to_plan("p1", 2923, 384).expect("p1 holds C2923/S01");
+
+        let args = CapturedSectionsArgs { campus_id: 7, session_id: 155, course_id: 2923 };
+        let err = forget_captured_course_impl(&mut store, args)
+            .expect_err("a course a plan holds must refuse through the seam");
+        assert!(
+            err.contains("p1"),
+            "the error names the holding plan so the student can act, got: {err}"
+        );
+
+        store.remove_section_from_plan("p1", 2923, 384).expect("unhold");
+        let summary = forget_captured_course_impl(
+            &mut store,
+            CapturedSectionsArgs { campus_id: 7, session_id: 155, course_id: 2923 },
+        )
+        .expect("forget succeeds");
+        assert_eq!(
+            (summary.section_count, summary.course_count),
+            (1, 1),
+            "the returned summary counts only what survives"
+        );
+        let listed = list_captured_courses_impl(
+            &store,
+            CaptureScope { campus_id: 7, session_id: 155 },
+        )
+        .expect("picker reads the same truth");
+        assert_eq!(listed.iter().map(|course| course.course_id).collect::<Vec<_>>(), vec![564]);
+
+        let err = forget_captured_course_impl(
+            &mut store,
+            CapturedSectionsArgs { campus_id: 7, session_id: 155, course_id: 2923 },
+        )
+        .expect_err("a second forget has nothing left to remove");
+        assert!(err.contains("nothing to forget"), "got: {err}");
     }
 
     #[test]
