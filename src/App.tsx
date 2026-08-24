@@ -5,13 +5,17 @@ import { CreatePlanDialog } from "./components/CreatePlanDialog";
 import { PlanWorkspace } from "./components/PlanWorkspace";
 import { AboutDialog } from "./components/AboutDialog";
 import { ReportBrokenCaptureDialog } from "./components/ReportBrokenCaptureDialog";
+import { OnboardingDialog } from "./components/OnboardingDialog";
 import { usePlans } from "./components/usePlans";
 import { useOptions } from "./components/useOptions";
 import { usePlanDetail } from "./components/usePlanDetail";
+import { openCaptureWindow } from "./adapters/ipc/client";
+import { isOnboardingCompleted, setOnboardingCompleted } from "./core/onboarding";
 import type { PlanSummary } from "./adapters/ipc/types";
 import "./App.css";
 
 function AppContent() {
+  const [isOnboardingOpen, setIsOnboardingOpen] = useState(() => !isOnboardingCompleted());
   const [activePlanSummary, setActivePlanSummary] = useState<PlanSummary | null>(null);
   const [isCreateOpen, setIsCreateOpen] = useState(false);
   const [createError, setCreateError] = useState<string | null>(null);
@@ -97,6 +101,7 @@ function AppContent() {
         activePlan={activePlanSummary}
         onBackToPlans={onBackToPlans}
         onOpenAbout={() => setIsAboutOpen(true)}
+        onOpenTour={() => setIsOnboardingOpen(true)}
       />
 
       <main className="flex-1">
@@ -130,6 +135,18 @@ function AppContent() {
           />
         )}
       </main>
+
+      <OnboardingDialog
+        open={isOnboardingOpen}
+        onOpenChange={setIsOnboardingOpen}
+        campusOptions={campusOptions}
+        sessionOptions={sessionOptions}
+        onSeedSample={handleSeedSample}
+        onCreatePlan={handleCreatePlan}
+        onOpenCapture={openCaptureWindow}
+        onSelectPlan={(plan) => setActivePlanSummary(plan)}
+        onComplete={() => setOnboardingCompleted()}
+      />
 
       <CreatePlanDialog
         open={isCreateOpen}

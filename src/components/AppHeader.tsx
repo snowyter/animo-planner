@@ -1,4 +1,4 @@
-import { ArrowLeft, Calendar, Building2, BookOpen, Info } from "lucide-react";
+import { ArrowLeft, Calendar, Building2, BookOpen, Info, HelpCircle } from "lucide-react";
 import { Button } from "./ui/button";
 import { Badge } from "./ui/badge";
 import type { PlanSummary } from "../adapters/ipc/types";
@@ -7,9 +7,15 @@ export interface AppHeaderProps {
   activePlan: PlanSummary | null;
   onBackToPlans: () => void;
   onOpenAbout?: () => void;
+  onOpenTour?: () => void;
 }
 
-export function AppHeader({ activePlan, onBackToPlans, onOpenAbout }: AppHeaderProps) {
+export function AppHeader({
+  activePlan,
+  onBackToPlans,
+  onOpenAbout,
+  onOpenTour,
+}: AppHeaderProps) {
   return (
     <header className="sticky top-0 z-40 w-full border-b border-slate-200 bg-white/95 backdrop-blur-xs">
       <div className="mx-auto flex h-16 max-w-7xl items-center justify-between px-4 sm:px-6 lg:px-8">
@@ -70,6 +76,19 @@ export function AppHeader({ activePlan, onBackToPlans, onOpenAbout }: AppHeaderP
           <span className="hidden sm:inline text-xs text-slate-400 font-medium">
             Read-only • No credentials stored
           </span>
+          {onOpenTour && (
+            <Button
+              variant="outline"
+              size="sm"
+              onClick={onOpenTour}
+              className="h-8 px-2.5 text-xs font-semibold text-slate-700 hover:text-slate-900 border-slate-200 flex items-center gap-1.5 shadow-2xs"
+              title="Replay tour (?)"
+              aria-label="Replay tour (?)"
+            >
+              <HelpCircle className="h-3.5 w-3.5 text-emerald-700" />
+              <span>Tour</span>
+            </Button>
+          )}
           {onOpenAbout && (
             <Button
               variant="outline"

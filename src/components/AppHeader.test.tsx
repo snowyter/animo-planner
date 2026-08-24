@@ -55,4 +55,17 @@ describe("AppHeader", () => {
 
     expect(html).toContain("About");
   });
+
+  it("renders a persistent ? button to replay the tour when onOpenTour is provided", () => {
+    const onOpenTour = vi.fn();
+    const html = renderToStaticMarkup(
+      React.createElement(AppHeader, {
+        activePlan: null,
+        onBackToPlans: vi.fn(),
+        onOpenTour,
+      })
+    );
+
+    expect(html).toMatch(/Tour|\?/i);
+  });
 });

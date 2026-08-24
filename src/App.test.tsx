@@ -113,4 +113,45 @@ describe("App shell and navigation", () => {
 
     expect(workspaceHtml).toContain("unimplemented: get_plan");
   });
+
+  it("shows onboarding tour on first run with equal-weight options and verbatim disclaimer", () => {
+    vi.mocked(client.listPlans).mockResolvedValue([]);
+    vi.mocked(client.getCampusOptions).mockResolvedValue([{ id: 7, name: "Manila" }]);
+    vi.mocked(client.getSessionOptions).mockResolvedValue([{ id: 155, name: "AY2026-27 T1" }]);
+
+    const html = renderToStaticMarkup(React.createElement(App));
+
+    expect(html).toContain("Welcome to Animo Plan");
+    expect(html).toMatch(/Explore with sample data/i);
+    expect(html).toMatch(/Start a real plan|Create your plan/i);
+    expect(html).toContain(
+      "Animo Plan is a student-built tool with no affiliation to, endorsement by, or connection with De La Salle University. It never enlists, never modifies your records, and never stores your credentials."
+    );
+    expect(html).toMatch(/Tour/i);
+  });
+
+  it("does not display onboarding tour automatically if already marked completed in storage", () => {
+    vi.mocked(client.listPlans).mockResolvedValue([]);
+    vi.mocked(client.getCampusOptions).mockResolvedValue([]);
+    vi.mocked(client.getSessionOptions).mockResolvedValue([]);
+
+    const originalLocalStorage = (globalThis as unknown as { localStorage?: unknown }).localStorage;
+    const store: Record<string, string> = {
+      "animo-plan:onboarding-completed": "true",
+    };
+    (globalThis as unknown as { localStorage: unknown }).localStorage = {
+      getItem: (key: string) => store[key] ?? null,
+      setItem: (key: string, val: string) => {
+        store[key] = val;
+      },
+    };
+
+    const html = renderToStaticMarkup(React.createElement(App));
+
+    expect(html).not.toContain("Welcome to Animo Plan");
+    expect(html).toMatch(/Tour/i);
+
+    // Restore
+    (globalThis as unknown as { localStorage: unknown }).localStorage = originalLocalStorage;
+  });
 });
