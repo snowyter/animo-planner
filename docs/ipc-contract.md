@@ -96,7 +96,12 @@
 | Command | Arguments | Returns |
 |---|---|---|
 | `export_plan_ics` | `{ planId }` | `IcsExport` |
-| `build_capture_report` | `{ error, fragment }` | `CaptureReport` |
+| `build_capture_report` | `{ error }` | `CaptureReport` |
+
+**Amended in ticket 19:** the arguments no longer carry a `fragment`. The failing DOM is
+retained Rust-side at the capture-failure site and scrubbed there before any report is
+assembled, so raw DOM never crosses into the webview; the command matches `error` against
+the failures this launch announced and rejects if none match.
 
 ## Types
 
@@ -290,8 +295,10 @@ continues from there. On `"offline"` nothing changed.
 { "title": "Broken capture", "body": "scrubbed report text", "issueUrl": "https://..." }
 ```
 
-`body` is fully scrubbed (`hdnStudId`, `userID`, `IP_ADDRESS`, `MAC_ADDRESS` removed);
-the app never posts it — the student reviews and opens `issueUrl` themselves.
+`body` is returned in full so the student can review exactly what would be submitted, and is
+fully scrubbed (`hdnStudId`, `userID`, `IP_ADDRESS`, `MAC_ADDRESS` removed, along with
+anything shaped like a MAC or IPv4 address); the app never posts it — the student reviews
+and opens `issueUrl` themselves.
 
 ## Ownership notes
 

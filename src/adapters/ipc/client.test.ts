@@ -151,9 +151,9 @@ describe("ipc client", () => {
         [{ planId: "p1" }],
       ],
       [
-        () => client.buildCaptureReport({ error: "boom", fragment: "<td>" }),
+        () => client.buildCaptureReport({ error: "boom" }),
         "build_capture_report",
-        [{ error: "boom", fragment: "<td>" }],
+        [{ error: "boom" }],
       ],
     ];
 

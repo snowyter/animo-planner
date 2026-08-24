@@ -5,19 +5,24 @@
 //! wired the v1 set through the shared [`StoreHandle`] and the tested
 //! storage/solver logic underneath; each body is a thin adapter that maps
 //! store errors to identifiable error strings and never returns
-//! plausible-looking data on failure. Three commands remain deliberate
-//! stubs that fail loudly: `start_refresh` / `resume_refresh` (ticket 16's
-//! driver is still unmet) and `build_capture_report` (ticket 19).
+//! plausible-looking data on failure. Two commands remain deliberate stubs
+//! that fail loudly: `start_refresh` / `resume_refresh` (ticket 16's driver
+//! is still unmet). Ticket 19 implemented `build_capture_report`, whose
+//! fragment argument was amended away: the failing fragment is retained
+//! Rust-side at the capture-failure site and scrubbed there before any
+//! report is assembled, so raw DOM never crosses into the webview.
 //!
 //! Amendment protocol: `docs/ipc-contract.md` is the single source of truth.
 //! A signature change updates this file and `src/adapters/ipc/` in the same
 //! commit and names the change in its PR description.
 
 use crate::adapters::capture::CaptureEvents;
+use crate::adapters::capture::RetainedFailures;
 use crate::adapters::capture_window;
 use crate::adapters::remote_config::{LoadedSelectorConfig, SelectorConfigHandle};
 use crate::adapters::sample_seed;
 use crate::adapters::store::{CaptureScope, PlanDetail, PlanSummaryRow, Store, StoreHandle};
+use crate::core::capture_report::{self, CaptureReportInput};
 use crate::core::ics;
 use crate::core::ipc_types::*;
 use crate::core::options;
@@ -132,7 +137,6 @@ pub struct ContinueSolveArgs {
 #[serde(rename_all = "camelCase")]
 pub struct BuildCaptureReportArgs {
     pub error: String,
-    pub fragment: String,
 }
 
 /// Shared cancellation flag for the solve commands: `cancel_solve` sets it,
@@ -722,9 +726,47 @@ pub fn export_plan_ics(
     ))
 }
 
+/// Assembles the broken-capture report (ticket 19) from a failure the
+/// capture listener retained this launch. The fragment never came from the
+/// webview — the contract amendment that removed it from the arguments is
+/// what keeps raw DOM out of the frontend entirely. Nothing here
+/// transmits anything: the result is a pre-filled issue URL the student
+/// opens themselves (SPEC §8, §9).
+fn build_capture_report_impl(
+    failures: &RetainedFailures,
+    error: &str,
+    app_version: String,
+    loaded: &LoadedSelectorConfig,
+) -> Result<CaptureReport, String> {
+    let failure = failures.find(error).ok_or_else(|| {
+        format!(
+            "no matching retained capture failure to report; the error must be one \
+             this launch announced (got {:?})",
+            error
+        )
+    })?;
+    Ok(capture_report::build_capture_report(CaptureReportInput {
+        error,
+        fragment: failure.fragment.as_deref(),
+        app_version: &app_version,
+        selector_config_version: &loaded.version,
+        selector_config_source: loaded.source,
+    }))
+}
+
 #[tauri::command]
-pub fn build_capture_report(_args: BuildCaptureReportArgs) -> Result<CaptureReport, String> {
-    Err(unimplemented("build_capture_report"))
+pub fn build_capture_report(
+    args: BuildCaptureReportArgs,
+    listener: tauri::State<'_, crate::adapters::capture::CaptureListener>,
+    selector_config: tauri::State<'_, SelectorConfigHandle>,
+    app: tauri::AppHandle,
+) -> Result<CaptureReport, String> {
+    build_capture_report_impl(
+        listener.retained_failures(),
+        &args.error,
+        app.package_info().version.to_string(),
+        &selector_config.loaded(),
+    )
 }
 
 #[cfg(test)]
@@ -1092,20 +1134,95 @@ mod tests {
     }
 
     // Every command that is still a stub fails loudly and identifiably.
-    // Ticket 25 implemented everything else; `start_refresh` and
-    // `resume_refresh` return to ticket 16, `build_capture_report` to
-    // ticket 19.
+    // Ticket 25 implemented everything else; ticket 19 implemented
+    // `build_capture_report`. `start_refresh` and `resume_refresh` return
+    // to ticket 16.
     #[test]
     fn every_command_fails_loudly_and_identifiably() {
         expect_unimplemented("start_refresh", block_on(start_refresh(simple_args())));
         expect_unimplemented("resume_refresh", block_on(resume_refresh(simple_args())));
-        expect_unimplemented(
-            "build_capture_report",
-            build_capture_report(BuildCaptureReportArgs {
-                error: "boom".into(),
-                fragment: "<td></td>".into(),
-            }),
+    }
+
+    // ---------- broken-capture report (ticket 19) ----------
+
+    /// Raw DOM as the failure site retains it — hazard-laden, never scrubbed.
+    const RAW_RETAINED_FRAGMENT: &str = "<html><body>\
+         <input type=\"hidden\" name=\"hdnStudId\" value=\"2299999\">\
+         <input type=\"hidden\" name=\"MAC_ADDRESS\" value=\"60:45:BD:1B:55:13\">\
+         <table id=\"tblCourseSelection\"><tbody><tr><td>S01</td></tr></tbody></table>\
+         </body></html>";
+
+    fn retained_failures_with_one_failure() -> crate::adapters::capture::RetainedFailures {
+        let failures = crate::adapters::capture::RetainedFailures::default();
+        failures.record(crate::adapters::capture::CapturedFailure {
+            error: "unparseable capture payload: results table not found in the given HTML"
+                .into(),
+            fragment: Some(RAW_RETAINED_FRAGMENT.into()),
+        });
+        failures
+    }
+
+    fn bundled_config() -> LoadedSelectorConfig {
+        crate::adapters::remote_config::bundled()
+    }
+
+    #[test]
+    fn the_report_command_assembles_from_the_retained_failure_and_scrubs_first() {
+        let failures = retained_failures_with_one_failure();
+        let report = build_capture_report_impl(
+            &failures,
+            "unparseable capture payload: results table not found in the given HTML",
+            "0.1.0".into(),
+            &bundled_config(),
+        )
+        .expect("a retained failure builds a report");
+
+        assert!(report.body.contains("results table not found"));
+        assert!(report.body.contains("Animo Plan version: 0.1.0"));
+        assert!(
+            !report.body.contains("hdnStudId") && !report.body.contains("2299999"),
+            "the raw fragment must be scrubbed before assembly: {}",
+            report.body
         );
+        assert!(report.body.contains("tblCourseSelection"), "the table survives");
+        assert!(report.issue_url.starts_with("https://github.com/"));
+
+        // An unknown error is refused loudly — a report must correspond to
+        // an actual capture failure this launch saw.
+        let err = build_capture_report_impl(
+            &failures,
+            "an error no capture ever announced",
+            "0.1.0".into(),
+            &bundled_config(),
+        )
+        .expect_err("no report without a matching retained failure");
+        assert!(err.to_lowercase().contains("no matching"), "got: {err}");
+    }
+
+    #[test]
+    fn the_report_command_never_transmits_anything() {
+        // The whole flow is local composition; this pins that the only
+        // network-shaped string it produces is the issue URL the student
+        // opens themselves — nothing posts, nothing phones home (ADR-0004).
+        let failures = retained_failures_with_one_failure();
+        let report = build_capture_report_impl(
+            &failures,
+            "unparseable capture payload: results table not found in the given HTML",
+            "0.1.0".into(),
+            &bundled_config(),
+        )
+        .expect("report");
+        let urls: Vec<&str> = report
+            .body
+            .lines()
+            .filter(|line| line.trim_start().starts_with("http"))
+            .map(|line| line.trim())
+            .chain(std::iter::once(report.issue_url.as_str()))
+            .collect();
+        for url in urls {
+            let parsed = reqwest::Url::parse(url).expect("any url in a report parses");
+            assert_eq!(parsed.host_str(), Some("github.com"), "{url}");
+        }
     }
 
     // ---------- solve seam (ticket 25) ----------
