@@ -1,3 +1,4 @@
+pub mod capture_report;
 pub mod conflicts;
 pub mod ics;
 pub mod ipc_types;
@@ -6,5 +7,6 @@ pub mod parser;
 pub mod refresh;
 pub mod sample_data;
 pub mod scoring;
+pub mod scrub;
 pub mod selector_config;
 pub mod solver;

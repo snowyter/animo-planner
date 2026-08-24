@@ -203,10 +203,14 @@ export function exportPlanIcs(args: { planId: string }): Promise<IcsExport> {
   return invoke("export_plan_ics", args);
 }
 
-export function buildCaptureReport(args: {
-  error: string;
-  fragment: string;
-}): Promise<CaptureReport> {
+/**
+ * Builds the broken-capture report (ticket 19). The arguments carry only
+ * the error: the failing DOM is retained Rust-side and scrubbed there, so
+ * raw DOM never crosses into the webview. The returned report is a
+ * pre-filled GitHub issue URL the student opens themselves — nothing is
+ * transmitted by this command.
+ */
+export function buildCaptureReport(args: { error: string }): Promise<CaptureReport> {
   return invoke("build_capture_report", args);
 }
 

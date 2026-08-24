@@ -22,7 +22,9 @@ use axum::routing::post;
 use axum::{Json, Router};
 use rand::RngCore;
 use serde::Deserialize;
+use std::collections::VecDeque;
 use std::net::{Ipv4Addr, SocketAddr};
+use std::sync::{Arc, Mutex};
 use tokio::net::TcpListener;
 
 /// Events the listener announces, so the UI can react without polling.
@@ -57,6 +59,69 @@ pub enum ListenerError {
     Io(std::io::Error),
 }
 
+/// How many recent failures stay in memory. A student can search several
+/// courses back to back; every announced failure stays reportable for the
+/// launch, within this bound.
+pub const RETAINED_FAILURE_LIMIT: usize = 8;
+
+/// One capture failure as retained Rust-side: the announced error and —
+/// when the payload's HTML had been read before the failure — the raw DOM
+/// fragment it failed on. Raw fragments never leave the core except
+/// through `build_capture_report`, which scrubs first.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct CapturedFailure {
+    pub error: String,
+    pub fragment: Option<String>,
+}
+
+/// Memory of recent capture failures, shared between the listener (writer)
+/// and the report command (reader). Bounded; lives only for the launch.
+#[derive(Clone, Default)]
+pub struct RetainedFailures(Arc<Mutex<VecDeque<CapturedFailure>>>);
+
+impl RetainedFailures {
+    /// Records one failure. The capture listener is the production writer;
+    /// public so seam tests can seed realistic failures.
+    pub fn record(&self, failure: CapturedFailure) {
+        let mut failures = self
+            .0
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
+        failures.push_back(failure);
+        while failures.len() > RETAINED_FAILURE_LIMIT {
+            failures.pop_front();
+        }
+    }
+
+    /// The most recent failure whose announced error matches.
+    pub fn find(&self, error: &str) -> Option<CapturedFailure> {
+        self.0
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner())
+            .iter()
+            .rev()
+            .find(|failure| failure.error == error)
+            .cloned()
+    }
+
+    /// The most recent failure of any kind.
+    pub fn latest(&self) -> Option<CapturedFailure> {
+        self.0
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner())
+            .back()
+            .cloned()
+    }
+
+    #[cfg(test)]
+    fn len(&self) -> usize {
+        self.0
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner())
+            .len()
+    }
+}
+
 impl std::fmt::Display for ListenerError {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
@@ -79,14 +144,18 @@ struct ListenerState<E, C> {
     events: E,
     token: String,
     config: C,
+    failures: RetainedFailures,
 }
 
 /// The bound endpoint: its loopback address and the per-launch token the
 /// popup (ticket 10) needs to reach it. Held in Tauri state so the capture
-/// window can be opened with the right URL and token.
+/// window can be opened with the right URL and token, and so
+/// `build_capture_report` (ticket 19) can read the failures this listener
+/// retained.
 pub struct CaptureListener {
     addr: SocketAddr,
     token: String,
+    failures: RetainedFailures,
 }
 
 impl CaptureListener {
@@ -110,17 +179,19 @@ impl CaptureListener {
         let addr = listener.local_addr()?;
         let token = generate_token();
         let listener = TcpListener::from_std(listener)?;
+        let failures = RetainedFailures::default();
         let state = ListenerState {
             store,
             events,
             token: token.clone(),
             config,
+            failures: failures.clone(),
         };
         let app = Router::new()
             .route("/capture", post(handle_capture::<E, C>).options(handle_preflight))
             .with_state(state);
         Ok((
-            CaptureListener { addr, token },
+            CaptureListener { addr, token, failures },
             CaptureServer { listener, app },
         ))
     }
@@ -135,6 +206,12 @@ impl CaptureListener {
 
     pub fn token(&self) -> &str {
         &self.token
+    }
+
+    /// The failures this listener has announced. Raw fragments stay here;
+    /// the report command is the only reader and scrubs before assembling.
+    pub fn retained_failures(&self) -> &RetainedFailures {
+        &self.failures
     }
 }
 
@@ -240,13 +317,21 @@ fn now_iso() -> String {
 }
 
 /// Rejects the request with a diagnostic body and announces the failure.
+/// Every announced failure is retained Rust-side (ticket 19) — with the
+/// offending DOM fragment when one was in scope — so it stays reportable;
+/// raw fragments never travel to the webview in the event itself.
 fn reject<E: CaptureEvents, C: CurrentSelectorConfig>(
     state: &ListenerState<E, C>,
     origin: Option<HeaderValue>,
     status: StatusCode,
     message: String,
+    fragment: Option<&str>,
 ) -> Response {
     state.events.capture_failed(message.clone());
+    state.failures.record(CapturedFailure {
+        error: message.clone(),
+        fragment: fragment.map(str::to_string),
+    });
     with_cors(
         (status, Json(serde_json::json!({ "error": message }))).into_response(),
         origin,
@@ -276,6 +361,7 @@ async fn handle_capture<E: CaptureEvents, C: CurrentSelectorConfig>(
                 origin,
                 StatusCode::BAD_REQUEST,
                 format!("malformed capture payload: {err}"),
+                None,
             );
         }
     };
@@ -295,6 +381,7 @@ async fn handle_capture<E: CaptureEvents, C: CurrentSelectorConfig>(
                 origin,
                 StatusCode::UNPROCESSABLE_ENTITY,
                 format!("unparseable capture payload: {err}"),
+                Some(&payload.html),
             );
         }
     };
@@ -314,6 +401,7 @@ async fn handle_capture<E: CaptureEvents, C: CurrentSelectorConfig>(
             origin,
             StatusCode::UNPROCESSABLE_ENTITY,
             format!("capture produced no sections: {detail}"),
+            Some(&payload.html),
         );
     }
 
@@ -329,6 +417,7 @@ async fn handle_capture<E: CaptureEvents, C: CurrentSelectorConfig>(
                 origin,
                 StatusCode::INTERNAL_SERVER_ERROR,
                 format!("capture could not be stored: {err}"),
+                None,
             );
         }
         match store.capture_summary(&scope) {
@@ -339,6 +428,7 @@ async fn handle_capture<E: CaptureEvents, C: CurrentSelectorConfig>(
                     origin,
                     StatusCode::INTERNAL_SERVER_ERROR,
                     format!("capture summary unavailable: {err}"),
+                    None,
                 );
             }
         }
@@ -837,6 +927,149 @@ mod tests {
         .await;
         assert_eq!(status, 422, "the bundled config does not know #altTable");
         assert_eq!(summary(&other_store, 7, 155).section_count, 0);
+    }
+
+    // ---------- retaining the failing fragment Rust-side (ticket 19) ----------
+    //
+    // A failed parse must be reportable without the raw DOM ever crossing
+    // into the webview: the failure site retains the offending fragment here
+    // in the adapter layer, and `build_capture_report` (which scrubs before
+    // assembling) is its only reader. The announced event still carries the
+    // error string alone.
+
+    #[tokio::test]
+    async fn an_unparseable_capture_retains_its_raw_fragment_rust_side() {
+        let store = in_memory_store();
+        let events = RecordingEvents::default();
+        let (listener, server) = bind(store, events.clone());
+        spawn(server);
+
+        let hazardous = "<html><body>\
+             <input type=\"hidden\" id=\"hdnStudId\" value=\"2299999\">\
+             </body></html>";
+        let (status, _) = raw_request(
+            listener.port(),
+            "POST",
+            "/capture",
+            &[("Authorization", &auth(listener.token()))],
+            payload(7, 155, 2923, "CSINTSY", "TITLE", hazardous).as_bytes(),
+        )
+        .await;
+        assert_eq!(status, 422);
+
+        let announced = events.failed.lock().unwrap().clone();
+        assert_eq!(announced.len(), 1);
+        let retained = listener
+            .retained_failures()
+            .find(&announced[0])
+            .expect("the announced failure must be retained");
+        assert_eq!(retained.error, announced[0]);
+        let fragment = retained.fragment.expect("parse failures keep their DOM");
+        assert!(
+            fragment.contains("hdnStudId") && fragment.contains("2299999"),
+            "the fragment is retained raw for the scrubber: {fragment}"
+        );
+    }
+
+    #[tokio::test]
+    async fn failures_without_dom_are_retained_without_a_fragment() {
+        let store = in_memory_store();
+        let events = RecordingEvents::default();
+        let (listener, server) = bind(store, events.clone());
+        spawn(server);
+
+        let (_, body) = raw_request(
+            listener.port(),
+            "POST",
+            "/capture",
+            &[("Authorization", &auth(listener.token()))],
+            b"this is not json",
+        )
+        .await;
+
+        let announced = events.failed.lock().unwrap().clone();
+        assert_eq!(announced.len(), 1);
+        let retained = listener
+            .retained_failures()
+            .find(&announced[0])
+            .expect("every announced failure is reportable");
+        assert!(retained.fragment.is_none(), "no DOM existed: {body}");
+    }
+
+    #[tokio::test]
+    async fn a_successful_capture_retains_no_failure() {
+        let store = in_memory_store();
+        let (listener, server) = bind(in_memory_store(), RecordingEvents::default());
+        spawn(server);
+        drop(store);
+
+        let (status, _) = raw_request(
+            listener.port(),
+            "POST",
+            "/capture",
+            &[("Authorization", &auth(listener.token()))],
+            csintsy_payload().as_bytes(),
+        )
+        .await;
+        assert_eq!(status, 204);
+        assert!(listener.retained_failures().latest().is_none());
+    }
+
+    #[tokio::test]
+    async fn the_announced_event_carries_only_the_error_never_the_dom() {
+        let store = in_memory_store();
+        let events = RecordingEvents::default();
+        let (listener, server) = bind(store, events.clone());
+        spawn(server);
+
+        let (_, _) = raw_request(
+            listener.port(),
+            "POST",
+            "/capture",
+            &[("Authorization", &auth(listener.token()))],
+            payload(7, 155, 2923, "CSINTSY", "TITLE", "<html><body></body></html>").as_bytes(),
+        )
+        .await;
+
+        for error in events.failed.lock().unwrap().iter() {
+            assert!(
+                !error.contains("<html"),
+                "raw DOM must not cross into the webview: {error}"
+            );
+        }
+    }
+
+    #[test]
+    fn retention_is_bounded_so_a_long_session_cannot_grow_it_forever() {
+        let failures = RetainedFailures::default();
+        for index in 0..(RETAINED_FAILURE_LIMIT * 3) {
+            failures.record(CapturedFailure {
+                error: format!("failure {index}"),
+                fragment: Some(format!("<html>{index}</html>")),
+            });
+        }
+        assert_eq!(failures.len(), RETAINED_FAILURE_LIMIT);
+        // The newest survive, the oldest are dropped.
+        assert!(failures.find("failure 0").is_none());
+        assert!(failures.find("failure 23").is_some());
+    }
+
+    #[test]
+    fn finding_matches_the_most_recent_failure_with_that_error() {
+        let failures = RetainedFailures::default();
+        failures.record(CapturedFailure { error: "same".into(), fragment: Some("first".into()) });
+        failures.record(CapturedFailure { error: "other".into(), fragment: None });
+        failures.record(CapturedFailure { error: "same".into(), fragment: Some("second".into()) });
+        assert_eq!(
+            failures.find("same").expect("found").fragment.as_deref(),
+            Some("second")
+        );
+    }
+
+    #[test]
+    fn unknown_errors_find_nothing() {
+        let failures = RetainedFailures::default();
+        assert!(failures.find("nothing recorded").is_none());
     }
 
     // ---------- the single route ----------
