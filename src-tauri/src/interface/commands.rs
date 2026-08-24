@@ -5,12 +5,15 @@
 //! wired the v1 set through the shared [`StoreHandle`] and the tested
 //! storage/solver logic underneath; each body is a thin adapter that maps
 //! store errors to identifiable error strings and never returns
-//! plausible-looking data on failure. Two commands remain deliberate stubs
-//! that fail loudly: `start_refresh` / `resume_refresh` (ticket 16's driver
-//! is still unmet). Ticket 19 implemented `build_capture_report`, whose
-//! fragment argument was amended away: the failing fragment is retained
-//! Rust-side at the capture-failure site and scrubbed there before any
-//! report is assembled, so raw DOM never crosses into the webview.
+//! plausible-looking data on failure. Ticket 19 implemented
+//! `build_capture_report`, whose fragment argument was amended away: the
+//! failing fragment is retained Rust-side at the capture-failure site and
+//! scrubbed there before any report is assembled, so raw DOM never crosses
+//! into the webview. Ticket 26 implemented `start_refresh` / `resume_refresh`
+//! on top of the ticket-16 runner and the ticket-26 driver: the popup is
+//! driven course by course, every trusted step lands through
+//! `Store::apply_refresh` — never the undoable capture journal — and
+//! `refresh:progress` fires once per course for ticket 21's listener.
 //!
 //! Amendment protocol: `docs/ipc-contract.md` is the single source of truth.
 //! A signature change updates this file and `src/adapters/ipc/` in the same
@@ -19,6 +22,10 @@
 use crate::adapters::capture::CaptureEvents;
 use crate::adapters::capture::RetainedFailures;
 use crate::adapters::capture_window;
+use crate::adapters::refresh_driver::{
+    drive_refresh, ActiveRefreshRun, HaltedRefreshTokens, LiveRefreshSource, RefreshEvents,
+    RefreshSink,
+};
 use crate::adapters::remote_config::{LoadedSelectorConfig, SelectorConfigHandle};
 use crate::adapters::sample_seed;
 use crate::adapters::store::{CaptureScope, PlanDetail, PlanSummaryRow, Store, StoreHandle};
@@ -26,11 +33,16 @@ use crate::core::capture_report::{self, CaptureReportInput};
 use crate::core::ics;
 use crate::core::ipc_types::*;
 use crate::core::options;
+use crate::core::parser::ParsedSection;
+use crate::core::refresh::{
+    RefreshCourse, RefreshFinish, RefreshRun, DEFAULT_REFRESH_STEP_INTERVAL_MS,
+};
 use crate::core::solver::{Solver, SolveOutcome};
 use rand::RngCore;
 use serde::{Deserialize, Serialize};
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
+use std::time::Duration;
 use tauri::Emitter;
 
 pub mod events {
@@ -55,15 +67,63 @@ impl CaptureEvents for AppHandleEvents {
     }
 }
 
+/// Announces refresh progress as the `refresh:progress` Tauri event —
+/// once per course, from the indices the runner supplies (ticket 21 renders
+/// it through `onRefreshProgress`).
+impl RefreshEvents for AppHandleEvents {
+    fn refresh_progress(&self, progress: RefreshProgress) {
+        let _ = self.0.emit(events::REFRESH_PROGRESS, progress);
+    }
+}
+
+/// Everything a refresh command needs, managed as one Tauri state: the
+/// shared store, the active-run registration that routes `/capture` posts,
+/// where halted tokens are remembered per plan, the live selector config,
+/// and the event emitter.
+#[derive(Clone)]
+pub struct RefreshContext {
+    pub store: StoreHandle,
+    pub active: ActiveRefreshRun,
+    pub halted: HaltedRefreshTokens,
+    pub selector_config: SelectorConfigHandle,
+    pub events: AppHandleEvents,
+}
+
+/// The production [`RefreshSink`]: trusted steps land through
+/// [`Store::apply_refresh`] — snapshots appended, vanished sections flagged,
+/// never an undoable capture batch — and progress is announced per course.
+struct LiveRefreshSink<E: RefreshEvents> {
+    store: StoreHandle,
+    events: E,
+}
+
+impl<E: RefreshEvents> RefreshSink for LiveRefreshSink<E> {
+    fn persist(
+        &self,
+        plan_id: &str,
+        course_id: i64,
+        sections: &[ParsedSection],
+    ) -> Result<(), String> {
+        let mut store = self.store.lock().unwrap_or_else(|poisoned| poisoned.into_inner());
+        store
+            .apply_refresh(plan_id, course_id, sections, &crate::adapters::capture::now_iso())
+            .map_err(|err| err.to_string())
+    }
+
+    fn progress(&self, course_index: usize, course_total: usize, course_code: &str) {
+        self.events.refresh_progress(RefreshProgress {
+            course_index: course_index as i64,
+            course_total: course_total as i64,
+            course_code: course_code.to_string(),
+        });
+    }
+}
+
 fn capture_scope(args: &CampusSessionArgs) -> CaptureScope {
     CaptureScope {
         campus_id: args.campus_id,
         session_id: args.session_id,
     }
-}
-
-fn unimplemented(command: &str) -> String {
-    format!("unimplemented: {command}")
 }
 
 #[derive(Debug, Deserialize)]
@@ -688,14 +748,105 @@ pub fn cancel_solve(cancellation: tauri::State<'_, SolveCancellation>) -> Result
 
 // ---------- commands: refresh & missing ----------
 
+/// Refreshes every course already in the plan (ticket 26): the driver walks
+/// the ticket-16 runner's steps, drives the open Archer's Hub popup to
+/// select each course roughly 1.5 seconds apart, and stores what the runner
+/// trusts. Only plan courses are touched; nothing runs on a timer or in the
+/// background — this is always something the student asked for (SPEC §4).
 #[tauri::command]
-pub async fn start_refresh(_args: PlanIdArgs) -> Result<RefreshOutcome, String> {
-    Err(unimplemented("start_refresh"))
+pub async fn start_refresh(
+    args: PlanIdArgs,
+    context: tauri::State<'_, RefreshContext>,
+    app: tauri::AppHandle,
+) -> Result<RefreshOutcome, String> {
+    let courses = {
+        let store = context.store.lock().unwrap_or_else(|poisoned| poisoned.into_inner());
+        store.refresh_courses(&args.plan_id).map_err(|err| err.to_string())?
+    };
+    drive_refresh_for_plan(args.plan_id.clone(), courses, None, context.inner(), app).await
 }
 
+/// Resumes a refresh halted by session expiry (ticket 26): rebuilds the run
+/// from the token stashed when it halted and continues from the halted
+/// course rather than restarting. Fails identifiably when no halted run is
+/// remembered for the plan.
 #[tauri::command]
-pub async fn resume_refresh(_args: PlanIdArgs) -> Result<RefreshOutcome, String> {
-    Err(unimplemented("resume_refresh"))
+pub async fn resume_refresh(
+    args: PlanIdArgs,
+    context: tauri::State<'_, RefreshContext>,
+    app: tauri::AppHandle,
+) -> Result<RefreshOutcome, String> {
+    let token = context
+        .halted
+        .take(&args.plan_id)
+        .ok_or_else(|| format!("no halted refresh to resume for plan {:?}", args.plan_id))?;
+    drive_refresh_for_plan(args.plan_id.clone(), Vec::new(), Some(token), context.inner(), app).await
+}
+
+/// The shared drive behind both refresh commands: registers the active run
+/// so `/capture` routes to it, spawns the blocking drive loop off the UI
+/// thread, unregisters no matter how the drive ends, and remembers a halt's
+/// resume token for `resume_refresh`.
+async fn drive_refresh_for_plan(
+    plan_id: String,
+    courses: Vec<RefreshCourse>,
+    resume_token: Option<String>,
+    context: &RefreshContext,
+    app: tauri::AppHandle,
+) -> Result<RefreshOutcome, String> {
+    let scope = {
+        let store = context.store.lock().unwrap_or_else(|poisoned| poisoned.into_inner());
+        store.plan_scope_of(&plan_id).map_err(|err| err.to_string())?
+    };
+    // A run with nothing to drive (an empty plan) ends before it could ever
+    // consume a post — registering it would only open a window in which an
+    // ordinary search is routed into a channel nobody reads. Routing is
+    // registered exactly when a render can actually be awaited; a resumed
+    // run always carries at least its halted course.
+    let drives_anything = resume_token.is_some() || !courses.is_empty();
+    let mut run = match &resume_token {
+        Some(token) => RefreshRun::from_token(token).map_err(|err| err.to_string())?,
+        None => RefreshRun::start(courses),
+    };
+    let (sender, receiver) = std::sync::mpsc::channel();
+    if drives_anything {
+        context.active.begin(&plan_id, scope, sender)?;
+    }
+    let args_plan_id = plan_id.clone();
+
+    let config = context.selector_config.loaded().config;
+    let source = LiveRefreshSource::new(app, receiver, config.clone());
+    let sink = LiveRefreshSink {
+        store: context.store.clone(),
+        events: context.events.clone(),
+    };
+    let driven = tauri::async_runtime::spawn_blocking(move || {
+        drive_refresh(
+            &mut run,
+            &source,
+            &sink,
+            &plan_id,
+            &config,
+            Duration::from_millis(DEFAULT_REFRESH_STEP_INTERVAL_MS),
+        )
+    })
+    .await;
+
+    // The registration must die with the drive — success, halt, or failure —
+    // or every later post would be swallowed by a dead run.
+    if drives_anything {
+        context.active.end(&args_plan_id);
+    }
+
+    let finish: RefreshFinish = driven.map_err(|err| format!("refresh task failed: {err}"))??;
+    match finish.resume_token.clone() {
+        Some(token) => context.halted.stash(&args_plan_id, token),
+        None => {
+            // Completing (or resuming past) a run discards any stale memory.
+            drop(context.halted.take(&args_plan_id));
+        }
+    }
+    Ok(finish.outcome)
 }
 
 #[tauri::command]
@@ -775,39 +926,7 @@ mod tests {
     use crate::adapters::store::Store;
     use crate::core::ipc_types::{BlockModality, Day, SectionModality};
     use crate::core::parser::{ParsedBlock, ParsedLocation, ParsedSection};
-    use std::future::Future;
-    use std::pin::Pin;
-    use std::task::{Context, Poll, RawWaker, RawWakerVTable, Waker};
-
-    /// Minimal executor for stubs whose futures are ready immediately.
-    fn block_on<F: Future>(future: F) -> F::Output {
-        fn noop(_: *const ()) {}
-        fn clone(_: *const ()) -> RawWaker {
-            RawWaker::new(std::ptr::null(), &VTABLE)
-        }
-        static VTABLE: RawWakerVTable = RawWakerVTable::new(clone, noop, noop, noop);
-        let waker = unsafe { Waker::from_raw(RawWaker::new(std::ptr::null(), &VTABLE)) };
-        let mut context = Context::from_waker(&waker);
-        let mut pinned = Box::pin(future);
-        match Pin::new(&mut pinned).as_mut().poll(&mut context) {
-            Poll::Ready(output) => output,
-            Poll::Pending => panic!("stub future must never be pending"),
-        }
-    }
-
-    fn expect_unimplemented(name: &str, result: Result<impl std::fmt::Debug, String>) {
-        match result {
-            Err(message) => {
-                assert_eq!(message, format!("unimplemented: {name}"),
-                    "{name} must fail loudly and identifiably at runtime");
-            }
-            Ok(value) => panic!("{name} must not return plausible data, got: {value:?}"),
-        }
-    }
-
-    fn simple_args() -> PlanIdArgs {
-        PlanIdArgs { plan_id: "p1".into() }
-    }
+    use std::sync::{Arc as StdArc, Mutex as StdMutex};
 
     // ---------- command wiring fixtures (ticket 25) ----------
 
@@ -1133,14 +1252,104 @@ mod tests {
         assert_eq!(after_remove.sections.len(), 1);
     }
 
-    // Every command that is still a stub fails loudly and identifiably.
-    // Ticket 25 implemented everything else; ticket 19 implemented
-    // `build_capture_report`. `start_refresh` and `resume_refresh` return
-    // to ticket 16.
+    // `start_refresh` and `resume_refresh` were the last stubs; ticket 26
+    // implemented them on top of the ticket-16 runner and the driver. Their
+    // storage seam is pinned by the tests below: trusted steps land through
+    // `apply_refresh`, never as undoable capture batches, and progress is
+    // announced once per course.
+
+    /// Event sink recording every announced refresh progress payload.
+    #[derive(Clone, Default)]
+    struct RecordingRefreshEvents(StdArc<StdMutex<Vec<RefreshProgress>>>);
+
+    impl RefreshEvents for RecordingRefreshEvents {
+        fn refresh_progress(&self, progress: RefreshProgress) {
+            self.0.lock().unwrap().push(progress);
+        }
+    }
+
+    fn sink_handle(store: Store) -> (StoreHandle, StoreHandle) {
+        let handle: StoreHandle = StdArc::new(StdMutex::new(store));
+        (handle.clone(), handle)
+    }
+
     #[test]
-    fn every_command_fails_loudly_and_identifiably() {
-        expect_unimplemented("start_refresh", block_on(start_refresh(simple_args())));
-        expect_unimplemented("resume_refresh", block_on(resume_refresh(simple_args())));
+    fn a_trusted_step_lands_through_apply_refresh_never_the_undo_journal() {
+        let mut store = store();
+        let scope = CaptureScope { campus_id: 7, session_id: 155 };
+        store.create_plan("p1", "T1 load", &scope, T1, false).expect("plan");
+        // Baseline catalog laid down through the refresh path itself —
+        // deliberately not the journaling capture path.
+        let initial = vec![parsed_section(2923, 384, "S01", vec![block(Day::Mon, 450)])];
+        store.apply_refresh("p1", 2923, &initial, T1).expect("baseline");
+        store.add_section_to_plan("p1", 2923, 384).expect("choose");
+
+        assert!(
+            !store.capture_summary(&scope).expect("summary").can_undo,
+            "fixture check: nothing journaled yet"
+        );
+
+        let (sink_store, read_store) = sink_handle(store);
+        let sink = LiveRefreshSink { store: sink_store, events: RecordingRefreshEvents::default() };
+
+        // The fresh results no longer carry section 384 — it must be flagged
+        // missing, never deleted — and S02 arrives as new.
+        let fresh = vec![parsed_section(2923, 385, "S02", vec![block(Day::Mon, 570)])];
+        sink.persist("p1", 2923, &fresh).expect("the step persists");
+
+        let read = read_store.lock().unwrap();
+        let summary = read.capture_summary(&scope).expect("summary");
+        assert!(
+            !summary.can_undo,
+            "a refreshed step must never become an undoable capture batch"
+        );
+
+        let missing = read.missing_sections("p1").expect("missing query");
+        assert_eq!(missing.len(), 1, "the vanished plan section is flagged");
+        assert_eq!(missing[0].section_id, 384);
+        assert_eq!(missing[0].alternatives.len(), 1, "S02 remains an alternative");
+
+        let sections = read.captured_sections(&scope, 2923).expect("sections");
+        assert_eq!(sections.len(), 2, "snapshots are appended through the refresh path");
+        assert!(sections.iter().any(|section| section.section_id == 385));
+    }
+
+    #[test]
+    fn a_persistence_failure_surfaces_identifiably_from_the_sink() {
+        let (sink_store, _) = sink_handle(seeded_store());
+        let sink = LiveRefreshSink { store: sink_store, events: () };
+
+        let err = sink
+            .persist("no-such-plan", 2923, &[])
+            .expect_err("an unknown plan cannot absorb a refresh");
+        assert!(err.contains("not found"), "identifiable, got: {err}");
+    }
+
+    #[test]
+    fn progress_is_announced_once_per_course_with_the_runner_s_indices() {
+        let events = RecordingRefreshEvents::default();
+        let (_, store_handle) = sink_handle(seeded_store());
+        let sink = LiveRefreshSink { store: store_handle, events: clone_events(&events) };
+
+        sink.progress(0, 3, "CSINTSY");
+        sink.progress(1, 3, "GEARTAP");
+
+        let announced = events.0.lock().unwrap().clone();
+        assert_eq!(announced.len(), 2, "once per course");
+        assert_eq!(announced[0].course_index, 0);
+        assert_eq!(announced[0].course_total, 3);
+        assert_eq!(announced[0].course_code, "CSINTSY");
+        assert_eq!(announced[1].course_index, 1);
+
+        // The wire shape matches docs/ipc-contract.md's declared payload.
+        let json = serde_json::to_value(&announced[0]).unwrap();
+        assert_eq!(json["courseIndex"], 0);
+        assert_eq!(json["courseTotal"], 3);
+        assert_eq!(json["courseCode"], "CSINTSY");
+    }
+
+    fn clone_events(events: &RecordingRefreshEvents) -> RecordingRefreshEvents {
+        events.clone()
     }
 
     // ---------- broken-capture report (ticket 19) ----------

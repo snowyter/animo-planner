@@ -180,7 +180,7 @@ function courseFinderPage(options?: {
 }
 
 let fetchMock: ReturnType<typeof vi.fn>;
-let fakeWindow: { location: { hostname: string } };
+let fakeWindow: { location: { hostname: string } } & Record<string, unknown>;
 
 function boot(config: BootConfig = defaultConfig): void {
   const factory = new Function(
@@ -288,6 +288,43 @@ describe("capture script behavior", () => {
     await vi.advanceTimersByTimeAsync(300);
 
     expect(fetchMock).toHaveBeenCalledTimes(1);
+  });
+
+  it("posts an identical render when a refresh forced the next capture", async () => {
+    // Ticket 26: refreshing the course already on screen re-renders the
+    // same bytes; the driven selection must still land as a response.
+    const page = bootOnPage();
+    const observer = tableObserver();
+    expect(observer).toBeDefined();
+
+    observer?.fire();
+    await vi.advanceTimersByTimeAsync(300);
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+
+    fakeWindow.__animoPlanForceNextCapture = true;
+    observer?.fire();
+    await vi.advanceTimersByTimeAsync(300);
+
+    expect(fetchMock).toHaveBeenCalledTimes(2);
+    expect(lastFetchBody().courseId).toBe(2923);
+    expect(page.table.html).toContain("one row");
+  });
+
+  it("consumes the forced flag in one shot", async () => {
+    bootOnPage();
+    const observer = tableObserver();
+    expect(observer).toBeDefined();
+
+    fakeWindow.__animoPlanForceNextCapture = true;
+    observer?.fire();
+    await vi.advanceTimersByTimeAsync(300);
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+
+    observer?.fire();
+    await vi.advanceTimersByTimeAsync(300);
+    expect(fetchMock, "the second identical render is ordinary dedupe again").toHaveBeenCalledTimes(
+      1,
+    );
   });
 
   it("posts a new batch when the render actually changed", async () => {

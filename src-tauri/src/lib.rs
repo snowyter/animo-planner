@@ -41,13 +41,28 @@ pub fn run() {
                 fetch_handle.set_loaded(loaded);
             });
 
+            // The active-refresh registration is shared by the loopback
+            // listener (which routes `/capture` posts into the run) and the
+            // refresh commands (which register and unregister it); one
+            // instance, so routing and driving agree.
+            let events = AppHandleEvents(app.handle().clone());
+            let active_refresh = adapters::refresh_driver::ActiveRefreshRun::default();
             let (listener, server) = adapters::capture::CaptureListener::bind(
-                store,
-                AppHandleEvents(app.handle().clone()),
-                selector_config,
+                store.clone(),
+                events.clone(),
+                selector_config.clone(),
+                active_refresh.clone(),
             )
             .map_err(|err| format!("failed to start the capture listener: {err}"))?;
             app.manage(listener);
+            app.manage(adapters::refresh_driver::HaltedRefreshTokens::default());
+            app.manage(interface::commands::RefreshContext {
+                store,
+                active: active_refresh,
+                halted: Default::default(),
+                selector_config,
+                events,
+            });
             app.manage(adapters::capture_window::CaptureWindowScope::default());
             app.manage(interface::commands::SolveCancellation::default());
             tauri::async_runtime::spawn(async move {

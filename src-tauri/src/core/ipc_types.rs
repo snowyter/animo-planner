@@ -313,6 +313,17 @@ pub struct RefreshOutcome {
     pub halted_after_course_code: Option<String>,
 }
 
+/// Body of the `refresh:progress` event, emitted once per course from the
+/// indices the runner supplies (docs/ipc-contract.md, events table; ticket
+/// 21 renders it via `onRefreshProgress`).
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct RefreshProgress {
+    pub course_index: i64,
+    pub course_total: i64,
+    pub course_code: String,
+}
+
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct MissingSection {
@@ -442,6 +453,23 @@ mod tests {
         let json = serde_json::to_value(&outcome).unwrap();
         assert_eq!(json["status"], "session_expired");
         assert_eq!(json["haltedAfterCourseCode"], "GEARTAP");
+    }
+
+    #[test]
+    fn refresh_progress_matches_the_declared_event_payload() {
+        let progress = RefreshProgress {
+            course_index: 2,
+            course_total: 8,
+            course_code: "GEARTAP".into(),
+        };
+        let json = serde_json::to_value(&progress).unwrap();
+        assert_eq!(json["courseIndex"], 2);
+        assert_eq!(json["courseTotal"], 8);
+        assert_eq!(json["courseCode"], "GEARTAP");
+        assert_eq!(
+            serde_json::from_value::<RefreshProgress>(json).unwrap(),
+            progress
+        );
     }
 
     #[test]

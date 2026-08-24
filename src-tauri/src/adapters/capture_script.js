@@ -84,13 +84,20 @@ function (config) {
     if (table.querySelectorAll(config.selectors.resultRow).length === 0) {
       return;
     }
+
+    // The refresh driver (ticket 26) forces its very next render through the
+    // dedupe — refreshing the course already on screen re-renders identical
+    // bytes, and that response must still land. One-shot: consumed here.
+    var forced = window.__animoPlanForceNextCapture === true;
+    window.__animoPlanForceNextCapture = false;
+
     var identity = readCourseIdentity();
     if (!identity) {
       return;
     }
 
     var hash = hashString(table.outerHTML + "|" + identity.courseId);
-    if (hash === lastHash) {
+    if (!forced && hash === lastHash) {
       return;
     }
     lastHash = hash;

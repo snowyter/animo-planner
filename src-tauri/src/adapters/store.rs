@@ -1106,6 +1106,17 @@ impl Store {
         Ok(courses)
     }
 
+    /// The `(campus, session)` a plan is hard-scoped to — the scope a
+    /// refresh run is routed by (ticket 26): the loopback endpoint delivers
+    /// posted batches to the run whose plan scope matches.
+    pub fn plan_scope_of(&self, plan_id: &str) -> Result<CaptureScope, StoreError> {
+        let (campus_id, session_id) = plan_scope(&self.conn, plan_id)?;
+        Ok(CaptureScope {
+            campus_id,
+            session_id,
+        })
+    }
+
     /// Records one refreshed course: appends snapshots for every section in
     /// the fresh results (deduped on the natural key, history preserved) and
     /// flags plan sections of this course that no longer appear as missing.
@@ -3254,6 +3265,21 @@ mod tests {
         assert_eq!(courses[1].course_id, 2923);
         assert_eq!(courses[1].code, "CSINTSY");
         assert_eq!(courses[1].plan_section_ids, vec![384, 385]);
+    }
+
+    #[test]
+    fn plan_scope_of_exposes_the_scope_a_refresh_run_is_routed_by() {
+        let mut store = store();
+        store.create_plan("p1", "T1 load", &SCOPE, T1, false).expect("plan");
+        assert_eq!(
+            store.plan_scope_of("p1").expect("scope"),
+            SCOPE,
+            "the run is scoped to the plan being refreshed"
+        );
+        let err = store
+            .plan_scope_of("missing")
+            .expect_err("an unknown plan cannot scope a run");
+        assert!(err.to_string().contains("not found"), "got: {err}");
     }
 
     #[test]
