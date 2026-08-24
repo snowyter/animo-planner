@@ -66,7 +66,7 @@ describe("CaptureBar", () => {
     expect(html).toContain("0 sections from 0 courses");
   });
 
-  it("renders undo button next to counter and enables it when canUndo is true", () => {
+  it("renders undo button next to counter and enables it when canUndo is true with active tooltip", () => {
     const html = renderToStaticMarkup(
       React.createElement(CaptureBar, {
         ...defaultProps,
@@ -81,11 +81,12 @@ describe("CaptureBar", () => {
     );
 
     expect(html).toContain("Undo");
+    expect(html).toContain('title="Undo last captured course batch"');
     // Should not have disabled attribute on the undo button
     expect(html).not.toMatch(/<button[^>]*disabled[^>]*>[^<]*Undo/i);
   });
 
-  it("disables undo button when canUndo is false", () => {
+  it("disables undo button when canUndo is false and explains that undo covers only the most recent capture and is not available after restart", () => {
     const html = renderToStaticMarkup(
       React.createElement(CaptureBar, {
         ...defaultProps,
@@ -101,6 +102,7 @@ describe("CaptureBar", () => {
 
     expect(html).toContain("Undo");
     expect(html).toMatch(/<button[^>]*disabled/);
+    expect(html).toMatch(/title="Undo is only available for the most recent capture in this session and is not available after a restart"/i);
   });
 
   it("renders open Archer's Hub button scoped to campus and session", () => {

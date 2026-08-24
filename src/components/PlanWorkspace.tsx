@@ -74,6 +74,7 @@ export function PlanWorkspace({
     openCapture,
     undoLast,
     dismissFailure,
+    fetchSummary,
   } = useCapture(planSummary.campusId, planSummary.sessionId);
 
   const {
@@ -89,6 +90,7 @@ export function PlanWorkspace({
     addSection,
     removeSection,
     togglePin,
+    forgetCourse,
   } = useSectionPicker({
     campusId: planSummary.campusId,
     sessionId: planSummary.sessionId,
@@ -96,6 +98,9 @@ export function PlanWorkspace({
     onPlanUpdated: (updatedPlan) => {
       onPlanUpdated?.(updatedPlan);
       onRetry();
+    },
+    onCaptureUpdated: () => {
+      fetchSummary();
     },
   });
 
@@ -176,6 +181,16 @@ export function PlanWorkspace({
     try {
       await togglePin(section, pinned);
       onRetry();
+    } catch {
+      // Error handled in picker state
+    }
+  };
+
+  const handleRemoveCourse = async (courseId: number) => {
+    try {
+      await forgetCourse(courseId);
+      await fetchMissingSections();
+      await fetchSummary();
     } catch {
       // Error handled in picker state
     }
@@ -471,6 +486,7 @@ export function PlanWorkspace({
                 onSelectCourse={selectCourse}
                 onAddSection={handleAddSection}
                 onRemoveSection={handleRemoveSection}
+                onRemoveCourse={handleRemoveCourse}
                 onTogglePin={handleTogglePin}
                 onHoverSection={setHoveredSection}
                 onClose={() => setIsPickerOpen(false)}
