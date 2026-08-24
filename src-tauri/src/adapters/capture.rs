@@ -186,7 +186,6 @@ impl CaptureListener {
         listener.set_nonblocking(true)?;
         let addr = listener.local_addr()?;
         let token = generate_token();
-        let listener = TcpListener::from_std(listener)?;
         let failures = RetainedFailures::default();
         let state = ListenerState {
             store,
@@ -227,13 +226,26 @@ impl CaptureListener {
 /// The running server half of a bound listener. Spawn it on the app's async
 /// runtime; it serves until the process exits.
 pub struct CaptureServer {
-    listener: TcpListener,
+    /// Still the blocking-API socket: registering it with the Tokio reactor
+    /// requires a running runtime, and `bind` is called from Tauri's
+    /// synchronous `setup`. The conversion happens in `serve`, on the
+    /// runtime that will actually drive it.
+    listener: std::net::TcpListener,
     app: Router,
 }
 
 impl CaptureServer {
+    /// Runs the listener. Must be called from an async runtime: the socket
+    /// is handed to the reactor here, not at `bind` time.
     pub async fn serve(self) {
-        if let Err(err) = axum::serve(self.listener, self.app).await {
+        let listener = match TcpListener::from_std(self.listener) {
+            Ok(listener) => listener,
+            Err(err) => {
+                eprintln!("capture listener could not start: {err}");
+                return;
+            }
+        };
+        if let Err(err) = axum::serve(listener, self.app).await {
             eprintln!("capture listener shut down: {err}");
         }
     }
@@ -655,6 +667,29 @@ mod tests {
 
     fn spawn(server: CaptureServer) {
         tokio::spawn(async move { server.serve().await });
+    }
+
+    /// Deliberately a plain `#[test]`, not `#[tokio::test]`: `bind` is called
+    /// from Tauri's synchronous `setup`, where no runtime is running. Handing
+    /// the socket to the Tokio reactor there panics with "there is no reactor
+    /// running", which is a startup crash no async test can see -- the whole
+    /// suite passed while the app died on launch. The reactor registration
+    /// belongs in `serve`, on the runtime that drives it.
+    #[test]
+    fn bind_needs_no_running_runtime() {
+        let store = in_memory_store();
+        let events = RecordingEvents::default();
+
+        let (listener, _server) = CaptureListener::bind(
+            store,
+            events,
+            (),
+            crate::adapters::refresh_driver::ActiveRefreshRun::default(),
+        )
+        .expect("bind must not require a Tokio runtime");
+
+        assert!(listener.addr().ip().is_loopback(), "the listener stays loopback-only");
+        assert_ne!(listener.port(), 0, "a real port is reserved at bind time");
     }
 
     // ---------- happy path ----------
