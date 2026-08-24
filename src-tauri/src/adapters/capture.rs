@@ -145,6 +145,7 @@ struct ListenerState<E, C> {
     token: String,
     config: C,
     failures: RetainedFailures,
+    active_refresh: crate::adapters::refresh_driver::ActiveRefreshRun,
 }
 
 /// The bound endpoint: its loopback address and the per-launch token the
@@ -169,10 +170,17 @@ impl CaptureListener {
     ///
     /// Returns the endpoint metadata and the server to run: call
     /// `CaptureServer::serve` on the app's async runtime.
+    ///
+    /// `active_refresh` is the shared registration of the currently active
+    /// refresh run (ticket 26): while one is active for a scope, posted
+    /// batches matching that scope are routed into the run — to be stored by
+    /// `Store::apply_refresh` through the runner — instead of journaled as
+    /// undoable captures.
     pub fn bind<E: CaptureEvents, C: CurrentSelectorConfig>(
         store: StoreHandle,
         events: E,
         config: C,
+        active_refresh: crate::adapters::refresh_driver::ActiveRefreshRun,
     ) -> Result<(CaptureListener, CaptureServer), ListenerError> {
         let listener = std::net::TcpListener::bind((Ipv4Addr::LOCALHOST, 0))?;
         listener.set_nonblocking(true)?;
@@ -186,6 +194,7 @@ impl CaptureListener {
             token: token.clone(),
             config,
             failures: failures.clone(),
+            active_refresh,
         };
         let app = Router::new()
             .route("/capture", post(handle_capture::<E, C>).options(handle_preflight))
@@ -312,7 +321,7 @@ async fn handle_preflight(headers: HeaderMap) -> Response {
     response
 }
 
-fn now_iso() -> String {
+pub(crate) fn now_iso() -> String {
     chrono::Utc::now().to_rfc3339_opts(chrono::SecondsFormat::Millis, true)
 }
 
@@ -365,6 +374,26 @@ async fn handle_capture<E: CaptureEvents, C: CurrentSelectorConfig>(
             );
         }
     };
+
+    // Ticket 26: while a refresh run is active for this scope, the posted
+    // batch belongs to that run. The runner validates it and stores it via
+    // `Store::apply_refresh` — never the undoable journal — so a refresh can
+    // never be reverted by an Undo meant for the student's last search, and
+    // no capture event fires for it.
+    if state.active_refresh.deliver(
+        &CaptureScope {
+            campus_id: payload.campus_id,
+            session_id: payload.session_id,
+        },
+        crate::adapters::refresh_driver::RefreshBatch {
+            course_id: payload.course_id,
+            course_code: payload.course_code.clone(),
+            course_title: payload.course_title.clone(),
+            html: payload.html.clone(),
+        },
+    ) {
+        return with_cors(StatusCode::NO_CONTENT.into_response(), origin);
+    }
 
     let context = CourseContext {
         course_id: payload.course_id,
@@ -595,7 +624,16 @@ mod tests {
     }
 
     fn bind(store: StoreHandle, events: RecordingEvents) -> (CaptureListener, CaptureServer) {
-        CaptureListener::bind(store, events, ()).expect("listener must bind on loopback")
+        bind_with_refresh(store, events, crate::adapters::refresh_driver::ActiveRefreshRun::default())
+    }
+
+    fn bind_with_refresh(
+        store: StoreHandle,
+        events: RecordingEvents,
+        active_refresh: crate::adapters::refresh_driver::ActiveRefreshRun,
+    ) -> (CaptureListener, CaptureServer) {
+        CaptureListener::bind(store, events, (), active_refresh)
+            .expect("listener must bind on loopback")
     }
 
     fn bind_with_config<C>(
@@ -606,7 +644,13 @@ mod tests {
     where
         C: crate::adapters::remote_config::CurrentSelectorConfig,
     {
-        CaptureListener::bind(store, events, config).expect("listener must bind on loopback")
+        CaptureListener::bind(
+            store,
+            events,
+            config,
+            crate::adapters::refresh_driver::ActiveRefreshRun::default(),
+        )
+        .expect("listener must bind on loopback")
     }
 
     fn spawn(server: CaptureServer) {
@@ -1037,6 +1081,90 @@ mod tests {
                 "raw DOM must not cross into the webview: {error}"
             );
         }
+    }
+
+    // ---------- routing a post into an active refresh run (ticket 26) ----------
+    //
+    // While a refresh run is active for a plan's scope, a posted batch
+    // belongs to that run — stored later by `apply_refresh`, never as an
+    // undoable capture batch — and no capture event fires. A post outside
+    // the run's scope is an ordinary capture, exactly as before.
+
+    #[tokio::test]
+    async fn a_post_during_an_active_refresh_is_routed_to_the_run_never_journaled() {
+        let store = in_memory_store();
+        let events = RecordingEvents::default();
+        let active = crate::adapters::refresh_driver::ActiveRefreshRun::default();
+        let (sender, receiver) = std::sync::mpsc::channel();
+        active
+            .begin("p1", CaptureScope { campus_id: 7, session_id: 155 }, sender)
+            .expect("registers");
+        let (listener, server) = bind_with_refresh(store.clone(), events.clone(), active);
+        spawn(server);
+
+        let (status, body) = raw_request(
+            listener.port(),
+            "POST",
+            "/capture",
+            &[("Authorization", &auth(listener.token()))],
+            csintsy_payload().as_bytes(),
+        )
+        .await;
+        assert_eq!(status, 204, "the routed batch is accepted: {body}");
+
+        // The run received the batch verbatim — identity read from the live
+        // dropdown plus the rendered table.
+        let batch = receiver
+            .recv_timeout(std::time::Duration::from_millis(500))
+            .expect("the batch reaches the refresh run");
+        assert_eq!(batch.course_id, 2923);
+        assert_eq!(batch.course_code, "CSINTSY");
+        assert_eq!(batch.html, CSINTSY_FIXTURE);
+
+        // Nothing was journaled: not stored as a capture, nothing undoable,
+        // and no capture event fired.
+        let counts = summary(&store, 7, 155);
+        assert_eq!((counts.section_count, counts.course_count), (0, 0));
+        assert!(!counts.can_undo);
+        assert!(events.updated.lock().unwrap().is_empty());
+        assert!(events.failed.lock().unwrap().is_empty());
+    }
+
+    #[tokio::test]
+    async fn a_post_outside_the_active_runs_scope_is_an_ordinary_capture() {
+        let store = in_memory_store();
+        let events = RecordingEvents::default();
+        let active = crate::adapters::refresh_driver::ActiveRefreshRun::default();
+        let (sender, receiver) = std::sync::mpsc::channel();
+        // A run scoped to another term must not swallow this term's search.
+        active
+            .begin("p1", CaptureScope { campus_id: 8, session_id: 156 }, sender)
+            .expect("registers");
+        let (listener, server) = bind_with_refresh(store.clone(), events.clone(), active);
+        spawn(server);
+
+        let (status, _) = raw_request(
+            listener.port(),
+            "POST",
+            "/capture",
+            &[("Authorization", &auth(listener.token()))],
+            csintsy_payload().as_bytes(),
+        )
+        .await;
+        assert_eq!(status, 204);
+
+        let counts = summary(&store, 7, 155);
+        assert_eq!((counts.section_count, counts.course_count), (5, 1));
+        assert!(
+            counts.can_undo,
+            "an ordinary search during a run stays an undoable capture"
+        );
+        assert_eq!(events.updated.lock().unwrap().len(), 1);
+        assert_eq!(
+            receiver.try_recv().err(),
+            Some(std::sync::mpsc::TryRecvError::Empty),
+            "nothing reached the run"
+        );
     }
 
     #[test]

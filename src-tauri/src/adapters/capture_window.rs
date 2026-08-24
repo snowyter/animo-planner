@@ -180,6 +180,7 @@ mod tests {
             std::sync::Arc::new(std::sync::Mutex::new(store)),
             (),
             (),
+            crate::adapters::refresh_driver::ActiveRefreshRun::default(),
         )
         .expect("listener must bind");
         // The server is dropped without serving: the socket is released and
