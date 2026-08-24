@@ -343,7 +343,7 @@ export function SectionPicker({
              above the list, so the list is free to run on. */
           <div
             data-testid="section-list"
-            className="space-y-3 lg:max-h-[600px] lg:overflow-y-auto lg:pr-1"
+            className="space-y-2 lg:max-h-[700px] lg:overflow-y-auto lg:pr-1"
           >
             {sections.map((section) => {
               const inPlan = isSectionInPlan(
@@ -381,7 +381,7 @@ export function SectionPicker({
                   onMouseLeave={() => onHoverSection(null)}
                   onFocus={() => onHoverSection(section)}
                   onBlur={() => onHoverSection(null)}
-                  className={`rounded-xl border transition-all duration-150 p-4 ${
+                  className={`rounded-xl border transition-all duration-150 p-3 ${
                     isMissing
                       ? "border-amber-300 bg-amber-50/40 shadow-xs"
                       : inPlan
@@ -393,9 +393,9 @@ export function SectionPicker({
                       roughly 380-440px wide, and Tailwind's `lg:` keys off the
                       viewport -- so going horizontal here squeezed the schedule
                       blocks until "9:15 AM - 10:45 AM" broke across lines. */}
-                  <div className="flex flex-col gap-3">
+                  <div className="flex flex-col gap-2">
                     {/* Left: Identity, Modality, Blocks, Details */}
-                    <div className="space-y-2.5 flex-1 min-w-0">
+                    <div className="space-y-1.5 flex-1 min-w-0">
                       {/* Row 1: Section Code, Modality, Type, Credits, In-Plan / Conflict Badges */}
                       <div className="flex flex-wrap items-center gap-2">
                         <span className="font-bold text-base text-slate-900">
@@ -469,16 +469,72 @@ export function SectionPicker({
                             </span>
                           </Badge>
                         )}
+
+                        {/* On the identity row, which has spare width, rather
+                            than on a row of its own: a separate action row cost
+                            about sixty vertical pixels per card and roughly a
+                            third of what the list could show at once. */}
+                  <div className="ml-auto flex shrink-0 items-center gap-1.5">
+                    {inPlan ? (
+                      <>
+                        <Button
+                          type="button"
+                          variant="outline"
+                          size="sm"
+                          disabled={isMutating}
+                          onClick={() => onTogglePin(section, !pinned)}
+                          className="h-8 text-xs flex items-center gap-1"
+                          title={pinned ? "Unpin section" : "Pin section"}
+                        >
+                          {pinned ? (
+                            <>
+                              <PinOff className="h-3.5 w-3.5 text-slate-500" />
+                              <span>Unpin</span>
+                            </>
+                          ) : (
+                            <>
+                              <Pin className="h-3.5 w-3.5 text-slate-500" />
+                              <span>Pin</span>
+                            </>
+                          )}
+                        </Button>
+
+                        <Button
+                          type="button"
+                          variant="outline"
+                          size="sm"
+                          disabled={isMutating}
+                          onClick={() => onRemoveSection(section)}
+                          className="h-8 text-xs border-red-200 text-red-600 hover:bg-red-50 hover:text-red-700 flex items-center gap-1"
+                        >
+                          <Trash2 className="h-3.5 w-3.5" />
+                          <span>Remove</span>
+                        </Button>
+                      </>
+                    ) : (
+                      <Button
+                        type="button"
+                        variant="default"
+                        size="sm"
+                        disabled={isMutating}
+                        onClick={() => onAddSection(section)}
+                        className="h-8 text-xs bg-emerald-600 hover:bg-emerald-700 text-white flex items-center gap-1 shadow-xs"
+                      >
+                        <Plus className="h-3.5 w-3.5" />
+                        <span>Add to Plan</span>
+                      </Button>
+                    )}
+                  </div>
                       </div>
 
                       {/* Row 2: Schedule Blocks */}
-                      <div className="flex flex-wrap items-center gap-2">
+                      <div className="flex flex-wrap items-center gap-1.5">
                         {section.blocks.map((block: ScheduleBlock, idx: number) => {
                           const isF2F = block.modality === "F2F";
                           return (
                             <div
                               key={`${block.day}-${block.startMin}-${idx}`}
-                              className="flex items-center gap-1.5 rounded-md border border-slate-200 bg-slate-50/80 px-2.5 py-1 text-xs font-medium text-slate-800"
+                              className="flex items-center gap-1.5 rounded-md border border-slate-200 bg-slate-50/80 px-2 py-0.5 text-xs font-medium text-slate-800"
                             >
                               <span className="font-bold text-slate-900">
                                 {block.day}
@@ -547,58 +603,6 @@ export function SectionPicker({
                       </div>
                     </div>
 
-                    {/* Actions, below the details now that the card stacks. */}
-                    <div className="flex flex-wrap items-center justify-end gap-2 border-t border-slate-100 pt-3">
-                      {inPlan ? (
-                        <>
-                          <Button
-                            type="button"
-                            variant="outline"
-                            size="sm"
-                            disabled={isMutating}
-                            onClick={() => onTogglePin(section, !pinned)}
-                            className="h-8 text-xs flex items-center gap-1"
-                            title={pinned ? "Unpin section" : "Pin section"}
-                          >
-                            {pinned ? (
-                              <>
-                                <PinOff className="h-3.5 w-3.5 text-slate-500" />
-                                <span>Unpin</span>
-                              </>
-                            ) : (
-                              <>
-                                <Pin className="h-3.5 w-3.5 text-slate-500" />
-                                <span>Pin</span>
-                              </>
-                            )}
-                          </Button>
-
-                          <Button
-                            type="button"
-                            variant="outline"
-                            size="sm"
-                            disabled={isMutating}
-                            onClick={() => onRemoveSection(section)}
-                            className="h-8 text-xs border-red-200 text-red-600 hover:bg-red-50 hover:text-red-700 flex items-center gap-1"
-                          >
-                            <Trash2 className="h-3.5 w-3.5" />
-                            <span>Remove</span>
-                          </Button>
-                        </>
-                      ) : (
-                        <Button
-                          type="button"
-                          variant="default"
-                          size="sm"
-                          disabled={isMutating}
-                          onClick={() => onAddSection(section)}
-                          className="h-8 text-xs bg-emerald-600 hover:bg-emerald-700 text-white flex items-center gap-1 shadow-xs"
-                        >
-                          <Plus className="h-3.5 w-3.5" />
-                          <span>Add to Plan</span>
-                        </Button>
-                      )}
-                    </div>
                   </div>
                 </div>
               );

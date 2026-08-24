@@ -526,7 +526,9 @@ describe("SectionPicker", () => {
     );
 
     expect(html).toContain('data-testid="section-list"');
-    expect(html).toMatch(/lg:max-h-\[600px\]/);
+    // Bounded and scrollable is the property that matters; the exact height
+    // is free to track the grid beside it.
+    expect(html).toMatch(/lg:max-h-\[\d+px\]/);
     expect(html).toMatch(/lg:overflow-y-auto/);
   });
 
