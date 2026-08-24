@@ -16,7 +16,7 @@ use crate::core::parser::{parse_results_table, CourseContext};
 use axum::body::Bytes;
 use axum::extract::State;
 use axum::http::header::{self, AUTHORIZATION};
-use axum::http::{HeaderMap, HeaderValue, StatusCode};
+use axum::http::{HeaderMap, HeaderName, HeaderValue, StatusCode};
 use axum::response::{IntoResponse, Response};
 use axum::routing::post;
 use axum::{Json, Router};
@@ -311,10 +311,35 @@ fn with_cors(mut response: Response, origin: Option<HeaderValue>) -> Response {
 /// `127.0.0.1:<random-port>`, so every post is cross-origin and preflighted
 /// (Authorization header + JSON content type). No token is required for
 /// OPTIONS — preflights never carry headers, and the answer reveals nothing.
+/// Chromium's Private Network Access preflight. A page on a public origin --
+/// `https://archershub.dlsu.edu.ph` -- reaching a loopback address is a
+/// private-network request, so the browser asks permission on the preflight
+/// and blocks the POST outright unless the answer comes back. The block
+/// happens in the browser, so nothing reaches this listener and no capture
+/// failure is ever announced: the student sees a page that renders and a
+/// counter that never moves.
+///
+/// Granting it widens nothing. The listener still binds loopback only, still
+/// demands the per-launch bearer token, and still echoes just the one origin
+/// it answered. This header only tells the browser that the request it is
+/// already about to authorise may cross into the local network.
+const REQUEST_PRIVATE_NETWORK: &str = "access-control-request-private-network";
+const ALLOW_PRIVATE_NETWORK: &str = "access-control-allow-private-network";
+
 async fn handle_preflight(headers: HeaderMap) -> Response {
     let mut response = StatusCode::NO_CONTENT.into_response();
     if let Some(origin) = request_origin(&headers) {
+        let asks_private_network = headers
+            .get(REQUEST_PRIVATE_NETWORK)
+            .and_then(|value| value.to_str().ok())
+            .is_some_and(|value| value.eq_ignore_ascii_case("true"));
         let cors = response.headers_mut();
+        if asks_private_network {
+            cors.insert(
+                HeaderName::from_static(ALLOW_PRIVATE_NETWORK),
+                HeaderValue::from_static("true"),
+            );
+        }
         cors.insert(header::ACCESS_CONTROL_ALLOW_ORIGIN, origin);
         cors.insert(header::VARY, HeaderValue::from_static("origin"));
         cors.insert(
@@ -369,6 +394,10 @@ async fn handle_capture<E: CaptureEvents, C: CurrentSelectorConfig>(
 ) -> Response {
     let origin = request_origin(&headers);
 
+    if is_form_encoded(&headers) {
+        return handle_form_capture(&state, origin, &body);
+    }
+
     match bearer_token(&headers) {
         Some(token) if tokens_match(&state.token, token) => {}
         _ => return with_cors(StatusCode::UNAUTHORIZED.into_response(), origin),
@@ -387,6 +416,140 @@ async fn handle_capture<E: CaptureEvents, C: CurrentSelectorConfig>(
         }
     };
 
+    process_capture(&state, origin, payload)
+}
+
+/// A capture submitted as a browser form rather than a JSON `fetch`.
+///
+/// Archer's Hub serves a Content-Security-Policy whose `connect-src` omits
+/// loopback, so the injected script's `fetch` was refused by the browser
+/// before any request left the page. The same policy declares no
+/// `form-action`, and that directive does not inherit from `default-src`, so
+/// a form submission is unrestricted where fetch is not.
+///
+/// **Every reply here is 204, success or failure alike.** A form post is a
+/// navigation: any other status would render in the popup and throw the
+/// student off Course Finder mid-enlistment, while a 204 aborts the
+/// navigation and leaves the page untouched. Nothing is swallowed — failures
+/// are announced on `capture:failed` and retained for the report exactly as
+/// they are on the JSON path — but the transport must never be able to
+/// destroy the page it is reading.
+///
+/// A form cannot set headers, so the per-launch token arrives as a field. It
+/// is the same secret over the same loopback-only socket.
+fn handle_form_capture<E: CaptureEvents, C: CurrentSelectorConfig>(
+    state: &ListenerState<E, C>,
+    origin: Option<HeaderValue>,
+    body: &[u8],
+) -> Response {
+    let no_content = || with_cors(StatusCode::NO_CONTENT.into_response(), origin.clone());
+
+    let fields = parse_form(body);
+    let token = fields.get("token").map(String::as_str).unwrap_or_default();
+    if !tokens_match(&state.token, token) {
+        // Silent by design: an unauthenticated post is not the student's
+        // capture, and there is nothing to tell them about it.
+        return no_content();
+    }
+
+    let payload = match form_payload(&fields) {
+        Some(payload) => payload,
+        None => {
+            state
+                .events
+                .capture_failed("malformed capture payload: incomplete form submission".to_string());
+            return no_content();
+        }
+    };
+
+    // The outcome is already announced by `process_capture` — through
+    // `capture:updated` on success and `capture:failed` on every failure — so
+    // its status is deliberately discarded here.
+    let _ = process_capture(state, origin.clone(), payload);
+    no_content()
+}
+
+/// True when the body is a browser form submission rather than a JSON post.
+fn is_form_encoded(headers: &HeaderMap) -> bool {
+    headers
+        .get(header::CONTENT_TYPE)
+        .and_then(|value| value.to_str().ok())
+        .is_some_and(|value| {
+            value
+                .trim_start()
+                .starts_with("application/x-www-form-urlencoded")
+        })
+}
+
+/// Decodes an `application/x-www-form-urlencoded` body. Hand-rolled rather
+/// than pulling in a dependency for one small, well-defined format.
+fn parse_form(body: &[u8]) -> std::collections::HashMap<String, String> {
+    let mut fields = std::collections::HashMap::new();
+    let body = String::from_utf8_lossy(body);
+    for pair in body.split('&') {
+        if pair.is_empty() {
+            continue;
+        }
+        let (name, value) = pair.split_once('=').unwrap_or((pair, ""));
+        fields.insert(percent_decode(name), percent_decode(value));
+    }
+    fields
+}
+
+/// Percent-decoding with `+` as space, per the form-urlencoded serialisation.
+fn percent_decode(raw: &str) -> String {
+    let bytes = raw.as_bytes();
+    let mut out: Vec<u8> = Vec::with_capacity(bytes.len());
+    let mut index = 0;
+    while index < bytes.len() {
+        match bytes[index] {
+            b'+' => {
+                out.push(b' ');
+                index += 1;
+            }
+            b'%' if index + 2 < bytes.len() => {
+                let high = (bytes[index + 1] as char).to_digit(16);
+                let low = (bytes[index + 2] as char).to_digit(16);
+                match (high, low) {
+                    (Some(high), Some(low)) => {
+                        out.push((high * 16 + low) as u8);
+                        index += 3;
+                    }
+                    // Not a valid escape: keep the byte as written.
+                    _ => {
+                        out.push(bytes[index]);
+                        index += 1;
+                    }
+                }
+            }
+            byte => {
+                out.push(byte);
+                index += 1;
+            }
+        }
+    }
+    String::from_utf8_lossy(&out).into_owned()
+}
+
+/// The posted fields as a payload. A missing or unparseable field is a
+/// malformed capture, never a guessed value.
+fn form_payload(fields: &std::collections::HashMap<String, String>) -> Option<CapturePayload> {
+    Some(CapturePayload {
+        campus_id: fields.get("campusId")?.parse().ok()?,
+        session_id: fields.get("sessionId")?.parse().ok()?,
+        course_id: fields.get("courseId")?.parse().ok()?,
+        course_code: fields.get("courseCode")?.clone(),
+        course_title: fields.get("courseTitle")?.clone(),
+        html: fields.get("html")?.clone(),
+    })
+}
+
+/// Stores one capture and announces it. Shared by both transports.
+fn process_capture<E: CaptureEvents, C: CurrentSelectorConfig>(
+    state: &ListenerState<E, C>,
+    origin: Option<HeaderValue>,
+    payload: CapturePayload,
+) -> Response {
     // Ticket 26: while a refresh run is active for this scope, the posted
     // batch belongs to that run. The runner validates it and stores it via
     // `Store::apply_refresh` — never the undoable journal — so a refresh can
@@ -418,7 +581,7 @@ async fn handle_capture<E: CaptureEvents, C: CurrentSelectorConfig>(
         Ok(parsed) => parsed,
         Err(err) => {
             return reject(
-                &state,
+                state,
                 origin,
                 StatusCode::UNPROCESSABLE_ENTITY,
                 format!("unparseable capture payload: {err}"),
@@ -438,7 +601,7 @@ async fn handle_capture<E: CaptureEvents, C: CurrentSelectorConfig>(
             .map(|diagnostic| diagnostic.message.clone())
             .unwrap_or_else(|| "no section parsed".to_string());
         return reject(
-            &state,
+            state,
             origin,
             StatusCode::UNPROCESSABLE_ENTITY,
             format!("capture produced no sections: {detail}"),
@@ -454,7 +617,7 @@ async fn handle_capture<E: CaptureEvents, C: CurrentSelectorConfig>(
         let mut store = state.store.lock().unwrap_or_else(|poisoned| poisoned.into_inner());
         if let Err(err) = store.record_capture(&scope, &parsed.sections, &now_iso()) {
             return reject(
-                &state,
+                state,
                 origin,
                 StatusCode::INTERNAL_SERVER_ERROR,
                 format!("capture could not be stored: {err}"),
@@ -465,7 +628,7 @@ async fn handle_capture<E: CaptureEvents, C: CurrentSelectorConfig>(
             Ok(summary) => summary,
             Err(err) => {
                 return reject(
-                    &state,
+                    state,
                     origin,
                     StatusCode::INTERNAL_SERVER_ERROR,
                     format!("capture summary unavailable: {err}"),
@@ -1324,6 +1487,204 @@ mod tests {
         assert!(
             allowed.contains("content-type"),
             "the JSON content type must be allowed: {allowed}"
+        );
+    }
+
+    // ---------- form transport (Archer's Hub CSP) ----------
+
+    fn form_encode(raw: &str) -> String {
+        let mut out = String::new();
+        for byte in raw.as_bytes() {
+            match byte {
+                b'A'..=b'Z' | b'a'..=b'z' | b'0'..=b'9' | b'-' | b'_' | b'.' | b'~' => {
+                    out.push(*byte as char)
+                }
+                b' ' => out.push('+'),
+                other => out.push_str(&format!("%{other:02X}")),
+            }
+        }
+        out
+    }
+
+    fn form_body(token: &str, course_id: i64, html: &str) -> String {
+        format!(
+            "token={}&campusId=7&sessionId=155&courseId={}&courseCode={}&courseTitle={}&html={}",
+            form_encode(token),
+            course_id,
+            form_encode("CSINTSY"),
+            form_encode("INTRODUCTION TO INTELLIGENT SYSTEMS"),
+            form_encode(html),
+        )
+    }
+
+    async fn post_form(port: u16, body: &str) -> (u16, Vec<(String, String)>, String) {
+        raw_request_full(
+            port,
+            "POST",
+            "/capture",
+            &[
+                ("Origin", HUB_ORIGIN),
+                ("Content-Type", "application/x-www-form-urlencoded"),
+            ],
+            body.as_bytes(),
+        )
+        .await
+    }
+
+    /// The page's CSP refuses `fetch` to loopback but permits a form post, so
+    /// the injected script submits a form. The fields carry what the JSON body
+    /// carried, and the capture lands identically.
+    #[tokio::test]
+    async fn a_form_submission_stores_the_capture_like_a_json_post() {
+        let store = in_memory_store();
+        let events = RecordingEvents::default();
+        let (listener, server) = bind(store.clone(), events.clone());
+        spawn(server);
+
+        let (status, _, _) = post_form(
+            listener.port(),
+            &form_body(listener.token(), 2923, CSINTSY_FIXTURE),
+        )
+        .await;
+
+        assert_eq!(status, 204);
+        let stored = summary(&store, 7, 155);
+        assert!(
+            stored.section_count > 0,
+            "the form capture must be stored: {stored:?}"
+        );
+        assert_eq!(
+            events.updated.lock().unwrap().len(),
+            1,
+            "a stored form capture announces exactly once"
+        );
+    }
+
+    /// A form post is a navigation: any status but 204 renders in the popup
+    /// and throws the student off Course Finder. Every failure path must still
+    /// answer 204 -- announced through the event, never through the status.
+    #[tokio::test]
+    async fn every_form_failure_still_answers_204_so_the_page_is_never_navigated() {
+        let store = in_memory_store();
+        let events = RecordingEvents::default();
+        let (listener, server) = bind(store.clone(), events.clone());
+        spawn(server);
+        let port = listener.port();
+
+        let cases: Vec<(&str, String)> = vec![
+            ("wrong token", form_body("not-the-token", 2923, CSINTSY_FIXTURE)),
+            ("no fields at all", String::new()),
+            ("missing fields", format!("token={}", listener.token())),
+            (
+                "unparseable html",
+                form_body(listener.token(), 2923, "<p>not a results table</p>"),
+            ),
+            (
+                "course id matching nothing in the table",
+                form_body(listener.token(), 999_999, CSINTSY_FIXTURE),
+            ),
+        ];
+
+        for (name, body) in cases {
+            let (status, _, _) = post_form(port, &body).await;
+            assert_eq!(status, 204, "{name} must still answer 204");
+        }
+    }
+
+    /// The transport must not become a way in: a form post carrying the wrong
+    /// token stores nothing, even though it is answered with 204.
+    #[tokio::test]
+    async fn a_form_submission_with_the_wrong_token_stores_nothing() {
+        let store = in_memory_store();
+        let events = RecordingEvents::default();
+        let (listener, server) = bind(store.clone(), events.clone());
+        spawn(server);
+
+        let (status, _, _) = post_form(
+            listener.port(),
+            &form_body("not-the-token", 2923, CSINTSY_FIXTURE),
+        )
+        .await;
+
+        assert_eq!(status, 204);
+        assert_eq!(
+            summary(&store, 7, 155).section_count,
+            0,
+            "an unauthenticated form post must store nothing"
+        );
+        assert!(
+            events.updated.lock().unwrap().is_empty()
+                && events.failed.lock().unwrap().is_empty(),
+            "and must announce nothing"
+        );
+    }
+
+    /// Percent-encoding round-trips what the table HTML actually contains --
+    /// `&`, `=`, `+`, and multibyte characters included.
+    #[test]
+    fn form_decoding_round_trips_the_awkward_characters_html_contains() {
+        let raw = "<td>A&amp;B</td><td>x=1+2</td><td>café — 100%</td>";
+        let fields = parse_form(format!("html={}", form_encode(raw)).as_bytes());
+        assert_eq!(fields.get("html").map(String::as_str), Some(raw));
+    }
+
+    /// Chromium blocks a public-origin page from reaching loopback unless the
+    /// preflight grants private-network access. Without this the POST never
+    /// leaves the browser: no request arrives, no failure is announced, and
+    /// the capture counter simply never moves. No integration test can see
+    /// that -- the block is enforced browser-side, and these tests speak to
+    /// the listener directly -- so the header is asserted here.
+    #[tokio::test]
+    async fn the_preflight_grants_private_network_access_when_the_browser_asks() {
+        let store = in_memory_store();
+        let events = RecordingEvents::default();
+        let (listener, server) = bind(store.clone(), events.clone());
+        spawn(server);
+
+        let (status, headers, _) = raw_request_full(
+            listener.port(),
+            "OPTIONS",
+            "/capture",
+            &[
+                ("Origin", HUB_ORIGIN),
+                ("Access-Control-Request-Method", "POST"),
+                ("Access-Control-Request-Private-Network", "true"),
+            ],
+            b"",
+        )
+        .await;
+
+        assert_eq!(status, 204);
+        assert_eq!(
+            response_header(&headers, "access-control-allow-private-network"),
+            Some("true"),
+            "the preflight must grant private-network access: {headers:?}"
+        );
+    }
+
+    /// The header is an answer to a question, not a broadcast: a preflight
+    /// that never asked must not receive it.
+    #[tokio::test]
+    async fn the_preflight_stays_quiet_when_private_network_was_not_requested() {
+        let store = in_memory_store();
+        let events = RecordingEvents::default();
+        let (listener, server) = bind(store.clone(), events.clone());
+        spawn(server);
+
+        let (status, headers, _) = raw_request_full(
+            listener.port(),
+            "OPTIONS",
+            "/capture",
+            &[("Origin", HUB_ORIGIN), ("Access-Control-Request-Method", "POST")],
+            b"",
+        )
+        .await;
+
+        assert_eq!(status, 204);
+        assert_eq!(
+            response_header(&headers, "access-control-allow-private-network"),
+            None,
+            "unrequested private-network grants must not be volunteered: {headers:?}"
         );
     }
 

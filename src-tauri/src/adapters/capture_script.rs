@@ -160,8 +160,20 @@ mod tests {
             script.contains("MutationObserver"),
             "the capture path is an observer on the table body: {script}"
         );
+        // Archer's Hub serves a CSP whose `connect-src` omits loopback, so a
+        // `fetch` to the endpoint is refused by the browser before it leaves
+        // the page -- silently, with nothing for the app to report. The same
+        // policy declares no `form-action`, so the script submits a form.
         assert!(
-            script.contains("fetch("),
+            script.contains("form.submit()"),
+            "the script posts by submitting a form, not by fetch: {script}"
+        );
+        assert!(
+            !script.contains("fetch("),
+            "fetch to loopback is blocked by the hub's CSP and must not return: {script}"
+        );
+        assert!(
+            script.contains("config.endpoint"),
             "the script's only channel is the loopback endpoint: {script}"
         );
         assert!(

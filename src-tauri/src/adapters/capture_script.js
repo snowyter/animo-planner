@@ -110,20 +110,65 @@ function (config) {
       courseTitle: identity.courseTitle,
       html: table.outerHTML
     };
-    fetch(config.endpoint, {
-      method: "POST",
-      headers: {
-        "Content-Type": "application/json",
-        "Authorization": "Bearer " + config.token
-      },
-      body: JSON.stringify(payload)
-    }).then(function (response) {
-      if (!response.ok) {
-        lastHash = null;
+    post(payload);
+  }
+
+  // Archer's Hub serves a Content-Security-Policy whose `connect-src` does
+  // not include loopback, so `fetch` to the listener is refused by the
+  // browser before any request leaves the page — silently, with nothing for
+  // the app to report. The policy declares no `form-action`, and that
+  // directive does not inherit from `default-src`, so a form submission is
+  // unrestricted where fetch is not.
+  //
+  // The listener answers 204 No Content to every form post, success or
+  // failure alike, and a 204 aborts the navigation: the student stays on
+  // Course Finder and never sees this happen. Failures still reach the UI,
+  // through the `capture:failed` event the listener already emits.
+  //
+  // A form cannot set headers, so the per-launch token travels as a field.
+  // It is the same secret over the same loopback-only socket.
+  function post(payload) {
+    var form = document.createElement("form");
+    form.method = "POST";
+    form.action = config.endpoint;
+    form.enctype = "application/x-www-form-urlencoded";
+    form.style.display = "none";
+
+    var fields = {
+      token: config.token,
+      campusId: payload.campusId,
+      sessionId: payload.sessionId,
+      courseId: payload.courseId,
+      courseCode: payload.courseCode,
+      courseTitle: payload.courseTitle,
+      html: payload.html
+    };
+
+    for (var name in fields) {
+      if (!Object.prototype.hasOwnProperty.call(fields, name)) {
+        continue;
       }
-    }).catch(function () {
+      var input = document.createElement("input");
+      input.type = "hidden";
+      input.name = name;
+      var value = fields[name];
+      input.value = value === null || value === undefined ? "" : String(value);
+      form.appendChild(input);
+    }
+
+    document.body.appendChild(form);
+    try {
+      form.submit();
+    } catch (err) {
+      // A refused submission means nothing landed: let the next render retry
+      // rather than dedupe against a capture that never arrived.
       lastHash = null;
-    });
+    }
+    // The 204 leaves the document intact, so the form would otherwise
+    // accumulate one node per capture.
+    if (form.parentNode) {
+      form.parentNode.removeChild(form);
+    }
   }
 
   function scheduleCapture() {

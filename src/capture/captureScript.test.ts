@@ -80,9 +80,70 @@ class FakeElement {
   }
 }
 
+/// The script posts by submitting a hidden form: Archer's Hub serves a CSP
+/// whose `connect-src` omits loopback, so `fetch` never leaves the page,
+/// while form submission is unrestricted there. These fakes record what was
+/// submitted instead of what was fetched.
+class FakeForm {
+  tagName = "FORM";
+  method = "";
+  action = "";
+  enctype = "";
+  style: Record<string, string> = {};
+  children: FakeInput[] = [];
+  parentNode: FakeBody | null = null;
+  submitted = 0;
+  submitThrows = false;
+
+  appendChild(child: FakeInput): void {
+    this.children.push(child);
+  }
+
+  submit(): void {
+    if (this.submitThrows) {
+      throw new Error("submission refused");
+    }
+    this.submitted += 1;
+    FakeForm.submissions.push(this);
+  }
+
+  fields(): Record<string, string> {
+    const out: Record<string, string> = {};
+    for (const child of this.children) {
+      out[child.name] = child.value;
+    }
+    return out;
+  }
+
+  static submissions: FakeForm[] = [];
+  static nextSubmitThrows = false;
+}
+
+class FakeInput {
+  tagName = "INPUT";
+  type = "";
+  name = "";
+  value = "";
+}
+
+class FakeBody {
+  appended: FakeForm[] = [];
+
+  appendChild(child: FakeForm): void {
+    child.parentNode = this;
+    this.appended.push(child);
+  }
+
+  removeChild(child: FakeForm): void {
+    child.parentNode = null;
+    this.appended = this.appended.filter((each) => each !== child);
+  }
+}
+
 class FakeDocument {
   bySelector = new Map<string, FakeElement>();
   byId = new Map<string, FakeElement>();
+  body = new FakeBody();
 
   querySelector(selector: string): FakeElement | null {
     return this.bySelector.get(selector) ?? null;
@@ -90,6 +151,15 @@ class FakeDocument {
 
   getElementById(id: string): FakeElement | null {
     return this.byId.get(id) ?? null;
+  }
+
+  createElement(tag: string): FakeForm | FakeInput {
+    if (tag === "form") {
+      const form = new FakeForm();
+      form.submitThrows = FakeForm.nextSubmitThrows;
+      return form;
+    }
+    return new FakeInput();
   }
 }
 
@@ -179,7 +249,6 @@ function courseFinderPage(options?: {
   return { document, table, tbody, dropdown };
 }
 
-let fetchMock: ReturnType<typeof vi.fn>;
 let fakeWindow: { location: { hostname: string } } & Record<string, unknown>;
 
 function boot(config: BootConfig = defaultConfig): void {
@@ -206,10 +275,10 @@ function tableObserver(): FakeMutationObserver | undefined {
 
 beforeEach(() => {
   vi.useFakeTimers();
-  fetchMock = vi.fn().mockResolvedValue({ ok: true });
   fakeWindow = { location: { hostname: HUB_HOST } };
   FakeMutationObserver.instances = [];
-  vi.stubGlobal("fetch", fetchMock);
+  FakeForm.submissions = [];
+  FakeForm.nextSubmitThrows = false;
   vi.stubGlobal("window", fakeWindow);
   vi.stubGlobal("MutationObserver", FakeMutationObserver);
 });
@@ -219,13 +288,16 @@ afterEach(() => {
   vi.useRealTimers();
 });
 
-function lastFetchBody(): Record<string, unknown> {
-  const calls = fetchMock.mock.calls;
-  const call = calls[calls.length - 1];
-  if (!call) {
-    throw new Error("fetch was never called");
+function lastSubmission(): FakeForm {
+  const form = FakeForm.submissions[FakeForm.submissions.length - 1];
+  if (!form) {
+    throw new Error("no form was ever submitted");
   }
-  return JSON.parse(String(call[1]?.body)) as Record<string, unknown>;
+  return form;
+}
+
+function lastFetchBody(): Record<string, string> {
+  return lastSubmission().fields();
 }
 
 describe("capture script behavior", () => {
@@ -234,7 +306,7 @@ describe("capture script behavior", () => {
 
     await vi.advanceTimersByTimeAsync(300);
 
-    expect(fetchMock).toHaveBeenCalledTimes(1);
+    expect(FakeForm.submissions.length).toBe(1);
     const observer = tableObserver();
     expect(observer).toBeDefined();
     expect(observer?.target).toBe(page.tbody);
@@ -245,18 +317,20 @@ describe("capture script behavior", () => {
 
     await vi.advanceTimersByTimeAsync(300);
 
-    expect(fetchMock).toHaveBeenCalledWith(defaultConfig.endpoint, {
-      method: "POST",
-      headers: {
-        "Content-Type": "application/json",
-        Authorization: "Bearer test-token",
-      },
-      body: expect.any(String),
-    });
+    const form = lastSubmission();
+    expect(form.method.toUpperCase()).toBe("POST");
+    expect(form.action).toBe(defaultConfig.endpoint);
+    expect(form.enctype).toBe("application/x-www-form-urlencoded");
+    // A form cannot set headers, so the per-launch token travels as a field.
+    expect(form.fields().token).toBe("test-token");
+    // The form is removed once submitted: the 204 leaves the document
+    // intact, so it would otherwise accumulate a node per capture.
+    expect(form.parentNode).toBeNull();
+
     const body = lastFetchBody();
-    expect(body.campusId).toBe(7);
-    expect(body.sessionId).toBe(155);
-    expect(body.courseId).toBe(2923);
+    expect(body.campusId).toBe("7");
+    expect(body.sessionId).toBe("155");
+    expect(body.courseId).toBe("2923");
     expect(body.courseCode).toBe("CSINTSY");
     expect(body.courseTitle).toBe("INTRODUCTION TO INTELLIGENT SYSTEMS");
     expect(body.html).toBe(
@@ -274,7 +348,7 @@ describe("capture script behavior", () => {
     observer?.fire();
     await vi.advanceTimersByTimeAsync(300);
 
-    expect(fetchMock).toHaveBeenCalledTimes(1);
+    expect(FakeForm.submissions.length).toBe(1);
   });
 
   it("never posts the same render twice", async () => {
@@ -287,7 +361,7 @@ describe("capture script behavior", () => {
     observer?.fire();
     await vi.advanceTimersByTimeAsync(300);
 
-    expect(fetchMock).toHaveBeenCalledTimes(1);
+    expect(FakeForm.submissions.length).toBe(1);
   });
 
   it("posts an identical render when a refresh forced the next capture", async () => {
@@ -299,14 +373,14 @@ describe("capture script behavior", () => {
 
     observer?.fire();
     await vi.advanceTimersByTimeAsync(300);
-    expect(fetchMock).toHaveBeenCalledTimes(1);
+    expect(FakeForm.submissions.length).toBe(1);
 
     fakeWindow.__animoPlanForceNextCapture = true;
     observer?.fire();
     await vi.advanceTimersByTimeAsync(300);
 
-    expect(fetchMock).toHaveBeenCalledTimes(2);
-    expect(lastFetchBody().courseId).toBe(2923);
+    expect(FakeForm.submissions.length).toBe(2);
+    expect(lastFetchBody().courseId).toBe("2923");
     expect(page.table.html).toContain("one row");
   });
 
@@ -318,13 +392,14 @@ describe("capture script behavior", () => {
     fakeWindow.__animoPlanForceNextCapture = true;
     observer?.fire();
     await vi.advanceTimersByTimeAsync(300);
-    expect(fetchMock).toHaveBeenCalledTimes(1);
+    expect(FakeForm.submissions.length).toBe(1);
 
     observer?.fire();
     await vi.advanceTimersByTimeAsync(300);
-    expect(fetchMock, "the second identical render is ordinary dedupe again").toHaveBeenCalledTimes(
-      1,
-    );
+    expect(
+      FakeForm.submissions.length,
+      "the second identical render is ordinary dedupe again",
+    ).toBe(1);
   });
 
   it("posts a new batch when the render actually changed", async () => {
@@ -334,7 +409,7 @@ describe("capture script behavior", () => {
 
     observer?.fire();
     await vi.advanceTimersByTimeAsync(300);
-    expect(fetchMock).toHaveBeenCalledTimes(1);
+    expect(FakeForm.submissions.length).toBe(1);
 
     page.table.rows = [row("<tr>one row</tr>"), row("<tr>second row</tr>")];
     page.table.html =
@@ -342,23 +417,25 @@ describe("capture script behavior", () => {
     observer?.fire();
     await vi.advanceTimersByTimeAsync(300);
 
-    expect(fetchMock).toHaveBeenCalledTimes(2);
+    expect(FakeForm.submissions.length).toBe(2);
     expect(lastFetchBody().html).toContain("second row");
   });
 
   it("retries after a failed post instead of staying deduped forever", async () => {
-    fetchMock.mockRejectedValueOnce(new Error("listener down"));
+    // A refused submission means nothing landed, so the next identical
+    // render must not be deduped away as "already captured".
+    FakeForm.nextSubmitThrows = true;
     bootOnPage();
     const observer = tableObserver();
     expect(observer).toBeDefined();
 
-    observer?.fire();
     await vi.advanceTimersByTimeAsync(300);
-    expect(fetchMock).toHaveBeenCalledTimes(1);
+    expect(FakeForm.submissions.length, "the refused submit landed nothing").toBe(0);
 
+    FakeForm.nextSubmitThrows = false;
     observer?.fire();
     await vi.advanceTimersByTimeAsync(300);
-    expect(fetchMock).toHaveBeenCalledTimes(2);
+    expect(FakeForm.submissions.length, "the identical render is retried").toBe(1);
   });
 
   it("posts nothing when the course selection is unreadable", async () => {
@@ -368,7 +445,7 @@ describe("capture script behavior", () => {
 
     await vi.advanceTimersByTimeAsync(300);
 
-    expect(fetchMock).not.toHaveBeenCalled();
+    expect(FakeForm.submissions).toHaveLength(0);
   });
 
   it("posts nothing when the results table has no rows", async () => {
@@ -378,7 +455,7 @@ describe("capture script behavior", () => {
 
     await vi.advanceTimersByTimeAsync(300);
 
-    expect(fetchMock).not.toHaveBeenCalled();
+    expect(FakeForm.submissions).toHaveLength(0);
   });
 
   it("reads the selection from the selected option when the select2 container is absent", async () => {
@@ -391,9 +468,9 @@ describe("capture script behavior", () => {
 
     await vi.advanceTimersByTimeAsync(300);
 
-    expect(fetchMock).toHaveBeenCalledTimes(1);
+    expect(FakeForm.submissions.length).toBe(1);
     const body = lastFetchBody();
-    expect(body.courseId).toBe(564);
+    expect(body.courseId).toBe("564");
     expect(body.courseCode).toBe("GEARTAP");
   });
 
@@ -405,7 +482,7 @@ describe("capture script behavior", () => {
 
     await vi.advanceTimersByTimeAsync(300);
 
-    expect(fetchMock).not.toHaveBeenCalled();
+    expect(FakeForm.submissions).toHaveLength(0);
     expect(FakeMutationObserver.instances).toHaveLength(0);
   });
 
@@ -425,8 +502,8 @@ describe("capture script behavior", () => {
 
     await vi.advanceTimersByTimeAsync(300);
 
-    expect(fetchMock).toHaveBeenCalledTimes(1);
-    expect(lastFetchBody().courseId).toBe(2923);
+    expect(FakeForm.submissions.length).toBe(1);
+    expect(lastFetchBody().courseId).toBe("2923");
   });
 
   it("carries the campus and session the window was opened for", async () => {
@@ -438,7 +515,7 @@ describe("capture script behavior", () => {
     await vi.advanceTimersByTimeAsync(300);
 
     const body = lastFetchBody();
-    expect(body.campusId).toBe(8);
-    expect(body.sessionId).toBe(156);
+    expect(body.campusId).toBe("8");
+    expect(body.sessionId).toBe("156");
   });
 });
