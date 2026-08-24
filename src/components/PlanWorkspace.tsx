@@ -31,6 +31,7 @@ import {
   formatExpiryMessage,
   formatOfflineMessage,
 } from "../core/refresh";
+import { ExportMenu } from "./ExportMenu";
 
 export interface PlanWorkspaceProps {
   planSummary: PlanSummary;
@@ -209,7 +210,7 @@ export function PlanWorkspace({
             </div>
           </div>
 
-          {/* Persistent stats, conflict indicator, and explicit Refresh control (SPEC §4, ADR-0009) */}
+          {/* Persistent stats, conflict indicator, explicit Refresh control, and Export menu (SPEC §4, ADR-0009) */}
           <div className="flex flex-wrap items-center gap-3">
             <div className="flex flex-wrap items-center gap-4 text-sm text-slate-600 bg-slate-50 rounded-lg p-3 border border-slate-100">
               <div className="flex items-center gap-1.5">
@@ -261,6 +262,12 @@ export function PlanWorkspace({
               />
               <span>{isRefreshing ? "Refreshing..." : "Refresh"}</span>
             </Button>
+
+            <ExportMenu
+              planSummary={planSummary}
+              plan={plan}
+              conflicts={conflicts}
+            />
           </div>
         </div>
       </div>
@@ -463,11 +470,18 @@ export function PlanWorkspace({
         <div className="space-y-3">
           <div className="flex items-center justify-between">
             <h3 className="text-base font-semibold text-slate-900">Weekly Schedule</h3>
-            <span className="text-xs text-slate-500">
-              {currentSections.length === 0
-                ? "No sections added yet"
-                : formatSectionCount(currentSections.length)}
-            </span>
+            <div className="flex items-center gap-3">
+              <span className="text-xs text-slate-500">
+                {currentSections.length === 0
+                  ? "No sections added yet"
+                  : formatSectionCount(currentSections.length)}
+              </span>
+              <ExportMenu
+                planSummary={planSummary}
+                plan={plan}
+                conflicts={conflicts}
+              />
+            </div>
           </div>
 
           <WeekGrid

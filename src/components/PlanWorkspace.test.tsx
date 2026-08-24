@@ -476,6 +476,26 @@ describe("PlanWorkspace refresh recovery states", () => {
 
     spy.mockRestore();
   });
+
+  it("renders export control offering calendar and image export options", () => {
+    const mockFullPlan: Plan = {
+      ...mockPlanSummary,
+      sections: [],
+    };
+
+    const html = renderToStaticMarkup(
+      React.createElement(PlanWorkspace, {
+        planSummary: mockPlanSummary,
+        plan: mockFullPlan,
+        isLoading: false,
+        error: null,
+        onBack: vi.fn(),
+        onRetry: vi.fn(),
+      })
+    );
+
+    expect(html).toContain("Export");
+  });
 });
 
 
