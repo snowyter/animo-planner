@@ -6,7 +6,7 @@ This endpoint is the only channel between the remote Archer's Hub page and the R
 
 **Blocked by:** 05
 
-**Status:** ready-for-agent
+**Status:** done — merged to main in `da58611`
 
 - [ ] A listener binds to `127.0.0.1` on a random free port at launch and is never reachable from another machine
 - [ ] A bearer token is generated per launch, is not persisted anywhere, and is required on every request. A request without it, or with a stale one from a previous launch, is rejected

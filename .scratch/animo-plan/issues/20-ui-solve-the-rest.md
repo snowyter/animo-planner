@@ -6,7 +6,7 @@
 
 **Blocked by:** 13, 15
 
-**Status:** ready-for-agent
+**Status:** done — merged to main in `a5a96c5`
 
 - [ ] "Solve the rest" is reachable from the plan at any point, including from a plan with nothing chosen and from a plan that is nearly complete
 - [ ] Anything already in the plan is treated as pinned and comes back unchanged in every result

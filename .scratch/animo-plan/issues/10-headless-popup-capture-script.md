@@ -8,7 +8,7 @@ This ticket is tagged headless despite being JavaScript: the injected script is 
 
 **Blocked by:** 09
 
-**Status:** ready-for-agent
+**Status:** done — merged to main in `0bc3207`
 
 - [ ] A popup webview window opens on Archer's Hub, separate from the main window
 - [ ] **Tauri IPC is not granted to the remote origin.** The injected script's only channel to Rust is the ticket-09 loopback endpoint with its bearer token

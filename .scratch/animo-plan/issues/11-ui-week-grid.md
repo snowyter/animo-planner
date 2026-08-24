@@ -6,7 +6,7 @@
 
 **Blocked by:** 06, 07, 08
 
-**Status:** ready-for-agent
+**Status:** done — merged to main in `b69592f`
 
 - [ ] The grid is **Mon–Sat**, six columns. Not Mon–Fri — the observed day pairs include WED/SAT
 - [ ] Seven lattice rows at 07:30, 09:15, 11:00, 12:45, 14:30, 16:15, 18:00, with blocks positioned by their actual start and end times rather than snapped to a row index, so an off-lattice section still renders in the right place

@@ -6,7 +6,7 @@ See `SPEC.md` §7 (export).
 
 **Blocked by:** 08
 
-**Status:** ready-for-agent
+**Status:** done — merged to main in `a020eae`
 
 - [ ] A command returns a valid `.ics` for a given plan
 - [ ] Each schedule block becomes a recurring weekly event spanning the section's start and end dates

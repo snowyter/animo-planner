@@ -6,7 +6,7 @@
 
 **Blocked by:** 08
 
-**Status:** ready-for-agent
+**Status:** done — merged to main in `93c3c3c`
 
 - [ ] Backtracking search with constraint propagation, in Rust, running off the interface thread so the window never freezes
 - [ ] Courses are ordered by fewest remaining valid sections first

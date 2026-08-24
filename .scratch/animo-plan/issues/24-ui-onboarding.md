@@ -6,7 +6,7 @@ A student evaluating whether to install this should not have to hand over univer
 
 **Blocked by:** 07, 12, 13
 
-**Status:** ready-for-agent
+**Status:** done — merged to main in `6b048e1`
 
 - [ ] First run presents two paths of equal visual weight: start a real plan, or **"Explore with sample data"**
 - [ ] The sample-data path seeds the ticket-07 plan and drops the student straight onto the populated grid, with no sign-in and no network

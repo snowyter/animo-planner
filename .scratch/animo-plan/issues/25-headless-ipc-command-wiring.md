@@ -12,7 +12,7 @@ Everything here is additive over existing, tested logic. Where a store method is
 
 **Gates:** 20, 21, 23, 24 — these were numbered before this gap was found, so their `Blocked by` lines do not list this ticket.
 
-**Status:** ready-for-agent
+**Status:** done — merged to main in `ed0ad28`
 
 ### Plan lifecycle
 

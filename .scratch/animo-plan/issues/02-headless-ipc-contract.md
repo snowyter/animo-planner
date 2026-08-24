@@ -8,7 +8,7 @@ Derive the command set from `SPEC.md` §5 (data model), §6 (solver), §7 (UI su
 
 **Blocked by:** None — can start immediately.
 
-**Status:** ready-for-agent
+**Status:** done — merged to main in `0779c1b`
 
 - [ ] Every v1 command is declared on the Rust side with its final signature and registered with Tauri
 - [ ] A typed TypeScript client exposes one function per command, with argument and return types matching the Rust types

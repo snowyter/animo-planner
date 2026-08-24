@@ -6,7 +6,7 @@ See `SPEC.md` §7 (export).
 
 **Blocked by:** 11, 17
 
-**Status:** ready-for-agent
+**Status:** done — merged to main in `765b1ad`
 
 - [ ] An export control on the plan offers calendar file and image
 - [ ] Calendar export calls the ticket-17 command and saves through a native file dialog, with a sensible default filename derived from the plan name and term

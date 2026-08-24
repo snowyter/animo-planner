@@ -8,7 +8,7 @@ See `SPEC.md` §7 (onboarding — "Explore with sample data" is an equal-weight 
 
 **Blocked by:** 04, 05
 
-**Status:** ready-for-agent
+**Status:** done — merged to main in `65bd657`
 
 - [ ] One command seeds a plan from the ticket-01 fixtures, going through the real parser and the real storage layer — not through a separate hand-written insert path that could drift from production behaviour
 - [ ] The seeded plan contains all 47 sections across the two courses, with their schedule blocks and derived modalities intact

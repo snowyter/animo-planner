@@ -8,7 +8,7 @@ The failure mode this ticket exists to prevent: a stale-but-present results tabl
 
 **Blocked by:** 08, 10
 
-**Status:** ready-for-agent
+**Status:** done — merged to main in `27b25a9`
 
 - [ ] Refresh re-selects each course already in the plan, sequentially, roughly 1.5 seconds apart. Only courses in the plan — no catalog walking
 - [ ] Each refreshed course appends new snapshots. Previous snapshots remain readable

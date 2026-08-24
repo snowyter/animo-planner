@@ -8,7 +8,7 @@ See `SPEC.md` §4.
 
 **Blocked by:** 06, 10
 
-**Status:** ready-for-agent
+**Status:** done — merged to main in `2c6b88b`
 
 - [ ] A control on the plan screen opens the Archer's Hub popup, scoped to the plan's campus and session
 - [ ] The counter updates live as captures arrive and reads in the form "N sections from M courses"

@@ -475,10 +475,41 @@ pub fn get_plan(args: PlanIdArgs, store: tauri::State<'_, StoreHandle>) -> Resul
 /// connection: the loopback capture listener holds the same handle, and a
 /// second connection to the same file would write outside that mutex.
 #[tauri::command]
-pub fn seed_sample_plan(store: tauri::State<'_, StoreHandle>) -> Result<PlanSummary, String> {
-    let mut store = store.lock().unwrap_or_else(|poisoned| poisoned.into_inner());
+pub fn seed_sample_plan(
+    app: tauri::AppHandle,
+    store: tauri::State<'_, StoreHandle>,
+) -> Result<PlanSummary, String> {
     let captured_at = chrono::Utc::now().to_rfc3339_opts(chrono::SecondsFormat::Secs, true);
-    sample_seed::seed_sample_plan(&mut store, &captured_at).map_err(|err| err.to_string())
+    seed_sample_and_announce(&store, &AppHandleEvents(app), &captured_at)
+}
+
+/// Seeds the bundled sample plan and announces the resulting capture counts.
+///
+/// Seeding lands sections and courses under the sample scope, so the ticket-12
+/// counter — which listens to `capture:updated` — reads stale unless the seed
+/// announces like any other capture. Ticket 24 made this visible by putting
+/// "explore with sample data" on the first-run path.
+fn seed_sample_and_announce<E: CaptureEvents>(
+    store: &StoreHandle,
+    events: &E,
+    captured_at: &str,
+) -> Result<PlanSummary, String> {
+    // Counts are read inside the same lock that seeded them, so the announced
+    // summary can never describe a store some other writer has moved on from.
+    let (summary, counts) = {
+        let mut store = store.lock().unwrap_or_else(|poisoned| poisoned.into_inner());
+        let summary = sample_seed::seed_sample_plan(&mut store, captured_at)
+            .map_err(|err| err.to_string())?;
+        let counts = store
+            .capture_summary(&CaptureScope {
+                campus_id: summary.campus_id,
+                session_id: summary.session_id,
+            })
+            .map_err(|err| err.to_string())?;
+        (summary, counts)
+    };
+    events.capture_updated(counts);
+    Ok(summary)
 }
 
 // ---------- commands: captured catalog ----------
@@ -1271,6 +1302,64 @@ mod tests {
     fn sink_handle(store: Store) -> (StoreHandle, StoreHandle) {
         let handle: StoreHandle = StdArc::new(StdMutex::new(store));
         (handle.clone(), handle)
+    }
+
+    // ---------- sample seed announces like any other capture ----------
+
+    /// Event sink recording every announced capture summary.
+    #[derive(Clone, Default)]
+    struct RecordingCaptureEvents(StdArc<StdMutex<Vec<CaptureSummary>>>);
+
+    impl CaptureEvents for RecordingCaptureEvents {
+        fn capture_updated(&self, summary: CaptureSummary) {
+            self.0.lock().unwrap().push(summary);
+        }
+        fn capture_failed(&self, _error: String) {}
+    }
+
+    #[test]
+    fn seeding_the_sample_plan_announces_the_new_capture_counts() {
+        let events = RecordingCaptureEvents::default();
+        let (_, handle) = sink_handle(store());
+
+        let summary = seed_sample_and_announce(&handle, &events, T1)
+            .expect("seed announces");
+
+        let announced = events.0.lock().unwrap().clone();
+        assert_eq!(announced.len(), 1, "seeding announces exactly once");
+        let counts = &announced[0];
+        assert_eq!(counts.campus_id, summary.campus_id);
+        assert_eq!(counts.session_id, summary.session_id);
+        // The counter would read zero without this announcement, which is the
+        // stale reading ticket 24's first-run path made visible.
+        assert!(counts.section_count > 0, "sections seeded but announced as {}", counts.section_count);
+        assert!(counts.course_count > 0, "courses seeded but announced as {}", counts.course_count);
+    }
+
+    #[test]
+    fn a_failed_seed_announces_nothing() {
+        let events = RecordingCaptureEvents::default();
+        let mut store = store();
+        // The reserved sample id is already taken, so the seed's create step
+        // fails and nothing is stored. A counter must never be told about
+        // counts that did not change.
+        store
+            .create_plan(
+                crate::core::sample_data::SAMPLE_PLAN_ID,
+                "taken",
+                &CaptureScope { campus_id: 7, session_id: 155 },
+                T1,
+                false,
+            )
+            .expect("existing plan");
+        let (_, handle) = sink_handle(store);
+
+        seed_sample_and_announce(&handle, &events, T1).expect_err("a taken plan id must fail");
+
+        assert!(
+            events.0.lock().unwrap().is_empty(),
+            "a failed seed must not announce"
+        );
     }
 
     #[test]

@@ -8,7 +8,7 @@ Every downstream parser, sample-data, and report-scrubbing ticket reads these. S
 
 **Blocked by:** None — can start immediately.
 
-**Status:** ready-for-agent
+**Status:** done — merged to main in `bcd9999`
 
 - [ ] Both captures are committed as fixture files under the project's test-fixture convention
 - [ ] `hdnStudId`, `userID`, `IP_ADDRESS`, and `MAC_ADDRESS` are removed or replaced with obvious placeholders in both files

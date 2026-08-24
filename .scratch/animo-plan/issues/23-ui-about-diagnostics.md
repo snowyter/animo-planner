@@ -6,7 +6,7 @@ Students are being asked to type university credentials into a window this binar
 
 **Blocked by:** 12, 19
 
-**Status:** ready-for-agent
+**Status:** done — merged to main in `a439e01`
 
 - [ ] The disclaimer appears verbatim: a student-built tool with no affiliation to, endorsement by, or connection with the university; it never enlists, never modifies records, and never stores credentials
 - [ ] The app version and the selector-config version are both visible, along with whether the config in use is the remote one or the bundled fallback — bug reports are undiagnosable without these

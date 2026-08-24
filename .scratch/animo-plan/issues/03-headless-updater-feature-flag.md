@@ -6,7 +6,7 @@ See `SPEC.md` §9. This ticket has no dependencies and is deliberately available
 
 **Blocked by:** None — can start immediately.
 
-**Status:** ready-for-agent
+**Status:** done — merged to main in `4e97653`
 
 - [ ] `tauri-plugin-updater` is configured against GitHub Releases
 - [ ] The updater compiles in and out cleanly behind a Cargo feature, and the feature-off build contains no updater code

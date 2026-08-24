@@ -8,7 +8,7 @@ See `SPEC.md` §5 (rules) and §7 (conflicts are displayed, never prevented).
 
 **Blocked by:** 05
 
-**Status:** ready-for-agent
+**Status:** done — merged to main in `9e90ab4`
 
 - [ ] Sections can be added to and removed from a plan, and the membership survives a restart
 - [ ] A section in a plan can be pinned and unpinned, and pinned state persists

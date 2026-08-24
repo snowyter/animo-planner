@@ -8,7 +8,7 @@ Ticket 04 already made the parser take its rules from a config struct, so this t
 
 **Blocked by:** 04
 
-**Status:** ready-for-agent
+**Status:** done — merged to main in `8fd4a08`
 
 - [ ] Selector rules load from a remote JSON file at startup
 - [ ] The bundled copy is used when the fetch fails, times out, or returns something unparseable. **Startup never blocks on the network** and the app is fully usable offline

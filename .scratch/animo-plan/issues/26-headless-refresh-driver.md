@@ -10,7 +10,7 @@ Ticket 16 delivered the decision-making half of this and it is merged: `core::re
 
 **Gates:** 21 — ticket 21 was numbered before this gap was found, so its `Blocked by` line does not list this ticket.
 
-**Status:** ready-for-agent
+**Status:** done — merged to main in `e88e2b1`
 
 ## Already built — do not rebuild
 

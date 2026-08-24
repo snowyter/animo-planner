@@ -6,7 +6,7 @@ See `SPEC.md` §4 (refresh, session expiry) and §5 (sections are never hard-del
 
 **Blocked by:** 12, 13, 16
 
-**Status:** ready-for-agent
+**Status:** done — merged to main in `380648f`
 
 - [ ] Refresh is an explicit control on the plan. There is no automatic or scheduled refresh anywhere in the interface
 - [ ] Progress shows which course is being refreshed and how many remain

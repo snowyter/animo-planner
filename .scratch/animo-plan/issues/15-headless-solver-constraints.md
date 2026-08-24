@@ -6,7 +6,7 @@ Constraints filter. Warnings do not — they are advice attached to a result, ne
 
 **Blocked by:** 14
 
-**Status:** ready-for-agent
+**Status:** done — merged to main in `23cbe3e`
 
 - [ ] Day blacklist: a student can exclude one or more days and no result places a block there
 - [ ] Earliest-start and latest-end bounds are respected across all blocks

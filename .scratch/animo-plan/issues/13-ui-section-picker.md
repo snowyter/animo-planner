@@ -6,7 +6,7 @@ This is an **entry point, not a mode**. A student who picks by hand can hit "Sol
 
 **Blocked by:** 11
 
-**Status:** ready-for-agent
+**Status:** done — merged to main in `53b83a6`
 
 - [ ] Sections are browsed one course at a time, listing every captured section for that course
 - [ ] Each row shows the section's schedule blocks, per-block modality, room, teacher, and enrolled-over-cap

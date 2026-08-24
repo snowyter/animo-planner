@@ -3,8 +3,10 @@
  * Free of I/O, DOM, and framework imports.
  */
 
-export const DISCLAIMER_TEXT =
-  "Animo Plan is a student-built tool with no affiliation to, endorsement by, or connection with De La Salle University. It never enlists, never modifies your records, and never stores your credentials.";
+// The no-affiliation disclaimer is defined once, in `diagnostics.ts`, and
+// re-exported here. Two copies of a legally-meaningful string drift silently:
+// editing one leaves the other showing the old wording in a different dialog.
+export { DISCLAIMER_TEXT } from "./diagnostics";
 
 export const SIGN_IN_NOTICE =
   "You will sign in directly on De La Salle University's Archer's Hub portal. Animo Plan never stores your credentials.";

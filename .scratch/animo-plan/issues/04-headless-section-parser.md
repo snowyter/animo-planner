@@ -8,7 +8,7 @@ This is the load-bearing piece of the whole app. `SPEC.md` §2 is the specificat
 
 **Blocked by:** 01
 
-**Status:** ready-for-agent
+**Status:** done — merged to main in `e3f637b`
 
 - [ ] Both fixtures parse to the expected counts — 5 sections for CSINTSY, 42 for GEARTAP, with 84 total schedule blocks across the GEARTAP sections
 - [ ] Course code and title come from the selected course-dropdown option, never from the table, which has no course code column. A row parsed without that context is an error, not an orphaned section

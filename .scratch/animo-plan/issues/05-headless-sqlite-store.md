@@ -6,7 +6,7 @@ The schema is specified in `SPEC.md` §5, including the reasoning for why `teach
 
 **Blocked by:** 04
 
-**Status:** ready-for-agent
+**Status:** done — merged to main in `62a7e13`
 
 - [ ] Migrations create the tables in `SPEC.md` §5 and run idempotently on a fresh database and on an existing one
 - [ ] Writing a parsed result set upserts sections on `(campus, session, courseId, sectionId)`. Capturing the same course twice yields the same row count, with `last_seen_at` advanced

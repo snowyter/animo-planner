@@ -10,7 +10,7 @@ The practical consequence is that `BuildCaptureReportArgs.fragment` — declared
 
 **Blocked by:** 10, 18
 
-**Status:** ready-for-agent
+**Status:** done — merged to main in `e2e18f3`
 
 - [ ] A command takes a parse failure and returns a report containing the error, the app version, the selector-config version, whether the config was remote or bundled, and the offending DOM fragment
 - [ ] **The scrubber removes `hdnStudId`, `userID`, `IP_ADDRESS`, and `MAC_ADDRESS`** from the fragment, along with anything shaped like a MAC address or an IPv4 address, before the report is assembled

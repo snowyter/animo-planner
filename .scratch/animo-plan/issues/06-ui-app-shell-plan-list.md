@@ -8,7 +8,7 @@ See `SPEC.md` §2 (the campus and session option sets), §5 (plan scoping rule),
 
 **Blocked by:** 02
 
-**Status:** ready-for-agent
+**Status:** done — merged to main in `93b51dc`
 
 - [ ] The Tauri window opens to a plan list, with an empty state that leads into creating the first plan
 - [ ] Creating a plan asks for a name, a campus, and an academic session, and all three are required
