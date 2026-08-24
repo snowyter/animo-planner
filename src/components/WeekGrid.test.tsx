@@ -352,5 +352,27 @@ describe("WeekGrid component", () => {
 
     expect(html).not.toContain("data-ghost=\"true\"");
   });
+
+  it("renders missing section visibly on the grid marked with data-missing='true' and missing indicator", () => {
+    const missingSection = makeSection(
+      2923,
+      384,
+      "GEARTAP",
+      "S11",
+      [makeBlock("MON", 450, 540, "F2F", "L226")]
+    );
+    missingSection.missing = true;
+
+    const html = renderToStaticMarkup(
+      React.createElement(WeekGrid, {
+        sections: [missingSection],
+      })
+    );
+
+    expect(html).toContain("data-missing=\"true\"");
+    expect(html).toContain("Missing");
+    expect(html).toContain("GEARTAP");
+    expect(html).toContain("S11");
+  });
 });
 

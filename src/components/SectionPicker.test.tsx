@@ -334,4 +334,40 @@ describe("SectionPicker", () => {
 
     expect(html).toContain("No captured courses");
   });
+
+  it("displays missing badge when a plan section is marked missing", () => {
+    const missingPlanSection = makePlanSection(
+      2923,
+      384,
+      "GEARTAP",
+      "S11",
+      [
+        makeBlock("TUE", 870, 960, "F2F", "L226"),
+        makeBlock("FRI", 870, 960, "ONLINE"),
+      ],
+      false
+    );
+    missingPlanSection.missing = true;
+
+    const html = renderToStaticMarkup(
+      React.createElement(SectionPicker, {
+        courses: mockCourses,
+        selectedCourseId: 2923,
+        sections: sampleSections,
+        planSections: [missingPlanSection],
+        isLoadingCourses: false,
+        isLoadingSections: false,
+        isMutating: false,
+        error: null,
+        onSelectCourse: vi.fn(),
+        onAddSection: vi.fn(),
+        onRemoveSection: vi.fn(),
+        onTogglePin: vi.fn(),
+        onHoverSection: vi.fn(),
+      })
+    );
+
+    expect(html).toContain("Missing");
+    expect(html).toContain("Remove");
+  });
 });
