@@ -418,7 +418,9 @@ describe("SectionPicker", () => {
     );
 
     expect(html).not.toMatch(/sm:flex-row/);
-    expect(html).toMatch(/flex flex-col gap-3/);
+    // A block stack: block flow cannot collapse a child to a few characters
+    // wide the way a nested flex row did.
+    expect(html).toMatch(/class="space-y-3"/);
   });
 
   // Tailwind breakpoints key off the viewport, not the container. This card

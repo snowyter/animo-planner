@@ -109,65 +109,65 @@ export function SectionPicker({
   }, [courses, selectedCourseId]);
 
   return (
-    <Card className={`border-slate-200 bg-white shadow-xs ${className}`}>
+    <Card className={`w-full min-w-0 border-slate-200 bg-white shadow-xs ${className}`}>
       <CardHeader className="border-b border-slate-100 pb-4">
-        {/* Always stacked. This card lives in the picking column, roughly
-            380-440px wide, while Tailwind's `sm:` keys off the viewport --
-            so a `sm:flex-row` header went sideways inside a narrow column and
-            wrapped its description one word per line. */}
-        <div className="flex flex-col gap-3">
-          <div className="flex-1 min-w-0">
-            <div className="flex items-center justify-between gap-2">
-              <CardTitle className="text-lg font-bold text-slate-900 flex items-center gap-2">
-                <BookOpen className="h-5 w-5 text-emerald-700 shrink-0" />
-                <span>Pick my own sections</span>
-              </CardTitle>
-              {onClose && (
-                <Button
-                  type="button"
-                  variant="ghost"
-                  size="sm"
-                  onClick={onClose}
-                  className="h-8 px-2 text-xs text-slate-500 hover:text-slate-900"
-                  title="Close section picker"
-                >
-                  <X className="h-4 w-4 mr-1" />
-                  <span>Close</span>
-                </Button>
-              )}
-            </div>
-            <p className="text-xs text-slate-500 mt-0.5">
-              Browse captured sections course by course, preview ghosts on the week grid, and select sections manually.
-            </p>
-          </div>
-
-          <div className="flex w-full min-w-0 items-center gap-2">
-            {/* Course Selector Dropdown / Switcher */}
-            {courses.length > 0 && (
-              <div className="flex w-full min-w-0 items-center gap-2">
-                <label
-                  htmlFor="course-select"
-                  className="text-xs font-semibold text-slate-600 uppercase tracking-wider shrink-0"
-                >
-                  Course:
-                </label>
-                <select
-                  id="course-select"
-                  data-testid="course-select"
-                  value={selectedCourseId ?? ""}
-                  onChange={(e) => onSelectCourse(Number(e.target.value))}
-                  disabled={isLoadingCourses || isLoadingSections}
-                  className="h-9 w-full min-w-0 flex-1 truncate rounded-md border border-slate-200 bg-white px-3 py-1 text-sm font-medium text-slate-900 shadow-xs focus:border-emerald-600 focus:outline-hidden focus:ring-1 focus:ring-emerald-600"
-                >
-                  {courses.map((c) => (
-                    <option key={c.courseId} value={c.courseId}>
-                      {c.code} — {c.title} ({c.sectionCount} {c.sectionCount === 1 ? "section" : "sections"})
-                    </option>
-                  ))}
-                </select>
-              </div>
+        {/* A plain block stack, deliberately. This card lives in the picking
+            column (roughly 380-440px) and nested flex rows kept collapsing the
+            title and description to a few characters wide, because Tailwind
+            breakpoints key off the viewport rather than the container. Block
+            flow cannot collapse like that. */}
+        <div className="space-y-3">
+          <div className="flex items-start justify-between gap-2">
+            <CardTitle className="text-lg font-bold text-slate-900 flex items-center gap-2 min-w-0">
+              <BookOpen className="h-5 w-5 text-emerald-700 shrink-0" />
+              <span>Pick my own sections</span>
+            </CardTitle>
+            {onClose && (
+              <Button
+                type="button"
+                variant="ghost"
+                size="sm"
+                onClick={onClose}
+                className="h-8 shrink-0 px-2 text-xs text-slate-500 hover:text-slate-900"
+                title="Close section picker"
+              >
+                <X className="h-4 w-4 mr-1" />
+                <span>Close</span>
+              </Button>
             )}
           </div>
+
+          <p className="text-xs text-slate-500">
+            Browse captured sections course by course, preview ghosts on the week grid, and select sections manually.
+          </p>
+
+          {/* Label above the control, not beside it: a "Course:" label sharing
+              a row with the select left the select too narrow to read a course
+              title in. */}
+          {courses.length > 0 && (
+            <div className="space-y-1">
+              <label
+                htmlFor="course-select"
+                className="block text-xs font-semibold text-slate-600 uppercase tracking-wider"
+              >
+                Course
+              </label>
+              <select
+                id="course-select"
+                data-testid="course-select"
+                value={selectedCourseId ?? ""}
+                onChange={(e) => onSelectCourse(Number(e.target.value))}
+                disabled={isLoadingCourses || isLoadingSections}
+                className="h-9 w-full min-w-0 truncate rounded-md border border-slate-200 bg-white px-3 py-1 text-sm font-medium text-slate-900 shadow-xs focus:border-emerald-600 focus:outline-hidden focus:ring-1 focus:ring-emerald-600"
+              >
+                {courses.map((c) => (
+                  <option key={c.courseId} value={c.courseId}>
+                    {c.code} — {c.title} ({c.sectionCount} {c.sectionCount === 1 ? "section" : "sections"})
+                  </option>
+                ))}
+              </select>
+            </div>
+          )}
         </div>
 
         {/* Selected Course Header Banner */}
