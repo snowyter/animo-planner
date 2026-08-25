@@ -1,0 +1,264 @@
+import { describe, expect, it } from "vitest";
+import {
+  formatSectionCopyText,
+  formatCaptureAge,
+  describeBlockConflict,
+  describeMissingSection,
+  getMenuPlacement,
+} from "./gridMenu";
+import type { Conflict, PlanSection, ScheduleBlock } from "../adapters/ipc/types";
+
+describe("gridMenu core domain logic", () => {
+  const makeBlock = (
+    day: ScheduleBlock["day"],
+    startMin: number,
+    endMin: number,
+    modality: "F2F" | "ONLINE" = "F2F",
+    location: string | null = modality === "F2F" ? "L226" : null
+  ): ScheduleBlock => {
+    if (modality === "F2F") {
+      return {
+        day,
+        startMin,
+        endMin,
+        modality: "F2F",
+        location: location ?? "L226",
+      };
+    }
+    return {
+      day,
+      startMin,
+      endMin,
+      modality: "ONLINE",
+      location: null,
+    };
+  };
+
+  const makeSection = (
+    courseId: number,
+    sectionId: number,
+    courseCode: string,
+    sectionCode: string,
+    blocks: ScheduleBlock[],
+    options?: {
+      courseTitle?: string;
+      pinned?: boolean;
+      missing?: boolean;
+      teacher?: string | null;
+      enrolled?: number;
+      enrollCap?: number;
+      remark?: string | null;
+      capturedAt?: string;
+    }
+  ): PlanSection & { enrollCap?: number } => ({
+    courseId,
+    courseCode,
+    courseTitle: options?.courseTitle ?? `${courseCode} Title`,
+    sectionId,
+    sectionCode,
+    pinned: options?.pinned ?? false,
+    missing: options?.missing ?? false,
+    modality: blocks.some((b) => b.modality === "ONLINE")
+      ? blocks.some((b) => b.modality === "F2F")
+        ? "HYBRID"
+        : "ONLINE"
+      : "F2F",
+    blocks,
+    latestSnapshot: {
+      capturedAt: options?.capturedAt ?? "2026-08-22T00:00:00Z",
+      enrolled: options?.enrolled ?? 42,
+      teacher: options && "teacher" in options ? options.teacher ?? null : "Prof Gregory Cu",
+      remark: options && "remark" in options ? options.remark ?? null : null,
+    },
+    enrollCap: options?.enrollCap ?? 45,
+  });
+
+  describe("formatSectionCopyText", () => {
+    it("formats section details as clean plain text for pasting into chat", () => {
+      const section = makeSection(
+        2923,
+        384,
+        "GEARTAP",
+        "S11",
+        [
+          makeBlock("TUE", 870, 960, "F2F", "L226"),
+          makeBlock("FRI", 870, 960, "ONLINE"),
+        ],
+        {
+          courseTitle: "Art Appreciation",
+          teacher: "Gregory Cu",
+          enrolled: 42,
+          enrollCap: 45,
+          remark: "Verified schedule",
+        }
+      );
+
+      const text = formatSectionCopyText(section);
+
+      expect(text).toContain("GEARTAP S11 — Art Appreciation");
+      expect(text).toContain("Teacher: Gregory Cu");
+      expect(text).toContain("TUE 2:30 PM – 4:00 PM (L226, F2F)");
+      expect(text).toContain("FRI 2:30 PM – 4:00 PM (Online)");
+      expect(text).toContain("Enrolled: 42/45");
+      expect(text).toContain("Remark: Verified schedule");
+    });
+
+    it("formats blank teacher as Unknown (never absent or a dash)", () => {
+      const section = makeSection(
+        564,
+        737,
+        "CSINTSY",
+        "Z01",
+        [makeBlock("WED", 660, 750, "ONLINE")],
+        {
+          teacher: null,
+          enrolled: 30,
+          enrollCap: 40,
+        }
+      );
+
+      const text = formatSectionCopyText(section);
+
+      expect(text).toContain("CSINTSY Z01");
+      expect(text).toContain("Teacher: Unknown");
+      expect(text).not.toContain("Teacher: -");
+    });
+  });
+
+  describe("formatCaptureAge", () => {
+    it("formats minutes, hours, and days ago accurately", () => {
+      const now = new Date("2026-08-26T12:00:00Z");
+
+      expect(formatCaptureAge("2026-08-26T11:59:30Z", now)).toBe("just now");
+      expect(formatCaptureAge("2026-08-26T11:45:00Z", now)).toBe("15 minutes ago");
+      expect(formatCaptureAge("2026-08-26T10:00:00Z", now)).toBe("2 hours ago");
+      expect(formatCaptureAge("2026-08-24T12:00:00Z", now)).toBe("2 days ago");
+      expect(formatCaptureAge(null, now)).toBe("Unknown");
+      expect(formatCaptureAge("invalid-date", now)).toBe("Unknown");
+    });
+  });
+
+  describe("describeBlockConflict", () => {
+    it("identifies the conflicting section and overlapping time window", () => {
+      const sectionA = makeSection(
+        2923,
+        384,
+        "GEARTAP",
+        "S11",
+        [makeBlock("MON", 450, 540, "F2F", "L226")]
+      );
+      const sectionB = makeSection(
+        564,
+        737,
+        "CSINTSY",
+        "Z01",
+        [makeBlock("MON", 480, 570, "ONLINE")]
+      );
+
+      const conflicts: Conflict[] = [
+        {
+          a: { courseId: 2923, sectionId: 384 },
+          b: { courseId: 564, sectionId: 737 },
+          day: "MON",
+          startMin: 480,
+          endMin: 540,
+        },
+      ];
+
+      const descA = describeBlockConflict(
+        sectionA,
+        sectionA.blocks[0],
+        conflicts,
+        [sectionA, sectionB]
+      );
+
+      expect(descA).not.toBeNull();
+      expect(descA?.otherCourseCode).toBe("CSINTSY");
+      expect(descA?.otherSectionCode).toBe("Z01");
+      expect(descA?.day).toBe("MON");
+      expect(descA?.startMin).toBe(480);
+      expect(descA?.endMin).toBe(540);
+      expect(descA?.message).toContain("CSINTSY Z01");
+      expect(descA?.message).toContain("MON");
+      expect(descA?.message).toContain("8:00 AM – 9:00 AM");
+
+      const descB = describeBlockConflict(
+        sectionB,
+        sectionB.blocks[0],
+        conflicts,
+        [sectionA, sectionB]
+      );
+      expect(descB?.otherCourseCode).toBe("GEARTAP");
+      expect(descB?.otherSectionCode).toBe("S11");
+    });
+
+    it("returns null if the block has no conflict", () => {
+      const sectionA = makeSection(
+        2923,
+        384,
+        "GEARTAP",
+        "S11",
+        [makeBlock("MON", 450, 540, "F2F", "L226")]
+      );
+
+      const desc = describeBlockConflict(
+        sectionA,
+        sectionA.blocks[0],
+        [],
+        [sectionA]
+      );
+      expect(desc).toBeNull();
+    });
+  });
+
+  describe("describeMissingSection", () => {
+    it("explains ADR-0008 invariant and capture history for missing section", () => {
+      const missingSection = makeSection(
+        2923,
+        384,
+        "GEARTAP",
+        "S11",
+        [makeBlock("MON", 450, 540, "F2F", "L226")],
+        {
+          missing: true,
+          capturedAt: "2026-08-22T00:00:00Z",
+        }
+      );
+
+      const desc = describeMissingSection(
+        missingSection,
+        new Date("2026-08-26T00:00:00Z")
+      );
+
+      expect(desc.message).toContain("stopped appearing");
+      expect(desc.message).toContain("never automatically deleted");
+      expect(desc.lastSeen).toBe("4 days ago");
+    });
+  });
+
+  describe("getMenuPlacement", () => {
+    it("returns top-left placement for Monday morning block", () => {
+      const placement = getMenuPlacement("MON", 450);
+      expect(placement.alignX).toBe("left");
+      expect(placement.alignY).toBe("top");
+    });
+
+    it("flips horizontally on Saturday column to prevent clipping", () => {
+      const placement = getMenuPlacement("SAT", 450);
+      expect(placement.alignX).toBe("right");
+      expect(placement.alignY).toBe("top");
+    });
+
+    it("flips vertically on evening block to prevent clipping off bottom", () => {
+      const placement = getMenuPlacement("MON", 1080);
+      expect(placement.alignX).toBe("left");
+      expect(placement.alignY).toBe("bottom");
+    });
+
+    it("flips both horizontally and vertically for Saturday evening block", () => {
+      const placement = getMenuPlacement("SAT", 1080);
+      expect(placement.alignX).toBe("right");
+      expect(placement.alignY).toBe("bottom");
+    });
+  });
+});

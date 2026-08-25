@@ -331,4 +331,18 @@ describe("ExportMenu", () => {
 
     expect(caughtError).toBe(realErr);
   });
+
+  it("renders export week grid with interactive=false and no menu affordances", () => {
+    const html = renderToStaticMarkup(
+      React.createElement(ExportMenu, {
+        planSummary: mockPlanSummary,
+        plan: mockPlan,
+        conflicts: mockConflicts,
+      })
+    );
+
+    // Image export container does not have focusable interactive blocks or context menus
+    expect(html).not.toContain('data-testid="grid-context-menu"');
+  });
 });
+

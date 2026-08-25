@@ -407,5 +407,306 @@ describe("WeekGrid component", () => {
     expect(html).toContain("GEARTAP");
     expect(html).toContain("S11");
   });
+
+  describe("Context menu & actions (Ticket 41)", () => {
+    it("renders schedule blocks as focusable with accessible button role and aria-haspopup", () => {
+      const section = makeSection(
+        2923,
+        384,
+        "GEARTAP",
+        "S11",
+        [makeBlock("MON", 450, 540, "F2F", "L226")]
+      );
+
+      const html = renderToStaticMarkup(
+        React.createElement(WeekGrid, {
+          sections: [section],
+        })
+      );
+
+      expect(html).toContain('tabindex="0"');
+      expect(html).toContain('role="button"');
+      expect(html).toContain('aria-haspopup="menu"');
+      expect(html).toContain("focus-visible:ring-2");
+    });
+
+    it("renders context menu with all core items for an unpinned normal plan block", () => {
+      const section = makeSection(
+        2923,
+        384,
+        "GEARTAP",
+        "S11",
+        [makeBlock("MON", 450, 540, "F2F", "L226")],
+        false
+      );
+
+      const html = renderToStaticMarkup(
+        React.createElement(WeekGrid, {
+          sections: [section],
+          initialMenu: { section, block: section.blocks[0] },
+        })
+      );
+
+      expect(html).toContain('data-testid="grid-context-menu"');
+      expect(html).toContain("View details");
+      expect(html).toContain("Pin section");
+      expect(html).toContain("Show other sections of this course");
+      expect(html).toContain("Copy details");
+      expect(html).toContain("Remove from schedule");
+      // Destructive action placed last with destructive styling
+      expect(html).toContain("text-red-600");
+      // Not conflicting or missing, so conditional items should NOT appear
+      expect(html).not.toContain("Why is this conflicting?");
+      expect(html).not.toContain("Why is this flagged?");
+    });
+
+    it("renders 'Unpin section' when the section is currently pinned", () => {
+      const pinnedSection = makeSection(
+        2923,
+        384,
+        "GEARTAP",
+        "S11",
+        [makeBlock("MON", 450, 540, "F2F", "L226")],
+        true
+      );
+
+      const html = renderToStaticMarkup(
+        React.createElement(WeekGrid, {
+          sections: [pinnedSection],
+          initialMenu: { section: pinnedSection, block: pinnedSection.blocks[0] },
+        })
+      );
+
+      expect(html).toContain("Unpin section");
+      expect(html).not.toContain("Pin section");
+    });
+
+    it("renders 'Why is this conflicting?' only when block is conflicting", () => {
+      const sectionA = makeSection(
+        2923,
+        384,
+        "GEARTAP",
+        "S11",
+        [makeBlock("MON", 450, 540, "F2F", "L226")]
+      );
+      const sectionB = makeSection(
+        564,
+        737,
+        "CSINTSY",
+        "Z01",
+        [makeBlock("MON", 480, 570, "ONLINE")]
+      );
+
+      const conflicts = findConflicts([sectionA, sectionB]);
+
+      const html = renderToStaticMarkup(
+        React.createElement(WeekGrid, {
+          sections: [sectionA, sectionB],
+          conflicts,
+          initialMenu: { section: sectionA, block: sectionA.blocks[0] },
+        })
+      );
+
+      expect(html).toContain("Why is this conflicting?");
+    });
+
+    it("renders 'Why is this flagged?' only when section is marked missing", () => {
+      const missingSection = makeSection(
+        2923,
+        384,
+        "GEARTAP",
+        "S11",
+        [makeBlock("MON", 450, 540, "F2F", "L226")]
+      );
+      missingSection.missing = true;
+
+      const html = renderToStaticMarkup(
+        React.createElement(WeekGrid, {
+          sections: [missingSection],
+          initialMenu: { section: missingSection, block: missingSection.blocks[0] },
+        })
+      );
+
+      expect(html).toContain("Why is this flagged?");
+    });
+
+    it("keeps ghost blocks completely inert with no context menu affordance or focusability", () => {
+      const planSection = makeSection(
+        2923,
+        384,
+        "GEARTAP",
+        "S11",
+        [makeBlock("MON", 450, 540, "F2F", "L226")]
+      );
+
+      const ghostSection = makeSection(
+        564,
+        737,
+        "CSINTSY",
+        "Z01",
+        [makeBlock("WED", 450, 540, "ONLINE")]
+      );
+
+      const html = renderToStaticMarkup(
+        React.createElement(WeekGrid, {
+          sections: [planSection],
+          ghostSection,
+        })
+      );
+
+      // Ghost block has pointer-events-none and data-ghost="true"
+      expect(html).toContain("data-ghost=\"true\"");
+      expect(html).toContain("pointer-events-none");
+    });
+
+    it("renders no interactive menu or focus affordances when interactive=false (PNG export safety)", () => {
+      const section = makeSection(
+        2923,
+        384,
+        "GEARTAP",
+        "S11",
+        [makeBlock("MON", 450, 540, "F2F", "L226")]
+      );
+
+      const html = renderToStaticMarkup(
+        React.createElement(WeekGrid, {
+          sections: [section],
+          interactive: false,
+        })
+      );
+
+      expect(html).not.toContain('tabindex="0"');
+      expect(html).not.toContain('data-testid="grid-context-menu"');
+    });
+
+    it("renders Section Details modal with course code, title, section code, blocks, teacher, enrolment, remark and capture age", () => {
+      const section = makeSection(
+        2923,
+        384,
+        "GEARTAP",
+        "S11",
+        [
+          makeBlock("TUE", 870, 960, "F2F", "L226"),
+          makeBlock("FRI", 870, 960, "ONLINE"),
+        ],
+        false,
+        42,
+        45
+      );
+      section.latestSnapshot = {
+        capturedAt: "2026-08-22T00:00:00Z",
+        enrolled: 42,
+        teacher: "Prof Gregory Cu",
+        remark: "Room subject to change",
+      };
+
+      const html = renderToStaticMarkup(
+        React.createElement(WeekGrid, {
+          sections: [section],
+          initialDetailsSection: section,
+        })
+      );
+
+      expect(html).toContain('data-testid="section-details-dialog"');
+      expect(html).toContain("GEARTAP");
+      expect(html).toContain("GEARTAP Title");
+      expect(html).toContain("S11");
+      expect(html).toContain("Prof Gregory Cu");
+      expect(html).toContain("42/45");
+      expect(html).toContain("L226");
+      expect(html).toContain("Online");
+      expect(html).toContain("Room subject to change");
+      expect(html).toContain("Captured");
+    });
+
+    it("renders Section Details modal with blank teacher as 'Unknown' (never absent or a dash)", () => {
+      const section = makeSection(
+        564,
+        737,
+        "CSINTSY",
+        "Z01",
+        [makeBlock("WED", 660, 750, "ONLINE")],
+        false,
+        30,
+        40
+      );
+      section.latestSnapshot = {
+        capturedAt: "2026-08-22T00:00:00Z",
+        enrolled: 30,
+        teacher: null,
+        remark: null,
+      };
+
+      const html = renderToStaticMarkup(
+        React.createElement(WeekGrid, {
+          sections: [section],
+          initialDetailsSection: section,
+        })
+      );
+
+      expect(html).toContain('data-testid="section-details-dialog"');
+      expect(html).toContain("Teacher:");
+      expect(html).toContain("Unknown");
+      expect(html).not.toContain("Teacher: -");
+    });
+
+    it("renders Conflict Explanation modal describing conflicting section and overlap window", () => {
+      const sectionA = makeSection(
+        2923,
+        384,
+        "GEARTAP",
+        "S11",
+        [makeBlock("MON", 450, 540, "F2F", "L226")]
+      );
+      const sectionB = makeSection(
+        564,
+        737,
+        "CSINTSY",
+        "Z01",
+        [makeBlock("MON", 480, 570, "ONLINE")]
+      );
+
+      const conflicts = findConflicts([sectionA, sectionB]);
+
+      const html = renderToStaticMarkup(
+        React.createElement(WeekGrid, {
+          sections: [sectionA, sectionB],
+          conflicts,
+          initialConflictDetails: { section: sectionA, block: sectionA.blocks[0] },
+        })
+      );
+
+      expect(html).toContain('data-testid="conflict-explanation-dialog"');
+      expect(html).toContain("CSINTSY Z01");
+      expect(html).toContain("MON");
+      expect(html).toContain("8:00 AM – 9:00 AM");
+      expect(html).toContain("ADR-0009");
+    });
+
+    it("renders Flagged Explanation modal explaining missing status and ADR-0008 invariant", () => {
+      const missingSection = makeSection(
+        2923,
+        384,
+        "GEARTAP",
+        "S11",
+        [makeBlock("MON", 450, 540, "F2F", "L226")]
+      );
+      missingSection.missing = true;
+
+      const html = renderToStaticMarkup(
+        React.createElement(WeekGrid, {
+          sections: [missingSection],
+          initialFlaggedDetails: missingSection,
+        })
+      );
+
+      expect(html).toContain('data-testid="flagged-explanation-dialog"');
+      expect(html).toContain("GEARTAP S11");
+      expect(html).toContain("stopped appearing");
+      expect(html).toContain("ADR-0008");
+      expect(html).toContain("never automatically deleted");
+    });
+  });
 });
+
 
