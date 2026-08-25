@@ -147,6 +147,61 @@ describe("ExportMenu", () => {
     expect(html).toContain("1 conflict");
   });
 
+  it("isolates off-screen positioning on wrapper and keeps export canvas statically positioned without negative coordinates", () => {
+    const html = renderToStaticMarkup(
+      React.createElement(ExportMenu, {
+        planSummary: mockPlanSummary,
+        plan: mockPlan,
+        conflicts: mockConflicts,
+      })
+    );
+
+    // Wrapper carries off-screen positioning and accessibility hiding
+    expect(html).toMatch(/data-testid="export-wrapper"[^>]*style="[^"]*position:\s*fixed/);
+    expect(html).toMatch(/data-testid="export-wrapper"[^>]*style="[^"]*left:\s*-9999px/);
+    expect(html).toMatch(/data-testid="export-wrapper"[^>]*aria-hidden="true"/);
+
+    // Canvas element handed to image library must have fixed 1200px width and light theme,
+    // but NO off-screen positioning or negative coordinates so cloned computed styles stay in frame
+    const canvasMatch = html.match(/<div[^>]*data-testid="export-canvas"[^>]*style="([^"]*)"/);
+    expect(canvasMatch).not.toBeNull();
+    const canvasStyle = canvasMatch![1];
+    expect(canvasStyle).toMatch(/width:\s*1200px/);
+    expect(canvasStyle).toMatch(/background-color:\s*#ffffff/);
+    expect(canvasStyle).not.toContain("fixed");
+    expect(canvasStyle).not.toContain("absolute");
+    expect(canvasStyle).not.toContain("-9999px");
+
+    // Canvas is nested inside the offscreen wrapper
+    const wrapperIndex = html.indexOf('data-testid="export-wrapper"');
+    const canvasIndex = html.indexOf('data-testid="export-canvas"');
+    expect(wrapperIndex).toBeGreaterThan(-1);
+    expect(canvasIndex).toBeGreaterThan(wrapperIndex);
+  });
+
+  it("renders readable export container for an empty plan with header and empty grid", () => {
+    const emptyPlan: Plan = {
+      ...mockPlanSummary,
+      sectionCount: 0,
+      sections: [],
+    };
+
+    const html = renderToStaticMarkup(
+      React.createElement(ExportMenu, {
+        planSummary: { ...mockPlanSummary, sectionCount: 0 },
+        plan: emptyPlan,
+        conflicts: [],
+      })
+    );
+
+    expect(html).toContain("T1 Target Schedule");
+    expect(html).toContain("Manila");
+    expect(html).toContain("AY2026-27 T1");
+    expect(html).toContain("0 sections");
+    expect(html).toContain("No conflicts");
+    expect(html).toContain('data-testid="export-canvas"');
+  });
+
   it("calls calendar export with sensible default filename derived from plan name and term", async () => {
     const onExportIcs = vi.fn().mockResolvedValue({
       fileName: "T1 Target Schedule.ics",
@@ -191,6 +246,46 @@ describe("ExportMenu", () => {
         suggestedName: "T1 Target Schedule - AY2026-27 T1.png",
       })
     );
+  });
+
+  it("handles image generation failure when onGenerateImage returns null without saving file", async () => {
+    const onGenerateImage = vi.fn().mockResolvedValue(null);
+    const onSaveFile = vi.fn().mockResolvedValue(undefined);
+
+    const dummyElement = {} as HTMLElement;
+    const blob = await onGenerateImage(dummyElement);
+    expect(blob).toBeNull();
+
+    let errorThrown = false;
+    if (!blob) {
+      errorThrown = true;
+    } else {
+      await onSaveFile({
+        suggestedName: "T1 Target Schedule - AY2026-27 T1.png",
+        blob,
+        types: [{ description: "PNG Image (.png)", accept: { "image/png": [".png"] } }],
+      });
+    }
+
+    expect(errorThrown).toBe(true);
+    expect(onSaveFile).not.toHaveBeenCalled();
+  });
+
+  it("handles image generation failure when onGenerateImage throws without saving file", async () => {
+    const onGenerateImage = vi.fn().mockRejectedValue(new Error("Canvas allocation failed"));
+    const onSaveFile = vi.fn().mockResolvedValue(undefined);
+
+    const dummyElement = {} as HTMLElement;
+    let caughtError: unknown = null;
+    try {
+      await onGenerateImage(dummyElement);
+    } catch (err) {
+      caughtError = err;
+    }
+
+    expect(caughtError).toBeInstanceOf(Error);
+    expect((caughtError as Error).message).toBe("Canvas allocation failed");
+    expect(onSaveFile).not.toHaveBeenCalled();
   });
 
   it("handles cancel in file picker quietly without surfacing error", async () => {
