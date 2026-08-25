@@ -109,7 +109,7 @@ export function CaptureBar({
       <div className="rounded-xl border border-slate-200 bg-white p-4 sm:p-5 shadow-xs">
         <div className="flex flex-col lg:flex-row lg:items-center lg:justify-between gap-4">
           {/* Left Column: Scope & Plain Privacy Disclaimer (ADR-0002) */}
-          <div className="space-y-1.5 max-w-2xl">
+          <div className="space-y-1.5 min-w-0 lg:flex-1">
             <div className="flex items-center gap-2">
               <span className="text-sm font-bold text-slate-900">
                 Capture Sections
@@ -127,10 +127,13 @@ export function CaptureBar({
             </p>
           </div>
 
-          {/* Right Column: Actions & Live Running Counter */}
-          <div className="flex flex-wrap items-center gap-3">
+          {/* Right Column: Actions & Live Running Counter.
+              Kept on one line: wrapping put Open Archer's Hub on a row of its
+              own and left the rest of the panel empty beside it. The text
+              column shrinks instead. */}
+          <div className="flex flex-wrap items-center gap-3 lg:flex-nowrap lg:shrink-0">
             {/* Live running counter */}
-            <div className="flex items-center gap-2 rounded-lg bg-slate-50 px-3 py-2 border border-slate-200 text-sm">
+            <div className="flex shrink-0 items-center gap-2 rounded-lg bg-slate-50 px-3 py-2 border border-slate-200 text-sm whitespace-nowrap">
               <Layers className="h-4 w-4 text-emerald-700" />
               <span className="font-semibold text-slate-800">
                 {isLoading ? "Loading..." : counterText}
@@ -147,7 +150,7 @@ export function CaptureBar({
                 size="sm"
                 disabled={isRefreshing}
                 onClick={onRefresh}
-                className="h-10 text-xs font-semibold flex items-center gap-1.5 bg-white hover:bg-slate-50 text-slate-800 border-slate-200 shadow-2xs px-3.5"
+                className="h-10 shrink-0 whitespace-nowrap text-xs font-semibold flex items-center gap-1.5 bg-white hover:bg-slate-50 text-slate-800 border-slate-200 shadow-2xs px-3.5"
                 title="Refresh enrolment numbers from Course Finder"
               >
                 <RefreshCw
@@ -164,7 +167,7 @@ export function CaptureBar({
               variant="default"
               onClick={onOpenCapture}
               disabled={isOpening}
-              className="bg-emerald-700 hover:bg-emerald-800 text-white flex items-center gap-1.5 text-sm font-medium"
+              className="bg-emerald-700 hover:bg-emerald-800 text-white flex shrink-0 whitespace-nowrap items-center gap-1.5 text-sm font-medium"
             >
               {isOpening ? (
                 <RefreshCw className="h-4 w-4 animate-spin" />
