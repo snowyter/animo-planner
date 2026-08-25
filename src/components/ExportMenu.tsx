@@ -315,82 +315,94 @@ export function ExportMenu({
       )}
 
       {/*
-        Self-describing hidden container for high-res PNG export (SPEC §7, Ticket 22).
-        Fixed at 1200px width and explicit light-theme styling to ensure the full Mon–Sat
-        week grid and all labels render cleanly and self-describing regardless of current theme.
+        Wrapper carrying the off-screen positioning to keep the export tree laid out
+        and measurable without appearing on screen or in the accessibility tree (TICKET-40).
       */}
       <div
-        ref={imageExportRef}
+        data-testid="export-wrapper"
         style={{
           position: "fixed",
           left: "-9999px",
           top: 0,
-          width: "1200px",
           zIndex: -100,
           pointerEvents: "none",
-          backgroundColor: "#ffffff",
-          color: "#0f172a",
         }}
-        className="p-8 space-y-5 bg-white text-slate-900 font-sans"
         aria-hidden="true"
       >
-        {/* Self-describing Header for Exported Screenshot */}
-        <div className="rounded-xl border border-slate-200 bg-white p-5 shadow-xs">
-          <div className="flex items-center justify-between">
-            <div>
-              <div className="flex items-center gap-2">
-                <span className="text-xs font-bold uppercase tracking-wider text-emerald-800 bg-emerald-50 px-2 py-0.5 rounded">
-                  Animo Plan
-                </span>
-                <span className="text-xs text-slate-400">•</span>
-                <span className="text-xs text-slate-500 font-medium">
-                  DLSU Enlistment Schedule
-                </span>
+        {/*
+          Self-describing container for high-res PNG export (SPEC §7, Ticket 22, Ticket 40).
+          Fixed at 1200px width and explicit light-theme styling to ensure the full Mon–Sat
+          week grid and all labels render cleanly and self-describing regardless of current theme.
+          Statically positioned so cloned computed styles stay within foreignObject frame.
+        */}
+        <div
+          ref={imageExportRef}
+          data-testid="export-canvas"
+          style={{
+            width: "1200px",
+            backgroundColor: "#ffffff",
+            color: "#0f172a",
+          }}
+          className="p-8 space-y-5 bg-white text-slate-900 font-sans"
+        >
+          {/* Self-describing Header for Exported Screenshot */}
+          <div className="rounded-xl border border-slate-200 bg-white p-5 shadow-xs">
+            <div className="flex items-center justify-between">
+              <div>
+                <div className="flex items-center gap-2">
+                  <span className="text-xs font-bold uppercase tracking-wider text-emerald-800 bg-emerald-50 px-2 py-0.5 rounded">
+                    Animo Plan
+                  </span>
+                  <span className="text-xs text-slate-400">•</span>
+                  <span className="text-xs text-slate-500 font-medium">
+                    DLSU Enlistment Schedule
+                  </span>
+                </div>
+                <h2 className="text-2xl font-bold tracking-tight text-slate-900 mt-1">
+                  {planSummary.name}
+                </h2>
+                <div className="flex items-center gap-2 mt-2">
+                  <Badge variant="campus" className="flex items-center gap-1 text-xs bg-slate-100 text-slate-800 border-slate-200">
+                    <Building2 className="h-3 w-3" />
+                    <span>{planSummary.campusName}</span>
+                  </Badge>
+                  <Badge variant="session" className="flex items-center gap-1 text-xs bg-slate-100 text-slate-800 border-slate-200">
+                    <CalendarDays className="h-3 w-3" />
+                    <span>{planSummary.sessionName}</span>
+                  </Badge>
+                </div>
               </div>
-              <h2 className="text-2xl font-bold tracking-tight text-slate-900 mt-1">
-                {planSummary.name}
-              </h2>
-              <div className="flex items-center gap-2 mt-2">
-                <Badge variant="campus" className="flex items-center gap-1 text-xs bg-slate-100 text-slate-800 border-slate-200">
-                  <Building2 className="h-3 w-3" />
-                  <span>{planSummary.campusName}</span>
-                </Badge>
-                <Badge variant="session" className="flex items-center gap-1 text-xs bg-slate-100 text-slate-800 border-slate-200">
-                  <CalendarDays className="h-3 w-3" />
-                  <span>{planSummary.sessionName}</span>
-                </Badge>
-              </div>
-            </div>
 
-            {/* Plan statistics and conflict status */}
-            <div className="flex items-center gap-4 text-xs text-slate-600 bg-slate-50 rounded-lg p-3 border border-slate-200">
-              <div className="flex items-center gap-1.5">
-                <Layers className="h-4 w-4 text-emerald-700" />
-                <span className="font-bold text-slate-900">
-                  {formatSectionCount(currentSections.length || planSummary.sectionCount)}
-                </span>
+              {/* Plan statistics and conflict status */}
+              <div className="flex items-center gap-4 text-xs text-slate-600 bg-slate-50 rounded-lg p-3 border border-slate-200">
+                <div className="flex items-center gap-1.5">
+                  <Layers className="h-4 w-4 text-emerald-700" />
+                  <span className="font-bold text-slate-900">
+                    {formatSectionCount(currentSections.length || planSummary.sectionCount)}
+                  </span>
+                </div>
+                <div className="h-4 w-px bg-slate-200" />
+                {conflicts.length > 0 ? (
+                  <div className="flex items-center gap-1 text-red-600 font-bold">
+                    <AlertTriangle className="h-4 w-4" />
+                    <span>{conflicts.length} {conflicts.length === 1 ? "conflict" : "conflicts"}</span>
+                  </div>
+                ) : (
+                  <div className="flex items-center gap-1 text-emerald-700 font-medium">
+                    <CheckCircle2 className="h-4 w-4 text-emerald-600" />
+                    <span>No conflicts</span>
+                  </div>
+                )}
               </div>
-              <div className="h-4 w-px bg-slate-200" />
-              {conflicts.length > 0 ? (
-                <div className="flex items-center gap-1 text-red-600 font-bold">
-                  <AlertTriangle className="h-4 w-4" />
-                  <span>{conflicts.length} {conflicts.length === 1 ? "conflict" : "conflicts"}</span>
-                </div>
-              ) : (
-                <div className="flex items-center gap-1 text-emerald-700 font-medium">
-                  <CheckCircle2 className="h-4 w-4 text-emerald-600" />
-                  <span>No conflicts</span>
-                </div>
-              )}
             </div>
           </div>
-        </div>
 
-        {/* Full Week Grid with full Mon–Sat columns */}
-        <WeekGrid
-          sections={currentSections}
-          conflicts={conflicts}
-        />
+          {/* Full Week Grid with full Mon–Sat columns */}
+          <WeekGrid
+            sections={currentSections}
+            conflicts={conflicts}
+          />
+        </div>
       </div>
     </div>
   );
