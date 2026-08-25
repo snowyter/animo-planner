@@ -4,6 +4,7 @@ import { renderToStaticMarkup } from "react-dom/server";
 import { PlanWorkspace } from "./PlanWorkspace";
 import * as client from "../adapters/ipc/client";
 import type { Plan, PlanSection, PlanSummary, ScheduleBlock, Section } from "../adapters/ipc/types";
+import planWorkspaceSource from "./PlanWorkspace.tsx?raw";
 
 vi.mock("../adapters/ipc/client", () => ({
   getCaptureSummary: vi.fn(),
@@ -1042,3 +1043,35 @@ describe("PlanWorkspace persistent week grid layout (ticket 28)", () => {
 });
 
 
+
+/**
+ * Source-level guard. The suite renders to static markup, so it cannot click
+ * "Remove course from catalog" and watch the week grid; the seam this covers
+ * is which handlers reload the plan after changing it.
+ *
+ * Forgetting a course releases its sections from every plan holding them
+ * (ticket 35), so it changes the open plan as surely as removing a section
+ * does. It shipped without the reload every other mutating handler performs,
+ * and the week grid kept drawing blocks for released sections until the
+ * student pressed Refresh.
+ */
+describe("PlanWorkspace plan-mutating handlers reload the plan", () => {
+  const handlerBody = (name: string): string => {
+    const start = planWorkspaceSource.indexOf(`const ${name} = async (`);
+    expect(start, `${name} must exist in PlanWorkspace`).toBeGreaterThan(-1);
+    // Ends at the first close-brace back at the handler's own indentation.
+    // Slicing to the next `const` instead would run to end of file for the
+    // last handler and swallow every `onRetry()` in the JSX below it.
+    const end = planWorkspaceSource.indexOf("\n  };", start);
+    expect(end, `${name} must be a complete arrow function`).toBeGreaterThan(start);
+    return planWorkspaceSource.slice(start, end);
+  };
+
+  it.each([
+    "handleRemoveCourse",
+    "handleRemoveMissingSection",
+    "handleClearSchedule",
+  ])("%s calls onRetry so the week grid re-renders without a manual refresh", (name) => {
+    expect(handlerBody(name)).toContain("onRetry()");
+  });
+});

@@ -229,6 +229,11 @@ export function PlanWorkspace({
       await forgetCourse(courseId);
       await fetchMissingSections();
       await fetchSummary();
+      // Forgetting a course releases its sections from every plan that held
+      // them, so the plan on screen may have just lost rows. Without this the
+      // week grid keeps drawing blocks for sections that are no longer in the
+      // plan until the student presses Refresh.
+      onRetry();
     } catch {
       // Error handled in picker state
     }
