@@ -208,6 +208,21 @@ export interface CaptureSummary {
   courseCount: number;
 }
 
+/** One plan a forgotten course released sections from, and how many it lost. */
+export interface AffectedPlan {
+  planId: string;
+  removedSections: number;
+}
+
+/**
+ * What `forget_captured_course` answers with: the updated summary for the
+ * capture counter, plus the plans whose membership the removal released.
+ */
+export interface ForgetCourseOutcome {
+  summary: CaptureSummary;
+  affectedPlans: AffectedPlan[];
+}
+
 export type RefreshStatus = "complete" | "session_expired" | "offline";
 
 export interface RefreshOutcome {

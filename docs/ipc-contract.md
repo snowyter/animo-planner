@@ -73,12 +73,14 @@ Guarded by `wraps every command payload in the args envelope` in
 |---|---|---|
 | `list_captured_courses` | `{ campusId, sessionId }` | `CapturedCourse[]` |
 | `list_captured_sections` | `{ campusId, sessionId, courseId }` | `Section[]` |
-| `forget_captured_course` | `{ campusId, sessionId, courseId }` | `CaptureSummary` |
+| `forget_captured_course` | `{ campusId, sessionId, courseId }` | `ForgetCourseOutcome` |
 
-**Amended in ticket 29:** `forget_captured_course` removes one captured course — its
-sections, blocks, and snapshots under exactly the given `(campusId, sessionId)` — and returns the
-updated `CaptureSummary`. When any plan still holds a section of the course it fails with an
-identifiable error naming those plans; removing the sections from a plan is never done implicitly.
+**Amended in ticket 35:** `forget_captured_course` removes one captured course — its
+sections, blocks, and snapshots under exactly the given `(campusId, sessionId)` — and releases
+any plan holding one of those sections, pinned or not, in the same transaction. It answers with
+a `ForgetCourseOutcome`: the updated `CaptureSummary` plus the affected-plan report (which plan
+lost how many sections), so the UI says what happened rather than leaving the student to
+discover it. It no longer refuses with a "held by plans" error.
 
 ### Plan membership
 
@@ -285,6 +287,23 @@ type ScheduleBlock =
 ```json
 { "campusId": 7, "sessionId": 155, "sectionCount": 42, "courseCount": 8 }
 ```
+
+### `AffectedPlan`
+
+```json
+{ "planId": "plan-0a1b2c", "removedSections": 2 }
+```
+
+### `ForgetCourseOutcome`
+
+```json
+{ "summary": { "campusId": 7, "sessionId": 155, "sectionCount": 40, "courseCount": 7 },
+  "affectedPlans": [{ "planId": "plan-0a1b2c", "removedSections": 2 }] }
+```
+
+`affectedPlans` names every plan the removed course released sections from and how many each
+lost; it is empty when no plan held any. Plans emptied this way still exist — deleting a plan
+is its own explicit act.
 
 ### `RefreshOutcome`
 

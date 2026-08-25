@@ -301,6 +301,26 @@ pub struct CaptureSummary {
     pub course_count: i64,
 }
 
+/// One plan a forgotten course released sections from, and how many it lost
+/// (ticket 35). The UI says this back to the student after the removal, so
+/// the change is never silent even though it was agreed to.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct AffectedPlan {
+    pub plan_id: String,
+    pub removed_sections: i64,
+}
+
+/// What `forget_captured_course` answers with (ticket 35): the updated
+/// [`CaptureSummary`] the counter re-renders from, plus the plans whose
+/// membership the removal released.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ForgetCourseOutcome {
+    pub summary: CaptureSummary,
+    pub affected_plans: Vec<AffectedPlan>,
+}
+
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum RefreshStatus {

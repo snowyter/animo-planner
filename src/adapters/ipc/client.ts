@@ -26,6 +26,7 @@ import type {
   CapturedCourse,
   Conflict,
   Day,
+  ForgetCourseOutcome,
   IcsExport,
   MissingSection,
   Plan,
@@ -97,17 +98,17 @@ export function listCapturedSections(args: {
 }
 
 /**
- * Forgets one captured course (ticket 29): its sections, blocks, and
- * snapshots are removed for exactly the given campus/session, and the
- * updated `CaptureSummary` comes back for the counter. Rejects with an
- * error naming the plans that hold the course's sections when any plan
- * still claims one — removal from those plans stays the student's act.
+ * Forgets one captured course (tickets 29, 35): its sections, blocks, and
+ * snapshots are removed for exactly the given campus/session, and plans
+ * holding any of those sections are released. The outcome carries the
+ * updated `CaptureSummary` for the counter plus the affected-plan report,
+ * so the UI can say what happened to each plan.
  */
 export function forgetCapturedCourse(args: {
   campusId: number;
   sessionId: number;
   courseId: number;
-}): Promise<CaptureSummary> {
+}): Promise<ForgetCourseOutcome> {
   return invoke("forget_captured_course", { args });
 }
 

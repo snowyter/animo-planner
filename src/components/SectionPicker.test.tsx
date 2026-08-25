@@ -617,32 +617,4 @@ describe("SectionPicker", () => {
     expect(html).toContain('data-testid="confirm-remove-course"');
     expect(html).toContain('data-testid="cancel-remove-course"');
   });
-
-  it("displays refusal error notice naming the blocking plans when course removal is refused", () => {
-    const refusalError =
-      'course 2923 under campus 7 session 155 is still held by plans ["T1 Target Schedule"] — remove its sections from those plans first';
-
-    const html = renderToStaticMarkup(
-      React.createElement(SectionPicker, {
-        courses: mockCourses,
-        selectedCourseId: 2923,
-        sections: sampleSections,
-        planSections: [],
-        isLoadingCourses: false,
-        isLoadingSections: false,
-        isMutating: false,
-        error: refusalError,
-        onSelectCourse: vi.fn(),
-        onAddSection: vi.fn(),
-        onRemoveSection: vi.fn(),
-        onRemoveCourse: vi.fn(),
-        onTogglePin: vi.fn(),
-        onHoverSection: vi.fn(),
-      })
-    );
-
-    expect(html).toContain("course 2923 under campus 7 session 155 is still held by plans");
-    expect(html).toContain("remove its sections from those plans first");
-    expect(html).toContain("&quot;T1 Target Schedule&quot;");
-  });
 });
