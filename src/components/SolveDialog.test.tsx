@@ -47,6 +47,8 @@ describe("SolveDialog", () => {
     solutions: [mockSolution],
     resumeToken: null,
     unsatisfiableCourses: [],
+    excludedFullCount: 0,
+    snapshotTakenAt: null,
   };
 
   beforeEach(() => {
@@ -109,6 +111,8 @@ describe("SolveDialog", () => {
       solutions: [mockSolution],
       resumeToken: "token-resume-123",
       unsatisfiableCourses: [],
+      excludedFullCount: 0,
+      snapshotTakenAt: null,
     };
 
     const html = renderToStaticMarkup(
@@ -125,12 +129,49 @@ describe("SolveDialog", () => {
     expect(html).toContain("Keep searching");
   });
 
+  it("surfaces the exclusion count and the numbers' age when sections were excluded (ticket 34)", () => {
+    const excludingResult: SolveResult = {
+      ...mockSolveResult,
+      excludedFullCount: 3,
+      snapshotTakenAt: "2026-08-22T10:00:00Z",
+    };
+
+    const html = renderToStaticMarkup(
+      React.createElement(SolveDialog, {
+        open: true,
+        onOpenChange: vi.fn(),
+        planId,
+        initialResult: excludingResult,
+        onPlanUpdated: vi.fn(),
+      })
+    );
+
+    expect(html).toContain("Excluded 3 full sections");
+    expect(html).toContain("2026");
+  });
+
+  it("renders no exclusion notice when nothing was excluded", () => {
+    const html = renderToStaticMarkup(
+      React.createElement(SolveDialog, {
+        open: true,
+        onOpenChange: vi.fn(),
+        planId,
+        initialResult: mockSolveResult,
+        onPlanUpdated: vi.fn(),
+      })
+    );
+
+    expect(html).not.toContain("Excluded");
+  });
+
   it("names the unsatisfiable courses when no solutions are found", () => {
     const unsatisfiableResult: SolveResult = {
       status: "unsatisfiable",
       solutions: [],
       resumeToken: null,
-      unsatisfiableCourses: [{ courseId: 2923, code: "GEARTAP" }],
+      unsatisfiableCourses: [{ courseId: 2923, code: "GEARTAP", reason: "all_sections_full" }],
+      excludedFullCount: 2,
+      snapshotTakenAt: "2026-08-22T10:00:00Z",
     };
 
     const html = renderToStaticMarkup(
@@ -144,6 +185,7 @@ describe("SolveDialog", () => {
     );
 
     expect(html).toContain("GEARTAP");
-    expect(html).toContain("could not be satisfied");
+    expect(html).toContain("every section is full");
+    expect(html).toContain("Excluded 2 full sections");
   });
 });

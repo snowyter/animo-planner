@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 import {
   PRESET_INFOS,
   defaultSolveOptions,
+  formatExclusionNotice,
   formatScoreBreakdown,
   formatUnsatisfiableCoursesMessage,
   formatWarningLabel,
@@ -48,7 +49,9 @@ describe("core/solver", () => {
     expect(opts.dayBlacklist).toEqual([]);
     expect(opts.earliestStartMin).toBeNull();
     expect(opts.latestEndMin).toBeNull();
-    expect(opts.excludeFull).toBe(false);
+    // Ticket 34: exclude-full defaults to on — a section at capacity cannot
+    // be enlisted into — but the student can still turn it off.
+    expect(opts.excludeFull).toBe(true);
     expect(opts.resultLimit).toBeGreaterThan(0);
   });
 
@@ -91,18 +94,38 @@ describe("core/solver", () => {
       "No conflict-free schedules found matching your constraints."
     );
 
-    const single: UnsatisfiableCourse[] = [{ courseId: 1, code: "GEARTAP" }];
+    const single: UnsatisfiableCourse[] = [
+      { courseId: 1, code: "GEARTAP", reason: "no_valid_section" },
+    ];
     const msgSingle = formatUnsatisfiableCoursesMessage(single);
     expect(msgSingle).toContain("GEARTAP");
     expect(msgSingle).toContain("No conflict-free schedules found");
 
     const multi: UnsatisfiableCourse[] = [
-      { courseId: 1, code: "GEARTAP" },
-      { courseId: 2, code: "CSINTSY" },
+      { courseId: 1, code: "GEARTAP", reason: "no_valid_section" },
+      { courseId: 2, code: "CSINTSY", reason: "no_valid_section" },
     ];
     const msgMulti = formatUnsatisfiableCoursesMessage(multi);
     expect(msgMulti).toContain("GEARTAP");
     expect(msgMulti).toContain("CSINTSY");
+  });
+
+  it("says when exclusion is why a course cannot be filled (ticket 34)", () => {
+    const allFull: UnsatisfiableCourse[] = [
+      { courseId: 1, code: "GEARTAP", reason: "all_sections_full" },
+    ];
+    const msg = formatUnsatisfiableCoursesMessage(allFull);
+    expect(msg).toContain("GEARTAP");
+    expect(msg).toMatch(/full/i);
+
+    const mixed: UnsatisfiableCourse[] = [
+      { courseId: 1, code: "GEARTAP", reason: "all_sections_full" },
+      { courseId: 2, code: "CSINTSY", reason: "no_valid_section" },
+    ];
+    const msgMixed = formatUnsatisfiableCoursesMessage(mixed);
+    expect(msgMixed).toContain("GEARTAP");
+    expect(msgMixed).toContain("CSINTSY");
+    expect(msgMixed).toMatch(/full/i);
   });
 
   it("formats score breakdown items into readable strings", () => {
@@ -113,6 +136,29 @@ describe("core/solver", () => {
     expect(formatScoreBreakdown(itemPos)).toBe("Campus days: +40");
     expect(formatScoreBreakdown(itemNeg)).toBe("Late classes: -20");
     expect(formatScoreBreakdown(itemZero)).toBe("Even spread: 0");
+  });
+
+  it("announces how many sections were excluded as full, with the numbers' age", () => {
+    // Ticket 34: the student must see the constraint doing something and
+    // know whether the numbers are five minutes or five days old.
+    const notice = formatExclusionNotice(3, "2026-08-22T10:00:00Z");
+    expect(notice).not.toBeNull();
+    expect(notice).toContain("3");
+    expect(notice).toMatch(/full/i);
+    expect(notice).toContain("2026");
+    expect(notice).toMatch(/stale/i);
+
+    const one = formatExclusionNotice(1, "2026-08-22T10:00:00Z");
+    expect(one).toContain("1");
+    expect(one).toMatch(/\bsection\b/);
+
+    // No exclusions means nothing to announce.
+    expect(formatExclusionNotice(0, "2026-08-22T10:00:00Z")).toBeNull();
+
+    // Unknown age still announces the count.
+    const unstamped = formatExclusionNotice(2, null);
+    expect(unstamped).toContain("2");
+    expect(unstamped).toMatch(/full/i);
   });
 
   it("extracts section refs from a solution for applying to a plan", () => {

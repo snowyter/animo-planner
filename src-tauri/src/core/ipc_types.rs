@@ -203,7 +203,7 @@ pub struct SolveOptions {
     pub earliest_start_min: Option<i64>,
     #[serde(default)]
     pub latest_end_min: Option<i64>,
-    #[serde(default)]
+    #[serde(default = "default_exclude_full")]
     pub exclude_full: bool,
     #[serde(default = "default_result_limit")]
     pub result_limit: usize,
@@ -211,6 +211,13 @@ pub struct SolveOptions {
 
 fn default_result_limit() -> usize {
     12
+}
+
+/// Ticket 34: exclude-full defaults to on — a section at capacity cannot be
+/// enlisted into, so a fresh solve never builds around one. The student can
+/// still turn it off in secondary constraints.
+fn default_exclude_full() -> bool {
+    true
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -274,11 +281,25 @@ pub enum SolveStatus {
     Unsatisfiable,
 }
 
+/// Why a course could not be filled (ticket 34). `all_sections_full` names
+/// exclude-full as the cause, so "no solutions" never appears without
+/// saying why — the student can turn the constraint off if the numbers look
+/// stale. `no_valid_section` covers every other cause: no captured
+/// sections, conflicts against the plan, or other constraints ruling
+/// everything out.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum UnsatisfiableReason {
+    NoValidSection,
+    AllSectionsFull,
+}
+
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct UnsatisfiableCourse {
     pub course_id: i64,
     pub code: String,
+    pub reason: UnsatisfiableReason,
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -290,6 +311,14 @@ pub struct SolveResult {
     pub resume_token: Option<String>,
     #[serde(default)]
     pub unsatisfiable_courses: Vec<UnsatisfiableCourse>,
+    /// How many sections the exclude-full constraint removed (ticket 34).
+    /// Surfaced so the student can see the constraint working and turn it
+    /// off when the numbers look stale.
+    pub excluded_full_count: usize,
+    /// The latest snapshot timestamp of the plan's scope (ticket 34) — how
+    /// old the enrolment numbers behind any exclusion are. `None` when
+    /// nothing is captured in the scope yet.
+    pub snapshot_taken_at: Option<String>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -474,12 +503,20 @@ mod tests {
             solutions: vec![],
             resume_token: Some("tok".into()),
             unsatisfiable_courses: vec![],
+            excluded_full_count: 3,
+            snapshot_taken_at: Some("2026-08-22T10:00:00Z".into()),
         };
         let json = serde_json::to_value(&result).unwrap();
         assert_eq!(json["status"], "partial");
         assert_eq!(json["resumeToken"], "tok");
+        // Ticket 34: the exclusion count and the numbers' age cross the wire
+        // camelCased, so the dialog can surface them.
+        assert_eq!(json["excludedFullCount"], 3);
+        assert_eq!(json["snapshotTakenAt"], "2026-08-22T10:00:00Z");
         let parsed: SolveResult = serde_json::from_value(json).unwrap();
         assert_eq!(parsed.resume_token.as_deref(), Some("tok"));
+        assert_eq!(parsed.excluded_full_count, 3);
+        assert_eq!(parsed.snapshot_taken_at.as_deref(), Some("2026-08-22T10:00:00Z"));
     }
 
     #[test]
@@ -519,7 +556,9 @@ mod tests {
         assert_eq!(options.preset, Preset::MostOnline);
         assert!(options.day_blacklist.is_empty());
         assert_eq!(options.earliest_start_min, None);
-        assert!(!options.exclude_full);
+        // Ticket 34: exclude-full defaults to on for a new solve; the
+        // student can still turn it off in secondary constraints.
+        assert!(options.exclude_full);
         assert_eq!(options.result_limit, 12);
     }
 }

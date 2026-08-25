@@ -700,8 +700,10 @@ fn open_resume_token(token: &str, requested_plan_id: &str) -> Result<String, Str
 /// Builds the seeded solver for a plan (ADR-0014): sections already chosen
 /// are fixed, and only unassigned courses — every other captured course of
 /// the plan's scope — are filled. Constraints and preset come from
-/// `args.options`.
-fn begin_solve(store: &Store, args: &SolvePlanArgs) -> Result<Solver, String> {
+/// `args.options`. Also answers with the latest snapshot timestamp of the
+/// plan's scope (ticket 34), so the result can say how old the enrolment
+/// numbers behind any exclusion are.
+fn begin_solve(store: &Store, args: &SolvePlanArgs) -> Result<(Solver, Option<String>), String> {
     let detail = store.get_plan(&args.plan_id).map_err(|err| err.to_string())?;
     let scope = CaptureScope {
         campus_id: detail.summary.campus_id,
@@ -719,7 +721,12 @@ fn begin_solve(store: &Store, args: &SolvePlanArgs) -> Result<Solver, String> {
         })
         .collect();
     let catalog = store.solver_courses(&scope).map_err(|err| err.to_string())?;
-    Ok(Solver::new(catalog, fixed, args.options.clone()))
+    // Plan sections are never candidates (ticket 14): a full section the
+    // student already chose is fixed, never excluded. The catalog still
+    // lists its course, but every assigned course is dropped before any
+    // constraint runs, so exclude-full cannot touch it.
+    let stamp = store.latest_snapshot_at(&scope).map_err(|err| err.to_string())?;
+    Ok((Solver::new(catalog, fixed, args.options.clone()), stamp))
 }
 
 /// Wire solution with its stable id (`solution-<index>`, best first).
@@ -736,7 +743,14 @@ fn wire_solution(solution: crate::core::solver::SolveSolution, index: usize) -> 
 /// Maps a solver outcome to the wire result. A cancellation observed after
 /// the chunk ran wins over the chunk's own status, and no resume token ever
 /// survives a cancellation — a stale Continue must not resurrect a dead run.
-fn finish_outcome(outcome: SolveOutcome, plan_id: &str, cancelled: bool) -> SolveResult {
+/// The exclusion count and snapshot stamp (ticket 34) ride along so the
+/// dialog can surface them next to the results.
+fn finish_outcome(
+    outcome: SolveOutcome,
+    plan_id: &str,
+    cancelled: bool,
+    snapshot_taken_at: Option<String>,
+) -> SolveResult {
     let status = if cancelled { SolveStatus::Cancelled } else { outcome.status };
     let resume_token = match (&status, outcome.resume_token) {
         (SolveStatus::Partial, Some(state_token)) => {
@@ -754,6 +768,8 @@ fn finish_outcome(outcome: SolveOutcome, plan_id: &str, cancelled: bool) -> Solv
             .collect(),
         resume_token,
         unsatisfiable_courses: outcome.unsatisfiable_courses,
+        excluded_full_count: outcome.excluded_full_count,
+        snapshot_taken_at,
     }
 }
 
@@ -762,6 +778,7 @@ fn finish_outcome(outcome: SolveOutcome, plan_id: &str, cancelled: bool) -> Solv
 async fn run_solver_chunk(
     solver: Solver,
     plan_id: &str,
+    snapshot_taken_at: Option<String>,
     cancellation: &Arc<AtomicBool>,
 ) -> Result<SolveResult, String> {
     let outcome = tauri::async_runtime::spawn_blocking(move || {
@@ -770,7 +787,12 @@ async fn run_solver_chunk(
     })
     .await
     .map_err(|err| format!("solve task failed: {err}"))?;
-    Ok(finish_outcome(outcome, plan_id, cancellation.load(Ordering::SeqCst)))
+    Ok(finish_outcome(
+        outcome,
+        plan_id,
+        cancellation.load(Ordering::SeqCst),
+        snapshot_taken_at,
+    ))
 }
 
 // ---------- commands: solver ----------
@@ -783,25 +805,40 @@ pub async fn solve_plan(
 ) -> Result<SolveResult, String> {
     // All store access happens under the shared mutex before the chunk;
     // the lock never crosses the await.
-    let solver = {
+    let (solver, snapshot_taken_at) = {
         let store = store.lock().unwrap_or_else(|poisoned| poisoned.into_inner());
         begin_solve(&store, &args)?
     };
     // A fresh solve clears a stale cancellation; cancel_solve sets it again
     // while the chunk runs.
     cancellation.0.store(false, Ordering::SeqCst);
-    run_solver_chunk(solver, &args.plan_id, &cancellation.0).await
+    run_solver_chunk(solver, &args.plan_id, snapshot_taken_at, &cancellation.0).await
 }
 
 #[tauri::command]
 pub async fn continue_solve(
     args: ContinueSolveArgs,
+    store: tauri::State<'_, StoreHandle>,
     cancellation: tauri::State<'_, SolveCancellation>,
 ) -> Result<SolveResult, String> {
     let state_token = open_resume_token(&args.resume_token, &args.plan_id)?;
     let solver = Solver::from_token(&state_token).map_err(|err| err.to_string())?;
+    // A resumed chunk reports the freshness of the numbers as they stand
+    // now: a refresh between chunks moves the stamp forward.
+    let snapshot_taken_at = solve_snapshot_stamp(&store, &args.plan_id)?;
     cancellation.0.store(false, Ordering::SeqCst);
-    run_solver_chunk(solver, &args.plan_id, &cancellation.0).await
+    run_solver_chunk(solver, &args.plan_id, snapshot_taken_at, &cancellation.0).await
+}
+
+/// The latest snapshot timestamp of a plan's scope (ticket 34), read
+/// through the shared store.
+fn solve_snapshot_stamp(
+    store: &tauri::State<'_, StoreHandle>,
+    plan_id: &str,
+) -> Result<Option<String>, String> {
+    let store = store.lock().unwrap_or_else(|poisoned| poisoned.into_inner());
+    let scope = store.plan_scope_of(plan_id).map_err(|err| err.to_string())?;
+    store.latest_snapshot_at(&scope).map_err(|err| err.to_string())
 }
 
 /// Stops an in-flight solve: the running chunk finishes its budget and then
@@ -1418,6 +1455,96 @@ mod tests {
         assert_eq!(after_remove.sections.len(), 1);
     }
 
+    // ---------- solve seam: exclusion is visible and reversible (ticket 34) ----------
+
+    /// What a fresh frontend send now produces: exclude-full on by default
+    /// (ticket 34), everything else untouched.
+    fn fresh_solve_options() -> SolveOptions {
+        SolveOptions {
+            preset: Preset::FewestCampusDays,
+            day_blacklist: vec![],
+            earliest_start_min: None,
+            latest_end_min: None,
+            exclude_full: true,
+            result_limit: 12,
+        }
+    }
+
+    #[test]
+    fn a_full_plan_section_survives_and_the_result_carries_the_numbers_age() {
+        let mut store = store();
+        let scope = CaptureScope { campus_id: 7, session_id: 155 };
+        // S01 sits exactly at capacity; the student chose it anyway.
+        let mut s01 = parsed_section(2923, 384, "S01", vec![block(Day::Mon, 450)]);
+        s01.enrolled = Some(45);
+        s01.enroll_cap = Some(45);
+        let y11 = parsed_section(564, 737, "Y11", vec![block(Day::Tue, 570)]);
+        store.record_capture(&scope, &[s01, y11], T1).expect("capture");
+        store.create_plan("p1", "T1 load", &scope, T1, false).expect("plan");
+        store.add_section_to_plan("p1", 2923, 384).expect("choose");
+        store.set_section_pinned("p1", 2923, 384, true).expect("pin");
+
+        let args = SolvePlanArgs { plan_id: "p1".into(), options: fresh_solve_options() };
+        let (mut solver, stamp) = begin_solve(&store, &args).expect("begin solve");
+        assert_eq!(
+            stamp.as_deref(),
+            Some(T1),
+            "the solve knows how old the enrolment numbers are"
+        );
+
+        let outcome = solver.run();
+        assert_eq!(outcome.status, SolveStatus::Complete);
+        assert_eq!(
+            outcome.excluded_full_count, 0,
+            "the plan's own section was never a candidate to exclude"
+        );
+
+        let result = finish_outcome(outcome, "p1", false, stamp);
+        assert_eq!(result.snapshot_taken_at.as_deref(), Some(T1));
+        assert_eq!(result.excluded_full_count, 0);
+        let pinned = result.solutions[0]
+            .sections
+            .iter()
+            .find(|section| section.pinned)
+            .expect("the plan section stays in every result");
+        assert_eq!(
+            (pinned.course_id, pinned.section_id),
+            (2923, 384),
+            "a plan section at capacity survives, pinned or not"
+        );
+    }
+
+    #[test]
+    fn an_all_full_course_reaches_the_wire_unsatisfiable_with_reason_count_and_stamp() {
+        let mut store = store();
+        let scope = CaptureScope { campus_id: 7, session_id: 155 };
+        let mut s01 = parsed_section(2923, 384, "S01", vec![block(Day::Mon, 450)]);
+        s01.enrolled = Some(50);
+        s01.enroll_cap = Some(45);
+        store.record_capture(&scope, &[s01], T1).expect("capture");
+        store.create_plan("p1", "T1 load", &scope, T1, false).expect("plan");
+
+        let args = SolvePlanArgs { plan_id: "p1".into(), options: fresh_solve_options() };
+        let (mut solver, stamp) = begin_solve(&store, &args).expect("begin solve");
+        let outcome = solver.run();
+
+        assert_eq!(outcome.status, SolveStatus::Unsatisfiable);
+        assert_eq!(outcome.excluded_full_count, 1);
+
+        let result = finish_outcome(outcome, "p1", false, stamp);
+        assert_eq!(result.status, SolveStatus::Unsatisfiable);
+        assert_eq!(result.excluded_full_count, 1);
+        assert_eq!(result.snapshot_taken_at.as_deref(), Some(T1));
+        let json = serde_json::to_value(&result).unwrap();
+        assert_eq!(json["excludedFullCount"], 1, "the count crosses the wire camelCased");
+        assert_eq!(json["snapshotTakenAt"], T1);
+        assert_eq!(
+            json["unsatisfiableCourses"][0]["reason"],
+            "all_sections_full",
+            "the reason is named, never a bare 'no solutions'"
+        );
+    }
+
     // `start_refresh` and `resume_refresh` were the last stubs; ticket 26
     // implemented them on top of the ticket-16 runner and the driver. Their
     // storage seam is pinned by the tests below: trusted steps land through
@@ -1743,11 +1870,14 @@ mod tests {
         store.add_section_to_plan("p1", 2923, 384).expect("choose");
         let args = SolvePlanArgs { plan_id: "p1".into(), options: solve_options() };
 
-        let mut solver = begin_solve(&store, &args).expect("the solver builds");
-        let result = finish_outcome(solver.run(), &args.plan_id, false);
+        let (mut solver, stamp) = begin_solve(&store, &args).expect("the solver builds");
+        let result = finish_outcome(solver.run(), &args.plan_id, false, stamp);
 
         assert_eq!(result.status, SolveStatus::Complete);
-        assert!(result.resume_token.is_none(), "a complete solve mints no token");
+        assert!(
+            result.snapshot_taken_at.is_some(),
+            "the seeded scope has snapshots, so the result carries their age"
+        );
         assert!(result.resume_token.is_none(), "a complete solve mints no token");
         assert_eq!(
             result.solutions.len(),
@@ -1791,8 +1921,8 @@ mod tests {
         options_args.day_blacklist = vec![Day::Tue]; // C564's only section sits on Tuesday
         let args = SolvePlanArgs { plan_id: "p1".into(), options: options_args };
 
-        let mut solver = begin_solve(&store, &args).expect("the solver builds");
-        let result = finish_outcome(solver.run(), &args.plan_id, false);
+        let (mut solver, stamp) = begin_solve(&store, &args).expect("the solver builds");
+        let result = finish_outcome(solver.run(), &args.plan_id, false, stamp);
 
         assert_eq!(result.status, SolveStatus::Unsatisfiable);
         assert!(result.solutions.is_empty());
@@ -1821,8 +1951,8 @@ mod tests {
         store.add_section_to_plan("p1", 2923, 384).expect("choose");
 
         let args = SolvePlanArgs { plan_id: "p1".into(), options: solve_options() };
-        let mut solver = begin_solve(&store, &args).expect("the solver builds");
-        let result = finish_outcome(solver.run(), &args.plan_id, false);
+        let (mut solver, stamp) = begin_solve(&store, &args).expect("the solver builds");
+        let result = finish_outcome(solver.run(), &args.plan_id, false, stamp);
 
         assert_eq!(result.status, SolveStatus::Complete);
         assert_eq!(
@@ -1910,14 +2040,14 @@ mod tests {
 
         // Cancelled beats whatever the chunk found: no partial token may
         // survive, so a stale Continue can never resurrect a dead run.
-        let result = finish_outcome(stopped, "p1", true);
+        let result = finish_outcome(stopped, "p1", true, None);
         assert_eq!(result.status, SolveStatus::Cancelled);
         assert!(result.resume_token.is_none());
 
         // A clean chunk under no cancellation keeps its statuses untouched.
         let mut fresh = Solver::new(vec![], vec![], solve_options());
         let complete = fresh.run();
-        let result = finish_outcome(complete, "p1", false);
+        let result = finish_outcome(complete, "p1", false, None);
         assert_eq!(result.status, SolveStatus::Complete);
     }
 }

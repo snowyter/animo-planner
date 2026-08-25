@@ -239,21 +239,33 @@ type ScheduleBlock =
 
 ```json
 { "preset": "fewest_campus_days", "dayBlacklist": [], "earliestStartMin": null,
-  "latestEndMin": null, "excludeFull": false, "resultLimit": 12 }
+  "latestEndMin": null, "excludeFull": true, "resultLimit": 12 }
 ```
 
 `preset`: `"fewest_campus_days" | "no_early_mornings" | "most_online"`.
 `dayBlacklist`: `Day[]`. `earliestStartMin` / `latestEndMin`: `number | null`.
 
+**Amended in ticket 34:** `excludeFull` defaults to `true` when omitted — a section at capacity
+cannot be enlisted into, so a fresh solve never builds around one. The student can still turn it
+off in secondary constraints.
+
 ### `SolveResult`
 
 ```json
-{ "status": "complete", "solutions": [], "resumeToken": null, "unsatisfiableCourses": [] }
+{ "status": "complete", "solutions": [], "resumeToken": null,
+  "unsatisfiableCourses": [], "excludedFullCount": 0, "snapshotTakenAt": "ISO" }
 ```
 
 `status`: `"complete" | "partial" | "cancelled" | "unsatisfiable"`.
 `resumeToken` is present iff `status === "partial"`; pass it to `continue_solve`.
-`unsatisfiableCourses: { courseId, code }[]` names courses with no valid section.
+
+**Amended in ticket 34:** `unsatisfiableCourses` entries carry a `reason` —
+`"all_sections_full"` when exclude-full removed every remaining section of that course,
+`"no_valid_section"` otherwise — so `"unsatisfiable"` never appears without saying why.
+`excludedFullCount` reports how many candidate sections exclude-full removed across the solve,
+and `snapshotTakenAt` is the latest snapshot timestamp of the plan's scope (`null` when nothing
+is captured there): how old the enrolment numbers behind any exclusion are. The UI surfaces both
+next to the results so a stale-looking exclusion can be turned off and re-solved.
 
 ### `Solution`
 
