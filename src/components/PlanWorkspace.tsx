@@ -260,24 +260,6 @@ export function PlanWorkspace({
               </div>
             </div>
 
-            {/* Explicit Refresh Button (Ticket 21: Never automatic or on a timer) */}
-            <Button
-              type="button"
-              variant="outline"
-              size="sm"
-              disabled={isLoading || isRefreshing}
-              onClick={() => startRefresh()}
-              className="h-11 text-xs font-semibold flex items-center gap-1.5 bg-white hover:bg-slate-50 text-slate-800 border-slate-200 shadow-2xs px-3.5"
-              title="Refresh enrolment numbers from Course Finder"
-            >
-              <RefreshCw
-                className={`h-3.5 w-3.5 ${
-                  isRefreshing ? "animate-spin text-emerald-600" : "text-slate-600"
-                }`}
-              />
-              <span>{isRefreshing ? "Refreshing..." : "Refresh"}</span>
-            </Button>
-
             <ExportMenu
               planSummary={planSummary}
               plan={plan}
@@ -299,6 +281,8 @@ export function PlanWorkspace({
         captureFailure={captureFailure}
         isOpening={isOpeningCapture}
         onOpenCapture={openCapture}
+        isRefreshing={isRefreshing}
+        onRefresh={() => startRefresh()}
         onDismissFailure={dismissFailure}
         onReportBrokenCapture={onReportBrokenCapture}
       />

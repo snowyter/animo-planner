@@ -225,9 +225,15 @@ pub struct SolutionSection {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(rename_all = "snake_case")]
 pub enum WarningKind {
+    // Spelled out per variant: `rename_all = "snake_case"` turns
+    // `F2FOnlineBackToBack` into `f2_f_online_back_to_back`, because it breaks
+    // before every capital and "F2F" is three of them. The contract declares
+    // `f2f_online_back_to_back`, the frontend switches on that, and a mismatch
+    // renders as an empty warning box rather than an error.
+    #[serde(rename = "f2f_online_back_to_back")]
     F2FOnlineBackToBack,
+    #[serde(rename = "f2f_f2f_different_buildings")]
     F2FF2FDifferentBuildings,
 }
 
@@ -349,6 +355,21 @@ pub struct CaptureReport {
 
 #[cfg(test)]
 mod tests {
+
+    /// The frontend switches on these exact strings and has no fallback, so a
+    /// drifted spelling shows the student an empty warning box instead of a
+    /// warning. `docs/ipc-contract.md` declares both values.
+    #[test]
+    fn warning_kinds_cross_the_wire_as_the_contract_declares() {
+        assert_eq!(
+            serde_json::to_string(&WarningKind::F2FOnlineBackToBack).unwrap(),
+            "\"f2f_online_back_to_back\""
+        );
+        assert_eq!(
+            serde_json::to_string(&WarningKind::F2FF2FDifferentBuildings).unwrap(),
+            "\"f2f_f2f_different_buildings\""
+        );
+    }
     use super::*;
 
     #[test]
@@ -482,3 +503,4 @@ mod tests {
         assert_eq!(options.result_limit, 12);
     }
 }
+

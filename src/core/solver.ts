@@ -67,6 +67,11 @@ export function formatWarningLabel(warning: TransitionWarning): string {
       return `F2F → Online back-to-back on ${warning.day} (${timeRange})`;
     case "f2f_f2f_different_buildings":
       return `F2F → F2F in different buildings on ${warning.day} (${timeRange})`;
+    default:
+      // An unrecognised kind still says something. Falling off the switch
+      // returned undefined, which rendered as an empty warning box: a yellow
+      // panel telling the student nothing at all.
+      return `Tight transition on ${warning.day} (${timeRange})`;
   }
 }
 

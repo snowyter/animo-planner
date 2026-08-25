@@ -23,6 +23,8 @@ export interface CaptureBarProps {
   error: string | null;
   captureFailure: string | null;
   isOpening?: boolean;
+  isRefreshing?: boolean;
+  onRefresh?: () => void;
   onOpenCapture: () => void;
   onDismissFailure: () => void;
   onReportBrokenCapture?: (error: string) => void;
@@ -36,6 +38,8 @@ export function CaptureBar({
   error,
   captureFailure,
   isOpening = false,
+  isRefreshing = false,
+  onRefresh,
   onOpenCapture,
   onDismissFailure,
   onReportBrokenCapture,
@@ -133,6 +137,27 @@ export function CaptureBar({
               </span>
 
             </div>
+
+            {/* Refresh sits with capture because both reach Archer's Hub for
+                fresh numbers; it is never automatic or on a timer (ticket 21). */}
+            {onRefresh && (
+              <Button
+                type="button"
+                variant="outline"
+                size="sm"
+                disabled={isRefreshing}
+                onClick={onRefresh}
+                className="h-10 text-xs font-semibold flex items-center gap-1.5 bg-white hover:bg-slate-50 text-slate-800 border-slate-200 shadow-2xs px-3.5"
+                title="Refresh enrolment numbers from Course Finder"
+              >
+                <RefreshCw
+                  className={`h-3.5 w-3.5 ${
+                    isRefreshing ? "animate-spin text-emerald-600" : "text-slate-600"
+                  }`}
+                />
+                <span>{isRefreshing ? "Refreshing..." : "Refresh"}</span>
+              </Button>
+            )}
 
             {/* Launch Archer's Hub Popup Button */}
             <Button

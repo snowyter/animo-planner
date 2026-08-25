@@ -1,11 +1,44 @@
 import { describe, expect, it } from "vitest";
 import React from "react";
 import { renderToStaticMarkup } from "react-dom/server";
-import { WeekGrid } from "./WeekGrid";
+import { WeekGrid, blockTooltip } from "./WeekGrid";
 import type { PlanSection, ScheduleBlock } from "../adapters/ipc/types";
 import { findConflicts } from "../core/conflicts";
 
 describe("WeekGrid component", () => {
+  // The teacher lives on the latest snapshot and appeared nowhere on the grid,
+  // so choosing between two sections of one course meant leaving it.
+  it("names the teacher in a block's hover tooltip", () => {
+    const tip = blockTooltip(
+      {
+        courseCode: "CSOPESY",
+        sectionCode: "S01",
+        latestSnapshot: { capturedAt: "", enrolled: 37, teacher: "Gregory Cu", remark: null },
+      } as never,
+      { day: "TUE", startMin: 555, endMin: 645, location: "G207", modality: "F2F" } as never,
+      { isF2F: true, isGhost: false, isMissing: false }
+    );
+
+    expect(tip).toContain("CSOPESY S01");
+    expect(tip).toContain("Gregory Cu");
+    expect(tip).toContain("37");
+  });
+
+  // A blank teacher is unknown, never absent and never a dash (CONTEXT.md).
+  it("reads a blank teacher as unknown rather than omitting it", () => {
+    const tip = blockTooltip(
+      {
+        courseCode: "CSOPESY",
+        sectionCode: "S01",
+        latestSnapshot: { capturedAt: "", enrolled: 0, teacher: null, remark: null },
+      } as never,
+      { day: "TUE", startMin: 555, endMin: 645, location: null, modality: "ONLINE" } as never,
+      { isF2F: false, isGhost: false, isMissing: false }
+    );
+
+    expect(tip).toContain("Teacher: Unknown");
+  });
+
   const makeBlock = (
     day: ScheduleBlock["day"],
     startMin: number,

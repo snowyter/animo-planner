@@ -10,6 +10,20 @@ import {
 import type { Solution, TransitionWarning, UnsatisfiableCourse } from "../adapters/ipc/types";
 
 describe("core/solver", () => {
+
+  it("never renders an empty label, even for a kind it does not recognise", () => {
+    const label = formatWarningLabel({
+      kind: "something_new" as never,
+      day: "TUE",
+      startMin: 555,
+      endMin: 570,
+      from: { courseId: 1, sectionId: 1 },
+      to: { courseId: 2, sectionId: 2 },
+    });
+
+    expect(label).toBeTruthy();
+    expect(label.length).toBeGreaterThan(0);
+  });
   it("provides complete preset information for the three presets", () => {
     expect(PRESET_INFOS).toHaveLength(3);
     const presetKeys = PRESET_INFOS.map((p) => p.preset);

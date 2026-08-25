@@ -49,6 +49,36 @@ interface FlattenedBlock {
 }
 
 
+/**
+ * What a schedule block says on hover. The teacher lives on the section's
+ * latest snapshot and was not shown anywhere on the grid, so choosing between
+ * two sections of the same course meant going back to the picker.
+ *
+ * A blank teacher reads as *unknown*, never as absent and never as a dash:
+ * the value is missing, not empty (CONTEXT.md).
+ */
+export function blockTooltip(
+  section: PlanSection | Section,
+  block: ScheduleBlock,
+  flags: { isF2F: boolean; isGhost: boolean; isMissing: boolean }
+): string {
+  const where = flags.isF2F ? block.location ?? "Room" : "Online";
+  const teacher = section.latestSnapshot?.teacher?.trim();
+  const snapshot = section.latestSnapshot;
+
+  const lines = [
+    `${section.courseCode} ${section.sectionCode} (${formatMinutesRange(block.startMin, block.endMin)}) — ${where}`,
+    `Teacher: ${teacher ? teacher : "Unknown"}`,
+  ];
+  if (snapshot && typeof snapshot.enrolled === "number") {
+    lines.push(`Enrolled: ${snapshot.enrolled}`);
+  }
+  if (flags.isGhost) lines.push("[Preview]");
+  if (flags.isMissing) lines.push("[Missing from catalog]");
+  return lines.join("\n");
+}
+
+
 export function WeekGrid({
   sections,
   ghostSection,
@@ -309,7 +339,11 @@ export function WeekGrid({
                           borderLeftStyle: isF2F ? "solid" : "dashed",
                           ...hatchedBgStyle,
                         }}
-                        title={`${section.courseCode} ${section.sectionCode} (${formatMinutesRange(block.startMin, block.endMin)}) — ${isF2F ? block.location ?? "Room" : "Online"}${isGhost ? " [Preview]" : ""}${isMissing ? " [Missing from catalog]" : ""}`}
+                        title={blockTooltip(section, block, {
+                          isF2F,
+                          isGhost,
+                          isMissing,
+                        })}
                       >
                         {/* Top row: Course Code, Section Code, Badges */}
                         <div className="flex items-start justify-between gap-1 leading-tight">
