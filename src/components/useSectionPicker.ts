@@ -1,6 +1,12 @@
 import { useState, useCallback, useEffect, useRef } from "react";
 import * as client from "../adapters/ipc/client";
-import type { CapturedCourse, CaptureSummary, Plan, Section } from "../adapters/ipc/types";
+import type {
+  CapturedCourse,
+  CaptureSummary,
+  ForgetCourseOutcome,
+  Plan,
+  Section,
+} from "../adapters/ipc/types";
 import { formatErrorMessage } from "../core/error";
 
 export interface SectionPickerOptions {
@@ -30,7 +36,7 @@ export interface SectionPickerState {
   addSection: (section: Section) => Promise<Plan>;
   removeSection: (section: Section) => Promise<Plan>;
   togglePin: (section: Section, pinned: boolean) => Promise<Plan>;
-  forgetCourse: (courseId: number) => Promise<CaptureSummary>;
+  forgetCourse: (courseId: number) => Promise<ForgetCourseOutcome>;
   setHoveredSection: (section: Section | null) => void;
 }
 
@@ -168,11 +174,11 @@ export function useSectionPickerState(options: SectionPickerOptions): SectionPic
     }
   };
 
-  const forgetCourse = async (courseId: number): Promise<CaptureSummary> => {
+  const forgetCourse = async (courseId: number): Promise<ForgetCourseOutcome> => {
     isMutating = true;
     error = null;
     try {
-      const summary = await client.forgetCapturedCourse({
+      const outcome = await client.forgetCapturedCourse({
         campusId: options.campusId,
         sessionId: options.sessionId,
         courseId,
@@ -186,8 +192,8 @@ export function useSectionPickerState(options: SectionPickerOptions): SectionPic
           sections = [];
         }
       }
-      options.onCaptureUpdated?.(summary);
-      return summary;
+      options.onCaptureUpdated?.(outcome.summary);
+      return outcome;
     } catch (err) {
       const msg = formatErrorMessage(err);
       error = msg;
@@ -462,11 +468,11 @@ export function useSectionPicker(options: SectionPickerOptions) {
   );
 
   const forgetCourse = useCallback(
-    async (courseId: number): Promise<CaptureSummary> => {
+    async (courseId: number): Promise<ForgetCourseOutcome> => {
       setIsMutating(true);
       setError(null);
       try {
-        const summary = await client.forgetCapturedCourse({
+        const outcome = await client.forgetCapturedCourse({
           campusId: options.campusId,
           sessionId: options.sessionId,
           courseId,
@@ -475,8 +481,8 @@ export function useSectionPicker(options: SectionPickerOptions) {
         // list has one source of truth instead of a fetch on mount and a
         // local patch here.
         await syncCourses();
-        options.onCaptureUpdated?.(summary);
-        return summary;
+        options.onCaptureUpdated?.(outcome.summary);
+        return outcome;
       } catch (err) {
         const msg = formatErrorMessage(err);
         setError(msg);

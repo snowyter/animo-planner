@@ -279,7 +279,11 @@ describe("useSectionPickerState", () => {
       sectionCount: 5,
       courseCount: 1,
     };
-    vi.mocked(client.forgetCapturedCourse).mockResolvedValue(mockSummary);
+    const mockOutcome = {
+      summary: mockSummary,
+      affectedPlans: [{ planId: "p1", removedSections: 1 }],
+    };
+    vi.mocked(client.forgetCapturedCourse).mockResolvedValue(mockOutcome);
 
     const onCaptureUpdated = vi.fn();
     const state = useSectionPickerState({
@@ -293,14 +297,14 @@ describe("useSectionPickerState", () => {
     expect(state.courses).toHaveLength(2);
     expect(state.selectedCourseId).toBe(2923);
 
-    const returnedSummary = await state.forgetCourse(2923);
+    const returnedOutcome = await state.forgetCourse(2923);
 
     expect(client.forgetCapturedCourse).toHaveBeenCalledWith({
       campusId: 7,
       sessionId: 155,
       courseId: 2923,
     });
-    expect(returnedSummary).toEqual(mockSummary);
+    expect(returnedOutcome).toEqual(mockOutcome);
     expect(onCaptureUpdated).toHaveBeenCalledWith(mockSummary);
     expect(state.courses).toHaveLength(1);
     expect(state.courses[0].courseId).toBe(564);
@@ -315,13 +319,16 @@ describe("useSectionPickerState", () => {
   it("removing the last course leaves ordinary empty state and no error", async () => {
     vi.mocked(client.listCapturedCourses).mockResolvedValue([mockCourses[0]]);
     vi.mocked(client.listCapturedSections).mockResolvedValue(mockGeartapSections);
-    const mockSummary = {
-      campusId: 7,
-      sessionId: 155,
-      sectionCount: 0,
-      courseCount: 0,
+    const mockOutcome = {
+      summary: {
+        campusId: 7,
+        sessionId: 155,
+        sectionCount: 0,
+        courseCount: 0,
+      },
+      affectedPlans: [],
     };
-    vi.mocked(client.forgetCapturedCourse).mockResolvedValue(mockSummary);
+    vi.mocked(client.forgetCapturedCourse).mockResolvedValue(mockOutcome);
 
     const state = useSectionPickerState({
       campusId: 7,
@@ -339,29 +346,5 @@ describe("useSectionPickerState", () => {
     expect(state.selectedCourseId).toBeNull();
     expect(state.sections).toEqual([]);
     expect(state.error).toBeNull();
-  });
-
-  it("sets error when forgetCapturedCourse refuses because course is held by plans", async () => {
-    vi.mocked(client.listCapturedCourses).mockResolvedValue(mockCourses);
-    vi.mocked(client.listCapturedSections).mockResolvedValue(mockGeartapSections);
-    const refusalError = new Error(
-      'course 2923 under campus 7 session 155 is still held by plans ["p1"] — remove its sections from those plans first'
-    );
-    vi.mocked(client.forgetCapturedCourse).mockRejectedValue(refusalError);
-
-    const state = useSectionPickerState({
-      campusId: 7,
-      sessionId: 155,
-      planId: "p1",
-    });
-
-    await state.fetchCourses();
-
-    await expect(state.forgetCourse(2923)).rejects.toThrow();
-
-    expect(state.error).toContain('still held by plans ["p1"]');
-    expect(state.error).toContain("remove its sections from those plans first");
-    // Courses list untouched
-    expect(state.courses).toHaveLength(2);
   });
 });

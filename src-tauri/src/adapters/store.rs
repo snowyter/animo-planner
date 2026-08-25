@@ -31,8 +31,8 @@
 use crate::core::conflicts::{self, PlannedBlock, PlannedSection};
 use crate::core::ics::{ExportBlock, ExportPlan, ExportSection};
 use crate::core::ipc_types::{
-    BlockModality, CapturedCourse, CaptureSummary, Conflict, Day, MissingSection, ScheduleBlock,
-    Section, SectionModality, Snapshot,
+    AffectedPlan, BlockModality, CapturedCourse, CaptureSummary, Conflict, Day,
+    ForgetCourseOutcome, MissingSection, ScheduleBlock, Section, SectionModality, Snapshot,
 };
 use crate::core::parser::{ParsedBlock, ParsedSection};
 use crate::core::refresh::RefreshCourse;
@@ -120,17 +120,6 @@ pub enum StoreError {
         session_id: i64,
         course_id: i64,
     },
-    /// Forget-course refused because one or more plans still hold sections
-    /// of the course (ticket 29). A raw delete would trip the
-    /// `plan_sections.section_fk` constraint; detecting first and naming the
-    /// plans keeps removing a section from its plan an explicit student act
-    /// instead of a silent gutting.
-    CourseHeldByPlans {
-        campus_id: i64,
-        session_id: i64,
-        course_id: i64,
-        plan_ids: Vec<String>,
-    },
 }
 
 impl std::fmt::Display for StoreError {
@@ -186,16 +175,6 @@ impl std::fmt::Display for StoreError {
                 f,
                 "no course {course_id} is captured under campus {campus_id} session \
                  {session_id}, so there is nothing to forget"
-            ),
-            StoreError::CourseHeldByPlans {
-                campus_id,
-                session_id,
-                course_id,
-                plan_ids,
-            } => write!(
-                f,
-                "course {course_id} under campus {campus_id} session {session_id} is still \
-                 held by plans {plan_ids:?} — remove its sections from those plans first"
             ),
         }
     }
@@ -521,23 +500,25 @@ impl Store {
     /// what they named is removed. ADR-0008 is untouched — that rule bars capture-side
     /// inference deletes; this is a direct user instruction.
     ///
-    /// A plan still holding any section of the course vetoes the removal:
-    /// `plan_sections.section_fk` has no cascade and foreign keys are on, so
-    /// the alternative is a raw constraint error or a silently gutted plan.
-    /// The error names every holding plan so the student can remove the
-    /// sections themselves.
+    /// Plans holding the course's sections are released instead of blocking
+    /// (ticket 35): each membership goes with the sections it points at, and
+    /// the outcome reports every affected plan and how many sections it
+    /// lost, so the student's agreement is followed by an explanation, not
+    /// by silent gutting. Pinning protects a section from the solver, not
+    /// from a removal the student asked for.
     ///
     /// The whole removal is one transaction, and a pending undo batch whose
-    /// rows went away is dropped rather than left dangling. Returns the
-    /// updated [`CaptureSummary`] so the counter re-renders from one source
-    /// of truth.
+    /// rows went away is dropped rather than left dangling. Returns a
+    /// [`ForgetCourseOutcome`]: the updated [`CaptureSummary`] so the
+    /// counter re-renders from one source of truth, plus the affected-plan
+    /// report.
     pub fn forget_course(
         &mut self,
         scope: &CaptureScope,
         course_id: i64,
-    ) -> Result<CaptureSummary, StoreError> {
-        // The section row ids this removal will take, collected up front:
-        // the membership guard needs them and so does the journal check.
+    ) -> Result<ForgetCourseOutcome, StoreError> {
+        // The section row ids this removal will take, collected up front so
+        // the membership release and the journal check agree on the same set.
         let section_fks: Vec<i64> = {
             let mut stmt = self.conn.prepare(
                 "SELECT id FROM sections
@@ -549,33 +530,6 @@ impl Store {
             )?;
             rows.collect::<Result<Vec<i64>, _>>()?
         };
-
-        // Detect plan membership first: a raw delete would fail on the
-        // foreign key with an unhelpful constraint message, and detecting
-        // here keeps the catalog untouched instead of half-removed.
-        let plan_ids: Vec<String> = if section_fks.is_empty() {
-            Vec::new()
-        } else {
-            let mut stmt = self.conn.prepare(
-                "SELECT DISTINCT ps.plan_id FROM plan_sections ps
-                 JOIN sections s ON s.id = ps.section_fk
-                 WHERE s.campus_id = ?1 AND s.session_id = ?2 AND s.course_id = ?3
-                 ORDER BY ps.plan_id",
-            )?;
-            let rows = stmt.query_map(
-                rusqlite::params![scope.campus_id, scope.session_id, course_id],
-                |row| row.get::<_, String>(0),
-            )?;
-            rows.collect::<Result<Vec<String>, _>>()?
-        };
-        if !plan_ids.is_empty() {
-            return Err(StoreError::CourseHeldByPlans {
-                campus_id: scope.campus_id,
-                session_id: scope.session_id,
-                course_id,
-                plan_ids,
-            });
-        }
 
         // Loud rather than a silent no-op when nothing under this scope
         // matches — consistent with delete_plan, unlike the deliberately
@@ -594,9 +548,37 @@ impl Store {
             });
         }
 
-        // One transaction: children first, then the sections, then the
-        // course row. Any failure part-way rolls the whole removal back.
+        // One transaction: the membership release first (the section rows
+        // cannot go while a plan_sections row points at them), then the
+        // sections' children, then the sections, then the course row. Any
+        // failure part-way rolls the whole removal back.
         let tx = self.conn.transaction()?;
+        let affected_plans: Vec<AffectedPlan> = {
+            let mut stmt = tx.prepare(
+                "SELECT ps.plan_id, COUNT(*)
+                 FROM plan_sections ps
+                 JOIN sections s ON s.id = ps.section_fk
+                 WHERE s.campus_id = ?1 AND s.session_id = ?2 AND s.course_id = ?3
+                 GROUP BY ps.plan_id
+                 ORDER BY ps.plan_id",
+            )?;
+            let rows = stmt.query_map(
+                rusqlite::params![scope.campus_id, scope.session_id, course_id],
+                |row| {
+                    Ok(AffectedPlan {
+                        plan_id: row.get(0)?,
+                        removed_sections: row.get(1)?,
+                    })
+                },
+            )?;
+            rows.collect::<Result<Vec<AffectedPlan>, _>>()?
+        };
+        tx.execute(
+            "DELETE FROM plan_sections
+             WHERE section_fk IN (SELECT id FROM sections
+                                  WHERE campus_id = ?1 AND session_id = ?2 AND course_id = ?3)",
+            rusqlite::params![scope.campus_id, scope.session_id, course_id],
+        )?;
         for &section_fk in &section_fks {
             tx.execute("DELETE FROM snapshots WHERE section_fk = ?1", [section_fk])?;
             tx.execute("DELETE FROM schedule_blocks WHERE section_fk = ?1", [section_fk])?;
@@ -611,7 +593,10 @@ impl Store {
         )?;
         tx.commit()?;
 
-        self.capture_summary(scope)
+        Ok(ForgetCourseOutcome {
+            summary: self.capture_summary(scope)?,
+            affected_plans,
+        })
     }
 
     /// Running counts for the capture counter: sections and distinct
@@ -3294,15 +3279,20 @@ mod tests {
             )
             .expect("capture a course that stays");
 
-        let summary = store.forget_course(&SCOPE, 2923).expect("forget must succeed");
+        let outcome = store.forget_course(&SCOPE, 2923).expect("forget must succeed");
 
+        assert!(
+            outcome.affected_plans.is_empty(),
+            "a course no plan holds reports no affected plans, got {:?}",
+            outcome.affected_plans
+        );
         assert_eq!(
-            (summary.campus_id, summary.session_id),
+            (outcome.summary.campus_id, outcome.summary.session_id),
             (7, 155),
             "the summary describes the scope the removal ran in"
         );
-        assert_eq!(summary.section_count, 1, "only the surviving section is counted");
-        assert_eq!(summary.course_count, 1, "only the surviving course is counted");
+        assert_eq!(outcome.summary.section_count, 1, "only the surviving section is counted");
+        assert_eq!(outcome.summary.course_count, 1, "only the surviving course is counted");
 
         assert_eq!(
             section_rows(&store.conn),
@@ -3328,7 +3318,7 @@ mod tests {
     }
 
     #[test]
-    fn forgetting_a_course_whose_sections_plans_hold_is_refused_naming_them() {
+    fn forgetting_a_held_course_releases_its_sections_from_every_holding_plan_and_reports_what_each_lost() {
         let mut store = store();
         store.create_plan("p1", "First", &SCOPE, T1, false).expect("plan p1");
         store.create_plan("p2", "Second", &SCOPE, T1, false).expect("plan p2");
@@ -3338,28 +3328,138 @@ mod tests {
                 &[
                     parsed_section(2923, 384, "S01", None, Some(10), vec![]),
                     parsed_section(2923, 385, "S02", None, Some(20), vec![]),
+                    parsed_section(564, 737, "Y11", None, Some(30), vec![]),
                 ],
                 T1,
             )
             .expect("capture");
         store.add_section_to_plan("p1", 2923, 384).expect("p1 holds S01");
+        store.set_section_pinned("p1", 2923, 384, true).expect("pin p1's S01");
+        store
+            .add_section_to_plan("p1", 564, 737)
+            .expect("p1 holds a section of another course");
         store.add_section_to_plan("p2", 2923, 385).expect("p2 holds S02");
 
-        let err = store.forget_course(&SCOPE, 2923).expect_err("a held course must refuse");
+        let outcome = store
+            .forget_course(&SCOPE, 2923)
+            .expect("a held course is released from its plans, not refused");
 
-        match err {
-            StoreError::CourseHeldByPlans { ref plan_ids, .. } => {
-                assert_eq!(*plan_ids, vec!["p1".to_string(), "p2".to_string()], "every holder is named");
-            }
-            other => panic!("expected CourseHeldByPlans, got {other:?}"),
-        }
-        assert!(err.to_string().contains("p1") && err.to_string().contains("p2"));
+        assert_eq!(
+            outcome.affected_plans,
+            vec![
+                AffectedPlan { plan_id: "p1".into(), removed_sections: 1 },
+                AffectedPlan { plan_id: "p2".into(), removed_sections: 1 },
+            ],
+            "the report names every affected plan and how many sections each lost"
+        );
 
-        // The refusal wrote nothing: the catalog is exactly as it was.
+        // Membership of the forgotten course is gone everywhere, pinned or
+        // not; the only surviving membership is the other course's.
+        assert_eq!(count(&store.conn, "SELECT COUNT(*) FROM plan_sections"), 1);
+        let remaining: (String, i64, i64) = store
+            .conn
+            .query_row(
+                "SELECT ps.plan_id, s.course_id, s.section_id FROM plan_sections ps
+                 JOIN sections s ON s.id = ps.section_fk",
+                [],
+                |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)),
+            )
+            .expect("the surviving membership must be readable");
+        assert_eq!(
+            remaining,
+            ("p1".into(), 564, 737),
+            "only the named course's sections leave a plan; the rest is untouched"
+        );
+
+        // The catalog lost exactly the named course.
+        assert_eq!(section_rows(&store.conn).len(), 1);
+        assert_eq!(snapshot_rows(&store.conn).len(), 1);
+        assert_eq!(count(&store.conn, "SELECT COUNT(*) FROM courses"), 1);
+
+        // Both plans survive; p1 keeps its other section, p2 is empty but
+        // still a plan — never deleted as a side effect.
+        let p1 = store.get_plan("p1").expect("p1 survives the removal");
+        let p2 = store.get_plan("p2").expect("p2 survives the removal");
+        assert_eq!(p1.sections.len(), 1);
+        assert_eq!(p1.sections[0].section_id, 737);
+        assert!(p2.sections.is_empty(), "a plan emptied by the removal is still a plan");
+
+        assert_eq!(
+            outcome.summary,
+            store.capture_summary(&SCOPE).expect("summary"),
+            "the returned summary is the same source of truth the counter reads"
+        );
+        assert_eq!(
+            (outcome.summary.section_count, outcome.summary.course_count),
+            (1, 1)
+        );
+    }
+
+    #[test]
+    fn a_failure_part_way_through_forgetting_rolls_everything_back() {
+        let mut store = store();
+        store.create_plan("p1", "First", &SCOPE, T1, false).expect("plan p1");
+        store
+            .record_capture(
+                &SCOPE,
+                &[
+                    parsed_section(
+                        2923,
+                        384,
+                        "S01",
+                        None,
+                        Some(10),
+                        vec![online_block(Day::Mon, 450, 540)],
+                    ),
+                    parsed_section(
+                        564,
+                        737,
+                        "Y11",
+                        None,
+                        Some(30),
+                        vec![online_block(Day::Tue, 450, 540)],
+                    ),
+                ],
+                T1,
+            )
+            .expect("capture");
+        store.add_section_to_plan("p1", 2923, 384).expect("p1 holds S01");
+        store
+            .conn
+            .execute_batch(
+                "CREATE TRIGGER fail_block_delete BEFORE DELETE ON schedule_blocks
+                 BEGIN SELECT RAISE(ABORT, 'injected failure'); END;",
+            )
+            .expect("the failing trigger installs");
+
+        let err = store
+            .forget_course(&SCOPE, 2923)
+            .expect_err("a failure part-way must surface as an error");
+        assert!(
+            err.to_string().contains("injected failure"),
+            "the injected failure is what surfaced, got: {err}"
+        );
+
+        // Everything is exactly as it was: membership, sections, snapshots,
+        // blocks, and the course row.
+        assert_eq!(count(&store.conn, "SELECT COUNT(*) FROM plan_sections"), 1);
         assert_eq!(count(&store.conn, "SELECT COUNT(*) FROM sections"), 2);
         assert_eq!(count(&store.conn, "SELECT COUNT(*) FROM snapshots"), 2);
-        assert_eq!(count(&store.conn, "SELECT COUNT(*) FROM plan_sections"), 2);
-        assert_eq!(count(&store.conn, "SELECT COUNT(*) FROM courses"), 1);
+        assert_eq!(count(&store.conn, "SELECT COUNT(*) FROM schedule_blocks"), 2);
+        assert_eq!(count(&store.conn, "SELECT COUNT(*) FROM courses"), 2);
+
+        // With the trigger gone the same removal completes.
+        store
+            .conn
+            .execute_batch("DROP TRIGGER fail_block_delete;")
+            .expect("the failing trigger drops");
+        let outcome = store
+            .forget_course(&SCOPE, 2923)
+            .expect("the removal succeeds once the trigger is gone");
+        assert_eq!(
+            outcome.affected_plans,
+            vec![AffectedPlan { plan_id: "p1".into(), removed_sections: 1 }]
+        );
     }
 
     #[test]
@@ -3392,12 +3492,12 @@ mod tests {
     }
 
     #[test]
-    fn detection_catches_a_membership_whatever_plan_holds_it() {
+    fn a_plan_of_any_scope_holding_a_section_loses_that_membership_and_is_reported() {
         // add_section_to_plan can never produce this state — membership is
-        // always scope-checked — but the guard must not depend on that: it
+        // always scope-checked — but the removal must not depend on that: it
         // keys on the section rows being removed, so a plan of any scope
-        // holding one of them is refused and named, never FK-crashed or
-        // silently gutted.
+        // holding one of them is released and named in the report, never
+        // FK-crashed.
         let mut store = store();
         store
             .record_capture(&SCOPE, &[parsed_section(2923, 384, "S01", None, Some(10), vec![])], T1)
@@ -3415,14 +3515,14 @@ mod tests {
             )
             .expect("the out-of-band membership");
 
-        let err = store.forget_course(&SCOPE, 2923).expect_err("any holder must refuse");
-        match err {
-            StoreError::CourseHeldByPlans { ref plan_ids, .. } => {
-                assert_eq!(plan_ids, &vec!["pb".to_string()]);
-            }
-            other => panic!("expected CourseHeldByPlans, got {other:?}"),
-        }
-        assert_eq!(count(&store.conn, "SELECT COUNT(*) FROM sections"), 1, "nothing was deleted");
+        let outcome = store.forget_course(&SCOPE, 2923).expect("any holder is released, not refused");
+        assert_eq!(
+            outcome.affected_plans,
+            vec![AffectedPlan { plan_id: "pb".into(), removed_sections: 1 }]
+        );
+        assert_eq!(count(&store.conn, "SELECT COUNT(*) FROM sections"), 0, "the catalog went");
+        assert_eq!(count(&store.conn, "SELECT COUNT(*) FROM plan_sections"), 0, "the membership went too");
+        assert_eq!(count(&store.conn, "SELECT COUNT(*) FROM plans"), 1, "the plan survives");
     }
 
     #[test]
@@ -3472,20 +3572,19 @@ mod tests {
             )
             .expect("a real capture alongside the samples");
 
-        // Same rule as anywhere else: the sample plan holds these sections.
-        let err = store
+        // The sample plan holds these sections; forgetting releases them
+        // from the plan instead of refusing, and the report names it.
+        let outcome = store
             .forget_course(&sample_scope, 564)
-            .expect_err("a held sample course refuses like any held course");
-        match err {
-            StoreError::CourseHeldByPlans { plan_ids, .. } => {
-                assert_eq!(plan_ids, vec!["sample-plan".to_string()]);
-            }
-            other => panic!("expected CourseHeldByPlans, got {other:?}"),
-        }
+            .expect("a held sample course is released like any held course");
+        assert_eq!(
+            outcome.affected_plans,
+            vec![AffectedPlan { plan_id: "sample-plan".into(), removed_sections: 1 }]
+        );
+        let sample_plan = store.get_plan("sample-plan").expect("the sample plan survives");
+        assert_eq!(sample_plan.sections.len(), 1, "the sample plan keeps its other section");
+        assert_eq!(sample_plan.sections[0].section_id, 384);
 
-        // With the plan gone the sample data is removable like anything else.
-        store.delete_plan("sample-plan").expect("delete the sample plan");
-        store.forget_course(&sample_scope, 564).expect("removable after unheld");
         store.forget_course(&sample_scope, 2923).expect("the rest of the seed too");
 
         let real = store.capture_summary(&SCOPE).expect("real-scope summary");
@@ -3495,6 +3594,11 @@ mod tests {
             "emptying the sample scope never disturbs a real scope"
         );
         assert!(store.captured_courses(&sample_scope).expect("sample list").is_empty());
+        assert_eq!(
+            store.get_plan("sample-plan").expect("sample plan").sections.len(),
+            0,
+            "the emptied sample plan is still a plan"
+        );
     }
 
     // ---------- refresh (ticket 16) ----------
