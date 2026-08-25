@@ -87,3 +87,43 @@ export function findCandidateConflicts(
       (c.b.courseId === candidate.courseId && c.b.sectionId === candidate.sectionId)
   );
 }
+
+export interface GroupedPickerSections {
+  inPlan: Section[];
+  other: Section[];
+}
+
+/**
+ * Groups sections for the picker (Ticket 36):
+ * 1. Sections already in the plan come first in `inPlan`.
+ *    - Within `inPlan`, pinned sections come first.
+ *    - Relative catalog order is preserved within pinned sections and within unpinned sections.
+ * 2. Remaining sections come in `other`, preserving their catalog order.
+ */
+export function groupSectionsForPicker(
+  sections: readonly Section[],
+  planSections: readonly PlanSection[]
+): GroupedPickerSections {
+  const pinnedInPlan: Section[] = [];
+  const unpinnedInPlan: Section[] = [];
+  const other: Section[] = [];
+
+  for (const section of sections) {
+    const ref = { courseId: section.courseId, sectionId: section.sectionId };
+    if (isSectionInPlan(ref, planSections)) {
+      if (isSectionPinned(ref, planSections)) {
+        pinnedInPlan.push(section);
+      } else {
+        unpinnedInPlan.push(section);
+      }
+    } else {
+      other.push(section);
+    }
+  }
+
+  return {
+    inPlan: [...pinnedInPlan, ...unpinnedInPlan],
+    other,
+  };
+}
+

@@ -10,11 +10,20 @@ import {
   CheckCircle2,
   Sparkles,
   BookOpen,
+  Trash2,
 } from "lucide-react";
 
 import { Button } from "./ui/button";
 import { Badge } from "./ui/badge";
 import { Alert, AlertTitle, AlertDescription } from "./ui/alert";
+import {
+  Dialog,
+  DialogContent,
+  DialogHeader,
+  DialogTitle,
+  DialogDescription,
+  DialogFooter,
+} from "./ui/dialog";
 import { WeekGrid } from "./WeekGrid";
 import { CaptureBar } from "./CaptureBar";
 import { useCapture } from "./useCapture";
@@ -39,6 +48,7 @@ export interface PlanWorkspaceProps {
   plan: Plan | null;
   isLoading: boolean;
   error: string | null;
+  initialConfirmingClear?: boolean;
   onBack: () => void;
   onRetry: () => void;
   onReportBrokenCapture?: (error: string) => void;
@@ -50,6 +60,7 @@ export function PlanWorkspace({
   plan,
   isLoading,
   error,
+  initialConfirmingClear = false,
   onRetry,
   onReportBrokenCapture,
   onPlanUpdated,
@@ -57,6 +68,10 @@ export function PlanWorkspace({
   const [hoveredSection, setHoveredSection] = useState<Section | null>(null);
   const [isSolveOpen, setIsSolveOpen] = useState<boolean>(false);
   const [isPickerOpen, setIsPickerOpen] = useState<boolean>(true);
+  const [isConfirmingClear, setIsConfirmingClear] = useState<boolean>(
+    () => initialConfirmingClear
+  );
+  const [isClearing, setIsClearing] = useState<boolean>(false);
 
   const currentSections = plan?.sections ?? [];
 
@@ -83,12 +98,14 @@ export function PlanWorkspace({
     isLoadingSections,
     isMutating,
     error: pickerError,
+    notice: pickerNotice,
     fetchCourses,
     selectCourse,
     addSection,
     removeSection,
     togglePin,
     forgetCourse,
+    dismissNotice: dismissPickerNotice,
   } = useSectionPicker({
     campusId: planSummary.campusId,
     sessionId: planSummary.sessionId,
@@ -101,6 +118,29 @@ export function PlanWorkspace({
       fetchSummary();
     },
   });
+
+  const handleClearSchedule = async () => {
+    setIsClearing(true);
+    try {
+      let updatedPlan: Plan | null = null;
+      for (const section of currentSections) {
+        updatedPlan = await client.removeSectionFromPlan({
+          planId: planSummary.id,
+          courseId: section.courseId,
+          sectionId: section.sectionId,
+        });
+      }
+      if (updatedPlan) {
+        onPlanUpdated?.(updatedPlan);
+      }
+      setIsConfirmingClear(false);
+      onRetry();
+    } catch {
+      setIsConfirmingClear(false);
+    } finally {
+      setIsClearing(false);
+    }
+  };
 
   const {
     isRefreshing,
@@ -260,14 +300,102 @@ export function PlanWorkspace({
               </div>
             </div>
 
-            <ExportMenu
-              planSummary={planSummary}
-              plan={plan}
-              conflicts={conflicts}
-            />
+            <div className="flex items-center gap-2">
+              <Button
+                type="button"
+                variant="outline"
+                size="sm"
+                disabled={currentSections.length === 0 || isClearing || isLoading}
+                onClick={() => setIsConfirmingClear(true)}
+                className="h-9 text-xs border-slate-200 text-slate-700 hover:bg-slate-50 hover:text-slate-900 flex items-center gap-1.5"
+                data-testid="clear-schedule-button"
+                title={
+                  currentSections.length === 0
+                    ? "Plan is empty"
+                    : "Clear all sections from schedule"
+                }
+              >
+                <Trash2 className="h-3.5 w-3.5" />
+                <span>Clear schedule</span>
+              </Button>
+
+              <ExportMenu
+                planSummary={planSummary}
+                plan={plan}
+                conflicts={conflicts}
+              />
+            </div>
           </div>
         </div>
       </div>
+
+      {/* Clear Schedule Confirmation Dialog (Ticket 36) */}
+      <Dialog open={isConfirmingClear} onOpenChange={setIsConfirmingClear}>
+        <DialogContent className="max-w-md p-6" data-testid="clear-schedule-dialog">
+          <DialogHeader className="space-y-2 text-left">
+            <div className="flex items-center gap-2 text-red-600">
+              <AlertTriangle className="h-5 w-5 shrink-0" />
+              <DialogTitle className="text-base font-bold text-slate-900">
+                Clear schedule?
+              </DialogTitle>
+            </div>
+            <DialogDescription className="text-xs text-slate-600 leading-relaxed">
+              This will remove{" "}
+              <strong className="text-slate-900 font-semibold">
+                {currentSections.length}{" "}
+                {currentSections.length === 1 ? "section" : "sections"}
+              </strong>{" "}
+              from{" "}
+              <strong className="text-slate-900 font-semibold">
+                "{planSummary.name}"
+              </strong>
+              {currentSections.some((s) => s.pinned) ? (
+                <>
+                  {" "}
+                  (including{" "}
+                  <strong className="text-slate-900 font-semibold">
+                    {currentSections.filter((s) => s.pinned).length}{" "}
+                    {currentSections.filter((s) => s.pinned).length === 1
+                      ? "pinned section"
+                      : "pinned sections"}
+                  </strong>
+                  ).
+                </>
+              ) : (
+                "."
+              )}
+              <br />
+              <br />
+              This removes sections from this plan only. Captured courses and sections in your catalog will not be deleted.
+            </DialogDescription>
+          </DialogHeader>
+          <DialogFooter className="flex flex-row items-center justify-end gap-2 pt-4 border-t border-slate-100">
+            <Button
+              type="button"
+              variant="ghost"
+              size="sm"
+              disabled={isClearing}
+              onClick={() => setIsConfirmingClear(false)}
+              className="h-8 text-xs text-slate-600 hover:text-slate-900"
+              data-testid="cancel-clear-schedule"
+            >
+              Cancel
+            </Button>
+            <Button
+              type="button"
+              variant="destructive"
+              size="sm"
+              disabled={isClearing}
+              onClick={handleClearSchedule}
+              className="h-8 text-xs bg-red-600 hover:bg-red-700 text-white flex items-center gap-1"
+              data-testid="confirm-clear-schedule"
+            >
+              <Trash2 className="h-3.5 w-3.5" />
+              <span>{isClearing ? "Clearing..." : "Clear schedule"}</span>
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
 
       {/* Capture launch and running counter (ticket 12, SPEC section 4) */}
       <CaptureBar
@@ -462,10 +590,13 @@ export function PlanWorkspace({
               selectedCourseId={selectedCourseId}
               sections={sections}
               planSections={currentSections}
+              planName={planSummary.name}
               isLoadingCourses={isLoadingCourses}
               isLoadingSections={isLoadingSections}
               isMutating={isMutating}
               error={pickerError}
+              notice={pickerNotice}
+              onDismissNotice={dismissPickerNotice}
               onSelectCourse={selectCourse}
               onAddSection={handleAddSection}
               onRemoveSection={handleRemoveSection}
@@ -484,10 +615,13 @@ export function PlanWorkspace({
                 selectedCourseId={selectedCourseId}
                 sections={sections}
                 planSections={currentSections}
+                planName={planSummary.name}
                 isLoadingCourses={isLoadingCourses}
                 isLoadingSections={isLoadingSections}
                 isMutating={isMutating}
                 error={pickerError}
+                notice={pickerNotice}
+                onDismissNotice={dismissPickerNotice}
                 onSelectCourse={selectCourse}
                 onAddSection={handleAddSection}
                 onRemoveSection={handleRemoveSection}

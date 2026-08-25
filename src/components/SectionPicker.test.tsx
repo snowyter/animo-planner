@@ -583,12 +583,11 @@ describe("SectionPicker", () => {
         onHoverSection: vi.fn(),
       })
     );
-
     expect(html).toContain("Remove course from catalog");
     expect(html).toContain('data-testid="remove-course-button"');
   });
 
-  it("renders confirmation dialog naming the course and how many sections go with it when confirming removal", () => {
+  it("renders confirmation dialog naming the course and how many sections go with it when confirming removal without affected plans", () => {
     const html = renderToStaticMarkup(
       React.createElement(SectionPicker, {
         courses: mockCourses,
@@ -612,9 +611,209 @@ describe("SectionPicker", () => {
     expect(html).toContain("Remove GEARTAP from catalog?");
     expect(html).toContain("Art Appreciation");
     expect(html).toContain("2 captured sections");
+    // When no plan is affected, stays short and does not warn about plan loss
+    expect(html).not.toContain("will lose");
     expect(html).toContain("Cancel");
     expect(html).toContain("Remove course");
     expect(html).toContain('data-testid="confirm-remove-course"');
     expect(html).toContain('data-testid="cancel-remove-course"');
+  });
+
+  it("renders confirmation dialog naming affected plan and how many sections it loses when plan holds sections", () => {
+    const planSection = makePlanSection(
+      2923,
+      384,
+      "GEARTAP",
+      "S11",
+      [makeBlock("TUE", 870, 960)],
+      false
+    );
+
+    const html = renderToStaticMarkup(
+      React.createElement(SectionPicker, {
+        courses: mockCourses,
+        selectedCourseId: 2923,
+        sections: sampleSections,
+        planSections: [planSection],
+        planName: "T1 Target Schedule",
+        isLoadingCourses: false,
+        isLoadingSections: false,
+        isMutating: false,
+        error: null,
+        initialConfirmingRemove: true,
+        onSelectCourse: vi.fn(),
+        onAddSection: vi.fn(),
+        onRemoveSection: vi.fn(),
+        onRemoveCourse: vi.fn(),
+        onTogglePin: vi.fn(),
+        onHoverSection: vi.fn(),
+      })
+    );
+
+    expect(html).toContain("Remove GEARTAP from catalog?");
+    expect(html).toContain("Art Appreciation");
+    expect(html).toContain("2 captured sections");
+    // Consequence stated explicitly
+    expect(html).toContain("T1 Target Schedule");
+    expect(html).toContain("1 section");
+  });
+
+  it("renders visible non-blocking notice when notice prop is provided", () => {
+    const html = renderToStaticMarkup(
+      React.createElement(SectionPicker, {
+        courses: mockCourses,
+        selectedCourseId: 2923,
+        sections: sampleSections,
+        planSections: [],
+        isLoadingCourses: false,
+        isLoadingSections: false,
+        isMutating: false,
+        error: null,
+        notice: "Removed GEARTAP from catalog. Released 1 section from plan.",
+        onSelectCourse: vi.fn(),
+        onAddSection: vi.fn(),
+        onRemoveSection: vi.fn(),
+        onTogglePin: vi.fn(),
+        onHoverSection: vi.fn(),
+      })
+    );
+
+    expect(html).toContain("Removed GEARTAP from catalog. Released 1 section from plan.");
+    expect(html).toContain('data-testid="picker-notice"');
+  });
+
+  it("renders sections in the plan first, with pinned first, before remaining catalog sections", () => {
+    // 3 sections: S11 (in plan, unpinned), S12 (in catalog), S13 (in plan, pinned)
+    const sec11 = makeSection(2923, 384, "GEARTAP", "S11", [makeBlock("TUE", 870, 960)]);
+    const sec12 = makeSection(2923, 385, "GEARTAP", "S12", [makeBlock("MON", 450, 540)]);
+    const sec13 = makeSection(2923, 386, "GEARTAP", "S13", [makeBlock("WED", 450, 540)]);
+
+    const planSections = [
+      makePlanSection(2923, 384, "GEARTAP", "S11", [makeBlock("TUE", 870, 960)], false),
+      makePlanSection(2923, 386, "GEARTAP", "S13", [makeBlock("WED", 450, 540)], true),
+    ];
+
+    const html = renderToStaticMarkup(
+      React.createElement(SectionPicker, {
+        courses: mockCourses,
+        selectedCourseId: 2923,
+        sections: [sec11, sec12, sec13],
+        planSections,
+        isLoadingCourses: false,
+        isLoadingSections: false,
+        isMutating: false,
+        error: null,
+        onSelectCourse: vi.fn(),
+        onAddSection: vi.fn(),
+        onRemoveSection: vi.fn(),
+        onTogglePin: vi.fn(),
+        onHoverSection: vi.fn(),
+      })
+    );
+
+    const posS13 = html.indexOf('data-testid="section-row-S13"');
+    const posS11 = html.indexOf('data-testid="section-row-S11"');
+    const posS12 = html.indexOf('data-testid="section-row-S12"');
+
+    expect(posS13).toBeGreaterThan(-1);
+    expect(posS11).toBeGreaterThan(-1);
+    expect(posS12).toBeGreaterThan(-1);
+
+    // S13 is pinned in plan -> should come first
+    // S11 is unpinned in plan -> should come second
+    // S12 is not in plan -> should come last
+    expect(posS13).toBeLessThan(posS11);
+    expect(posS11).toBeLessThan(posS12);
+  });
+
+  it("renders a visible boundary between in-plan sections and remaining catalog sections", () => {
+    const sec11 = makeSection(2923, 384, "GEARTAP", "S11", [makeBlock("TUE", 870, 960)]);
+    const sec12 = makeSection(2923, 385, "GEARTAP", "S12", [makeBlock("MON", 450, 540)]);
+
+    const planSections = [
+      makePlanSection(2923, 384, "GEARTAP", "S11", [makeBlock("TUE", 870, 960)], false),
+    ];
+
+    const html = renderToStaticMarkup(
+      React.createElement(SectionPicker, {
+        courses: mockCourses,
+        selectedCourseId: 2923,
+        sections: [sec11, sec12],
+        planSections,
+        isLoadingCourses: false,
+        isLoadingSections: false,
+        isMutating: false,
+        error: null,
+        onSelectCourse: vi.fn(),
+        onAddSection: vi.fn(),
+        onRemoveSection: vi.fn(),
+        onTogglePin: vi.fn(),
+        onHoverSection: vi.fn(),
+      })
+    );
+
+    expect(html).toContain('data-testid="picker-group-divider"');
+  });
+
+  it("moves a section between groups dynamically when added to the plan", () => {
+    const sec11 = makeSection(2923, 384, "GEARTAP", "S11", [makeBlock("TUE", 870, 960)]);
+    const sec12 = makeSection(2923, 385, "GEARTAP", "S12", [makeBlock("MON", 450, 540)]);
+
+    // Before adding: S11 in plan, S12 in catalog
+    const planBefore = [
+      makePlanSection(2923, 384, "GEARTAP", "S11", [makeBlock("TUE", 870, 960)], false),
+    ];
+
+    const htmlBefore = renderToStaticMarkup(
+      React.createElement(SectionPicker, {
+        courses: mockCourses,
+        selectedCourseId: 2923,
+        sections: [sec11, sec12],
+        planSections: planBefore,
+        isLoadingCourses: false,
+        isLoadingSections: false,
+        isMutating: false,
+        error: null,
+        onSelectCourse: vi.fn(),
+        onAddSection: vi.fn(),
+        onRemoveSection: vi.fn(),
+        onTogglePin: vi.fn(),
+        onHoverSection: vi.fn(),
+      })
+    );
+
+    const dividerPosBefore = htmlBefore.indexOf('data-testid="picker-group-divider"');
+    const s12PosBefore = htmlBefore.indexOf('data-testid="section-row-S12"');
+    expect(s12PosBefore).toBeGreaterThan(dividerPosBefore);
+
+    // After adding S12 to plan: both in plan, no divider
+    const planAfter = [
+      makePlanSection(2923, 384, "GEARTAP", "S11", [makeBlock("TUE", 870, 960)], false),
+      makePlanSection(2923, 385, "GEARTAP", "S12", [makeBlock("MON", 450, 540)], false),
+    ];
+
+    const htmlAfter = renderToStaticMarkup(
+      React.createElement(SectionPicker, {
+        courses: mockCourses,
+        selectedCourseId: 2923,
+        sections: [sec11, sec12],
+        planSections: planAfter,
+        isLoadingCourses: false,
+        isLoadingSections: false,
+        isMutating: false,
+        error: null,
+        onSelectCourse: vi.fn(),
+        onAddSection: vi.fn(),
+        onRemoveSection: vi.fn(),
+        onTogglePin: vi.fn(),
+        onHoverSection: vi.fn(),
+      })
+    );
+
+    expect(htmlAfter).not.toContain('data-testid="picker-group-divider"');
+    const s11PosAfter = htmlAfter.indexOf('data-testid="section-row-S11"');
+    const s12PosAfter = htmlAfter.indexOf('data-testid="section-row-S12"');
+    expect(s11PosAfter).toBeGreaterThan(-1);
+    expect(s12PosAfter).toBeGreaterThan(-1);
   });
 });

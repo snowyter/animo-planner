@@ -25,6 +25,7 @@ export interface SectionPickerState {
   isLoadingSections: boolean;
   isMutating: boolean;
   error: string | null;
+  notice: string | null;
   hoveredSection: Section | null;
   fetchCourses: () => Promise<void>;
   /// Reloads the captured course list, keeping the current selection when
@@ -38,6 +39,7 @@ export interface SectionPickerState {
   togglePin: (section: Section, pinned: boolean) => Promise<Plan>;
   forgetCourse: (courseId: number) => Promise<ForgetCourseOutcome>;
   setHoveredSection: (section: Section | null) => void;
+  dismissNotice: () => void;
 }
 
 export function useSectionPickerState(options: SectionPickerOptions): SectionPickerState {
@@ -48,6 +50,7 @@ export function useSectionPickerState(options: SectionPickerOptions): SectionPic
   let isLoadingSections = false;
   let isMutating = false;
   let error: string | null = null;
+  let notice: string | null = null;
   let hoveredSection: Section | null = null;
 
   const selectCourse = async (courseId: number): Promise<void> => {
@@ -174,10 +177,16 @@ export function useSectionPickerState(options: SectionPickerOptions): SectionPic
     }
   };
 
+  const dismissNotice = () => {
+    notice = null;
+  };
+
   const forgetCourse = async (courseId: number): Promise<ForgetCourseOutcome> => {
     isMutating = true;
     error = null;
     try {
+      const targetCourse = courses.find((c) => c.courseId === courseId);
+      const courseName = targetCourse?.code ?? "Course";
       const outcome = await client.forgetCapturedCourse({
         campusId: options.campusId,
         sessionId: options.sessionId,
@@ -191,6 +200,17 @@ export function useSectionPickerState(options: SectionPickerOptions): SectionPic
           selectedCourseId = null;
           sections = [];
         }
+      }
+      const totalSectionsRemoved = outcome.affectedPlans.reduce(
+        (sum, p) => sum + p.removedSections,
+        0
+      );
+      if (totalSectionsRemoved > 0) {
+        notice = `Removed ${courseName} from catalog. Released ${totalSectionsRemoved} ${
+          totalSectionsRemoved === 1 ? "section" : "sections"
+        } from ${outcome.affectedPlans.length === 1 ? "1 plan" : `${outcome.affectedPlans.length} plans`}.`;
+      } else {
+        notice = `Removed ${courseName} from catalog.`;
       }
       options.onCaptureUpdated?.(outcome.summary);
       return outcome;
@@ -229,6 +249,9 @@ export function useSectionPickerState(options: SectionPickerOptions): SectionPic
     get error() {
       return error;
     },
+    get notice() {
+      return notice;
+    },
     get hoveredSection() {
       return hoveredSection;
     },
@@ -240,6 +263,7 @@ export function useSectionPickerState(options: SectionPickerOptions): SectionPic
     togglePin,
     forgetCourse,
     setHoveredSection,
+    dismissNotice,
   };
 }
 
@@ -251,7 +275,12 @@ export function useSectionPicker(options: SectionPickerOptions) {
   const [isLoadingSections, setIsLoadingSections] = useState<boolean>(false);
   const [isMutating, setIsMutating] = useState<boolean>(false);
   const [error, setError] = useState<string | null>(null);
+  const [notice, setNotice] = useState<string | null>(null);
   const [hoveredSection, setHoveredSection] = useState<Section | null>(null);
+
+  const dismissNotice = useCallback(() => {
+    setNotice(null);
+  }, []);
 
   const selectCourse = useCallback(
     async (courseId: number) => {
@@ -467,11 +496,13 @@ export function useSectionPicker(options: SectionPickerOptions) {
     [options]
   );
 
-  const forgetCourse = useCallback(
+    const forgetCourse = useCallback(
     async (courseId: number): Promise<ForgetCourseOutcome> => {
       setIsMutating(true);
       setError(null);
       try {
+        const targetCourse = courses.find((c) => c.courseId === courseId);
+        const courseName = targetCourse?.code ?? "Course";
         const outcome = await client.forgetCapturedCourse({
           campusId: options.campusId,
           sessionId: options.sessionId,
@@ -481,6 +512,19 @@ export function useSectionPicker(options: SectionPickerOptions) {
         // list has one source of truth instead of a fetch on mount and a
         // local patch here.
         await syncCourses();
+        const totalSectionsRemoved = outcome.affectedPlans.reduce(
+          (sum, p) => sum + p.removedSections,
+          0
+        );
+        if (totalSectionsRemoved > 0) {
+          setNotice(
+            `Removed ${courseName} from catalog. Released ${totalSectionsRemoved} ${
+              totalSectionsRemoved === 1 ? "section" : "sections"
+            } from ${outcome.affectedPlans.length === 1 ? "1 plan" : `${outcome.affectedPlans.length} plans`}.`
+          );
+        } else {
+          setNotice(`Removed ${courseName} from catalog.`);
+        }
         options.onCaptureUpdated?.(outcome.summary);
         return outcome;
       } catch (err) {
@@ -491,7 +535,7 @@ export function useSectionPicker(options: SectionPickerOptions) {
         setIsMutating(false);
       }
     },
-    [options, syncCourses]
+    [courses, options, syncCourses]
   );
 
   return {
@@ -502,6 +546,7 @@ export function useSectionPicker(options: SectionPickerOptions) {
     isLoadingSections,
     isMutating,
     error,
+    notice,
     hoveredSection,
     fetchCourses,
     syncCourses,
@@ -511,5 +556,6 @@ export function useSectionPicker(options: SectionPickerOptions) {
     togglePin,
     forgetCourse,
     setHoveredSection,
+    dismissNotice,
   };
 }
