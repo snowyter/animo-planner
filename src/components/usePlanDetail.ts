@@ -1,4 +1,4 @@
-import { useState, useCallback, useEffect } from "react";
+import { useState, useCallback, useEffect, useRef } from "react";
 import * as client from "../adapters/ipc/client";
 import type { Plan } from "../adapters/ipc/types";
 import { formatErrorMessage } from "../core/error";
@@ -45,17 +45,28 @@ export function usePlanDetail(planId: string) {
   const [isLoading, setIsLoading] = useState<boolean>(false);
   const [error, setError] = useState<string | null>(null);
 
+  // Which plan the newest request is for. A fetch for a plan the student has
+  // already navigated away from must not land: an older request that resolves
+  // late would otherwise overwrite the current plan's state, which showed up
+  // as "plan \"sample-plan\" not found" sitting over a loaded plan.
+  const currentPlanIdRef = useRef<string>(planId);
+
   const fetchPlan = useCallback(async () => {
+    currentPlanIdRef.current = planId;
     setIsLoading(true);
     setError(null);
     try {
       const result = await client.getPlan({ planId });
+      if (currentPlanIdRef.current !== planId) return;
       setPlan(result);
     } catch (err) {
+      if (currentPlanIdRef.current !== planId) return;
       setError(formatErrorMessage(err));
       setPlan(null);
     } finally {
-      setIsLoading(false);
+      if (currentPlanIdRef.current === planId) {
+        setIsLoading(false);
+      }
     }
   }, [planId]);
 

@@ -23,3 +23,4 @@ docs/ArchersHub-Course-Finder-*.html
 # Public key lives in src-tauri/tauri.conf.json (plugins.updater.pubkey).
 *.key
 *.key.pub
+release-staging/
