@@ -6,3 +6,4 @@ pub mod remote_config;
 pub mod sample_seed;
 pub mod selection_script;
 pub mod store;
+pub mod update_service;
