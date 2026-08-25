@@ -1,5 +1,6 @@
 pub mod capture_report;
 pub mod conflicts;
+pub mod hub_pages;
 pub mod ics;
 pub mod ipc_types;
 pub mod options;

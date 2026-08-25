@@ -20,6 +20,7 @@
 //! own click makes, and no other page interaction is introduced.
 
 use crate::adapters::capture_window::{ARCHERS_HUB_URL, CAPTURE_WINDOW_LABEL};
+use crate::core::hub_pages::{classify_hub_page, HubPage, COURSE_FINDER_URL};
 use crate::core::ipc_types::RefreshProgress;
 use crate::core::parser::{ParsedSection, SelectorConfig};
 use crate::core::refresh::{
@@ -30,13 +31,22 @@ use std::net::{TcpStream, ToSocketAddrs};
 use std::sync::mpsc::{Receiver, Sender};
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
-use tauri::Manager;
+use tauri::{Manager, Url};
 
 /// How long the driver waits for one course's rendered results to arrive on
 /// the loopback endpoint before declaring the session expired. Long enough
 /// for a slow search round trip plus the observer's debounce; short enough
 /// that a closed or dead popup can never hang the run.
 pub const REFRESH_RESPONSE_TIMEOUT_MS: u64 = 15_000;
+
+/// How long the driver waits between re-evaluating the selection into a
+/// popup that has not answered yet (ticket 37). A freshly navigated Course
+/// Finder is not ready the instant `navigate()` returns, so the selection is
+/// retried on this interval until the response lands or the step's overall
+/// budget ([`REFRESH_RESPONSE_TIMEOUT_MS`]) is spent — spaced so a dead page
+/// produces a handful of evals over the budget rather than a tight loop of
+/// searches against the hub.
+pub const SELECTION_RETRY_INTERVAL_MS: u64 = 3_000;
 
 /// How long the connectivity probe waits for the hub host to accept a TCP
 /// connection before the run is reported offline.
@@ -291,6 +301,16 @@ impl LiveRefreshSource {
             response_timeout: Duration::from_millis(REFRESH_RESPONSE_TIMEOUT_MS),
         }
     }
+
+    /// Which hub page the popup is showing right now. An unreadable URL
+    /// counts as [`HubPage::Elsewhere`], which leads to navigation — never
+    /// as a reason to skip driving.
+    fn current_page(&self, window: &tauri::WebviewWindow) -> HubPage {
+        window
+            .url()
+            .map(|url| classify_hub_page(url.as_str()))
+            .unwrap_or(HubPage::Elsewhere)
+    }
 }
 
 impl RefreshSource for LiveRefreshSource {
@@ -319,21 +339,65 @@ impl RefreshSource for LiveRefreshSource {
             &self.selector_config,
             course.course_id,
         );
-        if window.eval(&script).is_err() {
-            return FetchResult::SessionExpired;
+
+        // The student is not assumed to have left the popup on Course Finder
+        // (ticket 37): signing in lands the hub on the Student Dashboard,
+        // where the selection script's guards no-op and nothing ever renders.
+        // So decide from the current URL first — a popup already on Course
+        // Finder is never reloaded out from under the student, one sitting on
+        // the sign-in page *is* an expired session, and anything else is
+        // navigated there (a GET of a page the student opens by hand; the
+        // ticket-10 initialization script runs per document, so the capture
+        // observer comes back on its own). Nothing about the login is read
+        // (ADR-0002): only the URL, never the page's contents or credentials.
+        match self.current_page(&window) {
+            HubPage::LoginPage => return FetchResult::SessionExpired,
+            HubPage::Elsewhere => {
+                let course_finder =
+                    Url::parse(COURSE_FINDER_URL).expect("the Course Finder URL is a valid URL");
+                if window.navigate(course_finder).is_err() {
+                    return FetchResult::SessionExpired;
+                }
+            }
+            HubPage::CourseFinder => {}
         }
-        let received = {
-            let receiver = self
-                .receiver
-                .lock()
-                .unwrap_or_else(|poisoned| poisoned.into_inner());
-            next_response(&receiver, self.response_timeout)
-        };
-        match received {
-            Some(batch) => FetchResult::Page {
-                html: response_page_html(&self.selector_config, &batch),
-            },
-            None => FetchResult::SessionExpired,
+
+        // A freshly navigated page is not ready when `navigate` returns, and
+        // a retry against a page that is not ready stays a clean no-op: the
+        // selection script's guards return before it sets the force flag. So
+        // drive the selection on the retry interval until the response lands
+        // or this step's overall budget — today's timeout — is spent.
+        let deadline = Instant::now() + self.response_timeout;
+        loop {
+            if window.eval(&script).is_err() {
+                return FetchResult::SessionExpired;
+            }
+            let slice = deadline
+                .saturating_duration_since(Instant::now())
+                .min(Duration::from_millis(SELECTION_RETRY_INTERVAL_MS));
+            let received = {
+                let receiver = self
+                    .receiver
+                    .lock()
+                    .unwrap_or_else(|poisoned| poisoned.into_inner());
+                next_response(&receiver, slice)
+            };
+            match received {
+                Some(batch) => {
+                    return FetchResult::Page {
+                        html: response_page_html(&self.selector_config, &batch),
+                    };
+                }
+                None if Instant::now() >= deadline => return FetchResult::SessionExpired,
+                None => {
+                    // A navigation that got bounced to the sign-in page is a
+                    // genuinely expired session — report it without burning
+                    // the rest of the budget on retries that cannot render.
+                    if self.current_page(&window) == HubPage::LoginPage {
+                        return FetchResult::SessionExpired;
+                    }
+                }
+            }
         }
     }
 }
@@ -975,6 +1039,16 @@ mod tests {
     #[test]
     fn the_response_timeout_bounds_a_dead_popup_without_hanging_the_run() {
         assert_eq!(REFRESH_RESPONSE_TIMEOUT_MS, 15_000);
+    }
+
+    #[test]
+    fn selection_retries_are_spaced_so_a_dead_page_yields_a_handful_of_evals_not_a_tight_loop() {
+        assert_eq!(SELECTION_RETRY_INTERVAL_MS, 3_000);
+        let evals_over_budget = REFRESH_RESPONSE_TIMEOUT_MS / SELECTION_RETRY_INTERVAL_MS;
+        assert!(
+            (1..=6).contains(&evals_over_budget),
+            "a dead page is re-evaluated {evals_over_budget} times over the budget"
+        );
     }
 
     #[test]
