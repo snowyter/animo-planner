@@ -52,6 +52,7 @@ import {
   isSectionInPlan,
   isSectionPinned,
   findCandidateConflicts,
+  groupSectionsForPicker,
 } from "../core/section";
 import { formatMinutesToTime12 } from "../core/grid";
 
@@ -60,10 +61,12 @@ export interface SectionPickerProps {
   selectedCourseId: number | null;
   sections: Section[];
   planSections: PlanSection[];
+  planName?: string;
   isLoadingCourses?: boolean;
   isLoadingSections?: boolean;
   isMutating?: boolean;
   error?: string | null;
+  notice?: string | null;
   initialConfirmingRemove?: boolean;
   onSelectCourse: (courseId: number) => void;
   onAddSection: (section: Section) => void;
@@ -72,6 +75,7 @@ export interface SectionPickerProps {
   onTogglePin: (section: Section, pinned: boolean) => void;
   onHoverSection: (section: Section | null) => void;
   onDismissError?: () => void;
+  onDismissNotice?: () => void;
   onClose?: () => void;
   /**
    * Which half to render. The chrome -- title, course selector, and the
@@ -89,10 +93,12 @@ export function SectionPicker({
   selectedCourseId,
   sections,
   planSections,
+  planName,
   isLoadingCourses = false,
   isLoadingSections = false,
   isMutating = false,
   error = null,
+  notice = null,
   initialConfirmingRemove = false,
   render = "all",
   onSelectCourse,
@@ -102,6 +108,7 @@ export function SectionPicker({
   onTogglePin,
   onHoverSection,
   onDismissError,
+  onDismissNotice,
   onClose,
   className = "",
 }: SectionPickerProps) {
@@ -116,6 +123,284 @@ export function SectionPicker({
   const selectedCourse = useMemo(() => {
     return courses.find((c) => c.courseId === selectedCourseId) ?? null;
   }, [courses, selectedCourseId]);
+
+  const affectedPlanSectionsCount = useMemo(() => {
+    if (!selectedCourse) return 0;
+    return planSections.filter((ps) => ps.courseId === selectedCourse.courseId).length;
+  }, [selectedCourse, planSections]);
+
+  const groupedSections = useMemo(() => {
+    return groupSectionsForPicker(sections, planSections);
+  }, [sections, planSections]);
+
+  const renderSectionRow = (section: Section) => {
+    const inPlan = isSectionInPlan(
+      { courseId: section.courseId, sectionId: section.sectionId },
+      planSections
+    );
+    const pinned =
+      inPlan &&
+      isSectionPinned(
+        { courseId: section.courseId, sectionId: section.sectionId },
+        planSections
+      );
+    const isMissing =
+      inPlan &&
+      planSections.some(
+        (ps) =>
+          ps.courseId === section.courseId &&
+          ps.sectionId === section.sectionId &&
+          ps.missing
+      );
+    const candidateConflicts = !inPlan
+      ? findCandidateConflicts(section, planSections)
+      : [];
+    const hasConflict = candidateConflicts.length > 0;
+    const teacherDisplay = formatTeacher(
+      section.latestSnapshot?.teacher
+    );
+    const enrolledCapDisplay = formatEnrolledCap(
+      section.latestSnapshot?.enrolled ?? 0,
+      section.enrollCap
+    );
+    const remark = section.latestSnapshot?.remark;
+
+    return (
+      <div
+        key={`${section.courseId}-${section.sectionId}`}
+        data-testid={`section-row-${section.sectionCode}`}
+        data-in-plan={inPlan ? "true" : "false"}
+        data-pinned={pinned ? "true" : "false"}
+        data-missing={isMissing ? "true" : "false"}
+        onMouseEnter={() => onHoverSection(section)}
+        onMouseLeave={() => onHoverSection(null)}
+        onFocus={() => onHoverSection(section)}
+        onBlur={() => onHoverSection(null)}
+        className={`rounded-xl border transition-all duration-150 p-3 ${
+          isMissing
+            ? "border-amber-300 bg-amber-50/40 shadow-xs"
+            : inPlan
+            ? "border-emerald-200 bg-emerald-50/40 shadow-xs"
+            : "border-slate-200 bg-white hover:border-slate-300 hover:shadow-xs"
+        }`}
+      >
+        {/* Always stacked. This card sits in the picking column,
+            roughly 380-440px wide, and Tailwind's `lg:` keys off the
+            viewport -- so going horizontal here squeezed the schedule
+            blocks until "9:15 AM - 10:45 AM" broke across lines. */}
+        <div className="flex flex-col gap-2">
+          {/* Left: Identity, Modality, Blocks, Details */}
+          <div className="space-y-1.5 flex-1 min-w-0">
+            {/* Row 1: Section Code, Modality, Type, Credits, In-Plan / Conflict Badges */}
+            <div className="flex flex-wrap items-center gap-2">
+              <span className="font-bold text-base text-slate-900">
+                {section.sectionCode}
+              </span>
+
+              <Badge
+                variant={
+                  section.modality === "ONLINE"
+                    ? "session"
+                    : section.modality === "HYBRID"
+                    ? "secondary"
+                    : "campus"
+                }
+                className="text-[11px] font-semibold"
+              >
+                {section.modality}
+              </Badge>
+
+              {section.courseType && (
+                <span className="text-xs text-slate-500 font-medium">
+                  • {section.courseType}
+                </span>
+              )}
+
+              {section.credits !== null && section.credits !== undefined && (
+                <span className="text-xs text-slate-500 font-medium">
+                  • {section.credits} {section.credits === 1 ? "credit" : "credits"}
+                </span>
+              )}
+
+              {inPlan && (
+                <Badge
+                  variant="default"
+                  className="bg-emerald-600 text-white flex items-center gap-1 text-[11px]"
+                >
+                  <Check className="h-3 w-3" />
+                  <span>In Plan</span>
+                </Badge>
+              )}
+
+              {pinned && (
+                <Badge
+                  variant="secondary"
+                  className="bg-slate-200 text-slate-800 flex items-center gap-1 text-[11px]"
+                >
+                  <Pin className="h-3 w-3" />
+                  <span>Pinned</span>
+                </Badge>
+              )}
+
+              {isMissing && (
+                <Badge
+                  variant="destructive"
+                  className="bg-amber-100 text-amber-900 border border-amber-300 flex items-center gap-1 text-[11px]"
+                >
+                  <AlertTriangle className="h-3 w-3 text-amber-700" />
+                  <span>Missing</span>
+                </Badge>
+              )}
+
+              {hasConflict && !inPlan && (
+                <Badge
+                  variant="destructive"
+                  className="bg-amber-100 text-amber-800 border border-amber-300 flex items-center gap-1 text-[11px]"
+                >
+                  <AlertTriangle className="h-3 w-3 text-amber-600" />
+                  <span>
+                    Conflict ({candidateConflicts.length}{" "}
+                    {candidateConflicts.length === 1 ? "day" : "days"})
+                  </span>
+                </Badge>
+              )}
+
+              {/* On the identity row, which has spare width, rather
+                  than on a row of its own: a separate action row cost
+                  about sixty vertical pixels per card and roughly a
+                  third of what the list could show at once. */}
+              <div className="ml-auto flex shrink-0 items-center gap-1.5">
+                {inPlan ? (
+                  <>
+                    <Button
+                      type="button"
+                      variant="outline"
+                      size="sm"
+                      disabled={isMutating}
+                      onClick={() => onTogglePin(section, !pinned)}
+                      className="h-8 text-xs flex items-center gap-1"
+                      title={pinned ? "Unpin section" : "Pin section"}
+                    >
+                      {pinned ? (
+                        <>
+                          <PinOff className="h-3.5 w-3.5 text-slate-500" />
+                          <span>Unpin</span>
+                        </>
+                      ) : (
+                        <>
+                          <Pin className="h-3.5 w-3.5 text-slate-500" />
+                          <span>Pin</span>
+                        </>
+                      )}
+                    </Button>
+
+                    <Button
+                      type="button"
+                      variant="outline"
+                      size="sm"
+                      disabled={isMutating}
+                      onClick={() => onRemoveSection(section)}
+                      className="h-8 text-xs border-red-200 text-red-600 hover:bg-red-50 hover:text-red-700 flex items-center gap-1"
+                    >
+                      <Trash2 className="h-3.5 w-3.5" />
+                      <span>Remove</span>
+                    </Button>
+                  </>
+                ) : (
+                  <Button
+                    type="button"
+                    variant="default"
+                    size="sm"
+                    disabled={isMutating}
+                    onClick={() => onAddSection(section)}
+                    className="h-8 text-xs bg-emerald-600 hover:bg-emerald-700 text-white flex items-center gap-1 shadow-xs"
+                  >
+                    <Plus className="h-3.5 w-3.5" />
+                    <span>Add to Plan</span>
+                  </Button>
+                )}
+              </div>
+            </div>
+
+            {/* Row 2: Schedule Blocks */}
+            <div className="flex flex-wrap items-center gap-1.5">
+              {section.blocks.map((block: ScheduleBlock, idx: number) => {
+                const isF2F = block.modality === "F2F";
+                return (
+                  <div
+                    key={`${block.day}-${block.startMin}-${idx}`}
+                    className="flex items-center gap-1.5 rounded-md border border-slate-200 bg-slate-50/80 px-2 py-0.5 text-xs font-medium text-slate-800"
+                  >
+                    <span className="font-bold text-slate-900">
+                      {block.day}
+                    </span>
+                    <span className="text-slate-400">•</span>
+                    <span className="font-mono text-[11px] text-slate-700 whitespace-nowrap">
+                      {formatMinutesToTime12(block.startMin)} –{" "}
+                      {formatMinutesToTime12(block.endMin)}
+                    </span>
+                    <span className="text-slate-400">•</span>
+                    {isF2F ? (
+                      <span className="flex items-center gap-1 text-emerald-700 font-semibold">
+                        <Building2 className="h-3 w-3 shrink-0" />
+                        <span>{block.location ?? "Room"}</span>
+                      </span>
+                    ) : (
+                      <span className="flex items-center gap-1 text-blue-700 font-semibold">
+                        <Globe className="h-3 w-3 shrink-0" />
+                        <span>Online</span>
+                      </span>
+                    )}
+                  </div>
+                );
+              })}
+            </div>
+
+            {/* Row 3: Teacher, Enrolled / Cap, Remark */}
+            <div className="flex flex-wrap items-center gap-y-1 gap-x-4 text-xs text-slate-600">
+              {/* Teacher: Blank teacher displays as Unknown (never absent or a dash) */}
+              <div className="flex items-center gap-1.5">
+                <User className="h-3.5 w-3.5 text-slate-400" />
+                <span>
+                  Teacher:{" "}
+                  <span
+                    className={`font-medium ${
+                      teacherDisplay === "Unknown"
+                        ? "text-slate-500 italic"
+                        : "text-slate-900"
+                    }`}
+                  >
+                    {teacherDisplay}
+                  </span>
+                </span>
+              </div>
+
+              {/* Enrolled / Cap */}
+              <div className="flex items-center gap-1.5">
+                <Users className="h-3.5 w-3.5 text-slate-400" />
+                <span>
+                  Enrolled:{" "}
+                  <span className="font-mono font-semibold text-slate-900">
+                    {enrolledCapDisplay}
+                  </span>
+                </span>
+              </div>
+
+              {/* Remark: verbatim opaque display when present */}
+              {remark && (
+                <div className="flex items-center gap-1.5 text-slate-500">
+                  <MessageSquare className="h-3.5 w-3.5 text-slate-400 shrink-0" />
+                  <span className="truncate max-w-sm" title={remark}>
+                    {remark}
+                  </span>
+                </div>
+              )}
+            </div>
+          </div>
+        </div>
+      </div>
+    );
+  };
 
   return (
     <Card className={`w-full min-w-0 border-slate-200 bg-white shadow-xs ${className}`}>
@@ -238,9 +523,16 @@ export function SectionPicker({
                     {selectedCourse.sectionCount === 1 ? "captured section" : "captured sections"}
                   </strong>{" "}
                   from your local database.
-                  <br />
-                  <br />
-                  This action is destructive and removes captured sections from your catalog.
+                  {affectedPlanSectionsCount > 0 && (
+                    <>
+                      <br />
+                      <br />
+                      <span className="text-amber-800 font-medium">
+                        {planName ? `"${planName}"` : "Your plan"} will lose {affectedPlanSectionsCount}{" "}
+                        {affectedPlanSectionsCount === 1 ? "section" : "sections"}.
+                      </span>
+                    </>
+                  )}
                 </DialogDescription>
               </DialogHeader>
               <DialogFooter className="flex flex-row items-center justify-end gap-2 pt-4 border-t border-slate-100">
@@ -283,6 +575,32 @@ export function SectionPicker({
 
       {render !== "chrome" && (
       <CardContent className="p-4 sm:p-5">
+        {notice && (
+          <div
+            data-testid="picker-notice"
+            className="mb-4 rounded-lg border border-emerald-200 bg-emerald-50 p-3 text-xs text-emerald-800 flex items-start justify-between gap-2"
+            role="status"
+          >
+            <div className="flex items-start gap-2">
+              <Check className="h-4 w-4 text-emerald-600 shrink-0 mt-0.5" />
+              <div className="space-y-0.5">
+                <span className="font-semibold block">Notice</span>
+                <span>{notice}</span>
+              </div>
+            </div>
+            {onDismissNotice && (
+              <button
+                type="button"
+                onClick={onDismissNotice}
+                className="text-emerald-500 hover:text-emerald-700 p-0.5 rounded-sm"
+                aria-label="Dismiss notice"
+              >
+                <X className="h-3.5 w-3.5" />
+              </button>
+            )}
+          </div>
+        )}
+
         {error && (
           <div
             className="mb-4 rounded-lg border border-red-200 bg-red-50 p-3 text-xs text-red-700 flex items-start justify-between gap-2"
@@ -347,268 +665,16 @@ export function SectionPicker({
             data-testid="section-list"
             className="space-y-2 lg:max-h-[700px] lg:overflow-y-auto lg:pr-1"
           >
-            {sections.map((section) => {
-              const inPlan = isSectionInPlan(
-                { courseId: section.courseId, sectionId: section.sectionId },
-                planSections
-              );
-              const pinned = inPlan && isSectionPinned(
-                { courseId: section.courseId, sectionId: section.sectionId },
-                planSections
-              );
-              const isMissing = inPlan && planSections.some(
-                (ps) => ps.courseId === section.courseId && ps.sectionId === section.sectionId && ps.missing
-              );
-              const candidateConflicts = !inPlan
-                ? findCandidateConflicts(section, planSections)
-                : [];
-              const hasConflict = candidateConflicts.length > 0;
-              const teacherDisplay = formatTeacher(
-                section.latestSnapshot?.teacher
-              );
-              const enrolledCapDisplay = formatEnrolledCap(
-                section.latestSnapshot?.enrolled ?? 0,
-                section.enrollCap
-              );
-              const remark = section.latestSnapshot?.remark;
-
-              return (
-                <div
-                  key={`${section.courseId}-${section.sectionId}`}
-                  data-testid={`section-row-${section.sectionCode}`}
-                  data-in-plan={inPlan ? "true" : "false"}
-                  data-pinned={pinned ? "true" : "false"}
-                  data-missing={isMissing ? "true" : "false"}
-                  onMouseEnter={() => onHoverSection(section)}
-                  onMouseLeave={() => onHoverSection(null)}
-                  onFocus={() => onHoverSection(section)}
-                  onBlur={() => onHoverSection(null)}
-                  className={`rounded-xl border transition-all duration-150 p-3 ${
-                    isMissing
-                      ? "border-amber-300 bg-amber-50/40 shadow-xs"
-                      : inPlan
-                      ? "border-emerald-200 bg-emerald-50/40 shadow-xs"
-                      : "border-slate-200 bg-white hover:border-slate-300 hover:shadow-xs"
-                  }`}
-                >
-                  {/* Always stacked. This card sits in the picking column,
-                      roughly 380-440px wide, and Tailwind's `lg:` keys off the
-                      viewport -- so going horizontal here squeezed the schedule
-                      blocks until "9:15 AM - 10:45 AM" broke across lines. */}
-                  <div className="flex flex-col gap-2">
-                    {/* Left: Identity, Modality, Blocks, Details */}
-                    <div className="space-y-1.5 flex-1 min-w-0">
-                      {/* Row 1: Section Code, Modality, Type, Credits, In-Plan / Conflict Badges */}
-                      <div className="flex flex-wrap items-center gap-2">
-                        <span className="font-bold text-base text-slate-900">
-                          {section.sectionCode}
-                        </span>
-
-                        <Badge
-                          variant={
-                            section.modality === "ONLINE"
-                              ? "session"
-                              : section.modality === "HYBRID"
-                              ? "secondary"
-                              : "campus"
-                          }
-                          className="text-[11px] font-semibold"
-                        >
-                          {section.modality}
-                        </Badge>
-
-                        {section.courseType && (
-                          <span className="text-xs text-slate-500 font-medium">
-                            • {section.courseType}
-                          </span>
-                        )}
-
-                        {section.credits !== null && section.credits !== undefined && (
-                          <span className="text-xs text-slate-500 font-medium">
-                            • {section.credits} {section.credits === 1 ? "credit" : "credits"}
-                          </span>
-                        )}
-
-                        {inPlan && (
-                          <Badge
-                            variant="default"
-                            className="bg-emerald-600 text-white flex items-center gap-1 text-[11px]"
-                          >
-                            <Check className="h-3 w-3" />
-                            <span>In Plan</span>
-                          </Badge>
-                        )}
-
-                        {pinned && (
-                          <Badge
-                            variant="secondary"
-                            className="bg-slate-200 text-slate-800 flex items-center gap-1 text-[11px]"
-                          >
-                            <Pin className="h-3 w-3" />
-                            <span>Pinned</span>
-                          </Badge>
-                        )}
-
-                        {isMissing && (
-                          <Badge
-                            variant="destructive"
-                            className="bg-amber-100 text-amber-900 border border-amber-300 flex items-center gap-1 text-[11px]"
-                          >
-                            <AlertTriangle className="h-3 w-3 text-amber-700" />
-                            <span>Missing</span>
-                          </Badge>
-                        )}
-
-                        {hasConflict && !inPlan && (
-                          <Badge
-                            variant="destructive"
-                            className="bg-amber-100 text-amber-800 border border-amber-300 flex items-center gap-1 text-[11px]"
-                          >
-                            <AlertTriangle className="h-3 w-3 text-amber-600" />
-                            <span>
-                              Conflict ({candidateConflicts.length}{" "}
-                              {candidateConflicts.length === 1 ? "day" : "days"})
-                            </span>
-                          </Badge>
-                        )}
-
-                        {/* On the identity row, which has spare width, rather
-                            than on a row of its own: a separate action row cost
-                            about sixty vertical pixels per card and roughly a
-                            third of what the list could show at once. */}
-                  <div className="ml-auto flex shrink-0 items-center gap-1.5">
-                    {inPlan ? (
-                      <>
-                        <Button
-                          type="button"
-                          variant="outline"
-                          size="sm"
-                          disabled={isMutating}
-                          onClick={() => onTogglePin(section, !pinned)}
-                          className="h-8 text-xs flex items-center gap-1"
-                          title={pinned ? "Unpin section" : "Pin section"}
-                        >
-                          {pinned ? (
-                            <>
-                              <PinOff className="h-3.5 w-3.5 text-slate-500" />
-                              <span>Unpin</span>
-                            </>
-                          ) : (
-                            <>
-                              <Pin className="h-3.5 w-3.5 text-slate-500" />
-                              <span>Pin</span>
-                            </>
-                          )}
-                        </Button>
-
-                        <Button
-                          type="button"
-                          variant="outline"
-                          size="sm"
-                          disabled={isMutating}
-                          onClick={() => onRemoveSection(section)}
-                          className="h-8 text-xs border-red-200 text-red-600 hover:bg-red-50 hover:text-red-700 flex items-center gap-1"
-                        >
-                          <Trash2 className="h-3.5 w-3.5" />
-                          <span>Remove</span>
-                        </Button>
-                      </>
-                    ) : (
-                      <Button
-                        type="button"
-                        variant="default"
-                        size="sm"
-                        disabled={isMutating}
-                        onClick={() => onAddSection(section)}
-                        className="h-8 text-xs bg-emerald-600 hover:bg-emerald-700 text-white flex items-center gap-1 shadow-xs"
-                      >
-                        <Plus className="h-3.5 w-3.5" />
-                        <span>Add to Plan</span>
-                      </Button>
-                    )}
-                  </div>
-                      </div>
-
-                      {/* Row 2: Schedule Blocks */}
-                      <div className="flex flex-wrap items-center gap-1.5">
-                        {section.blocks.map((block: ScheduleBlock, idx: number) => {
-                          const isF2F = block.modality === "F2F";
-                          return (
-                            <div
-                              key={`${block.day}-${block.startMin}-${idx}`}
-                              className="flex items-center gap-1.5 rounded-md border border-slate-200 bg-slate-50/80 px-2 py-0.5 text-xs font-medium text-slate-800"
-                            >
-                              <span className="font-bold text-slate-900">
-                                {block.day}
-                              </span>
-                              <span className="text-slate-400">•</span>
-                              <span className="font-mono text-[11px] text-slate-700 whitespace-nowrap">
-                                {formatMinutesToTime12(block.startMin)} –{" "}
-                                {formatMinutesToTime12(block.endMin)}
-                              </span>
-                              <span className="text-slate-400">•</span>
-                              {isF2F ? (
-                                <span className="flex items-center gap-1 text-emerald-700 font-semibold">
-                                  <Building2 className="h-3 w-3 shrink-0" />
-                                  <span>{block.location ?? "Room"}</span>
-                                </span>
-                              ) : (
-                                <span className="flex items-center gap-1 text-blue-700 font-semibold">
-                                  <Globe className="h-3 w-3 shrink-0" />
-                                  <span>Online</span>
-                                </span>
-                              )}
-                            </div>
-                          );
-                        })}
-                      </div>
-
-                      {/* Row 3: Teacher, Enrolled / Cap, Remark */}
-                      <div className="flex flex-wrap items-center gap-y-1 gap-x-4 text-xs text-slate-600">
-                        {/* Teacher: Blank teacher displays as Unknown (never absent or a dash) */}
-                        <div className="flex items-center gap-1.5">
-                          <User className="h-3.5 w-3.5 text-slate-400" />
-                          <span>
-                            Teacher:{" "}
-                            <span
-                              className={`font-medium ${
-                                teacherDisplay === "Unknown"
-                                  ? "text-slate-500 italic"
-                                  : "text-slate-900"
-                              }`}
-                            >
-                              {teacherDisplay}
-                            </span>
-                          </span>
-                        </div>
-
-                        {/* Enrolled / Cap */}
-                        <div className="flex items-center gap-1.5">
-                          <Users className="h-3.5 w-3.5 text-slate-400" />
-                          <span>
-                            Enrolled:{" "}
-                            <span className="font-mono font-semibold text-slate-900">
-                              {enrolledCapDisplay}
-                            </span>
-                          </span>
-                        </div>
-
-                        {/* Remark: verbatim opaque display when present */}
-                        {remark && (
-                          <div className="flex items-center gap-1.5 text-slate-500">
-                            <MessageSquare className="h-3.5 w-3.5 text-slate-400 shrink-0" />
-                            <span className="truncate max-w-sm" title={remark}>
-                              {remark}
-                            </span>
-                          </div>
-                        )}
-                      </div>
-                    </div>
-
-                  </div>
-                </div>
-              );
-            })}
+            {groupedSections.inPlan.map(renderSectionRow)}
+            {groupedSections.inPlan.length > 0 && groupedSections.other.length > 0 && (
+              <div
+                data-testid="picker-group-divider"
+                className="relative my-3 flex items-center justify-center border-t border-slate-200 pt-2 text-[11px] font-semibold uppercase tracking-wider text-slate-400"
+              >
+                <span className="bg-white px-2">Other sections in catalog</span>
+              </div>
+            )}
+            {groupedSections.other.map(renderSectionRow)}
           </div>
         )}
       </CardContent>

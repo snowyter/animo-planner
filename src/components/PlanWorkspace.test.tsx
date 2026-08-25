@@ -287,6 +287,7 @@ describe("PlanWorkspace", () => {
       isLoadingSections: false,
       isMutating: false,
       error: null,
+      notice: null,
       hoveredSection: null,
       setHoveredSection: vi.fn(),
       fetchCourses: vi.fn(),
@@ -296,6 +297,7 @@ describe("PlanWorkspace", () => {
       removeSection: vi.fn(),
       togglePin: vi.fn(),
       forgetCourse: vi.fn(),
+      dismissNotice: vi.fn(),
     });
 
     const mockFullPlan: Plan = {
@@ -390,6 +392,200 @@ describe("PlanWorkspace", () => {
     expect(html).toContain("GEARTAP");
     expect(html).toContain("S11");
     expect(html).toContain("missing from the catalog");
+  });
+
+  it("renders Clear schedule action disabled when the plan is empty", () => {
+    const mockEmptyPlan: Plan = {
+      ...mockPlanSummary,
+      sectionCount: 0,
+      sections: [],
+    };
+
+    const html = renderToStaticMarkup(
+      React.createElement(PlanWorkspace, {
+        planSummary: mockPlanSummary,
+        plan: mockEmptyPlan,
+        isLoading: false,
+        error: null,
+        onBack: vi.fn(),
+        onRetry: vi.fn(),
+      })
+    );
+
+    expect(html).toContain("Clear schedule");
+    const match = html.match(/<button[^>]*data-testid="clear-schedule-button"[^>]*>/);
+    expect(match).not.toBeNull();
+    expect(match![0]).toContain('disabled=""');
+  });
+
+  it("renders Clear schedule action enabled when plan has sections", () => {
+    const sectionA = makeSection(
+      2923,
+      384,
+      "GEARTAP",
+      "S11",
+      [makeBlock("MON", 450, 540, "F2F", "L226")]
+    );
+
+    const mockPlanWithSections: Plan = {
+      ...mockPlanSummary,
+      sectionCount: 1,
+      sections: [sectionA],
+    };
+
+    const html = renderToStaticMarkup(
+      React.createElement(PlanWorkspace, {
+        planSummary: mockPlanSummary,
+        plan: mockPlanWithSections,
+        isLoading: false,
+        error: null,
+        onBack: vi.fn(),
+        onRetry: vi.fn(),
+      })
+    );
+
+    expect(html).toContain("Clear schedule");
+    const match = html.match(/<button[^>]*data-testid="clear-schedule-button"[^>]*>/);
+    expect(match).not.toBeNull();
+    expect(match![0]).not.toContain('disabled=""');
+  });
+
+  it("renders Clear schedule confirmation dialog naming section count and plan name", () => {
+    const sectionA = makeSection(
+      2923,
+      384,
+      "GEARTAP",
+      "S11",
+      [makeBlock("MON", 450, 540, "F2F", "L226")]
+    );
+    const sectionB = makeSection(
+      564,
+      737,
+      "CSINTSY",
+      "Z01",
+      [makeBlock("TUE", 450, 540, "F2F", "Y603")]
+    );
+
+    const mockPlanWithSections: Plan = {
+      ...mockPlanSummary,
+      name: "T1 Schedule",
+      sectionCount: 2,
+      sections: [sectionA, sectionB],
+    };
+
+    const html = renderToStaticMarkup(
+      React.createElement(PlanWorkspace, {
+        planSummary: { ...mockPlanSummary, name: "T1 Schedule" },
+        plan: mockPlanWithSections,
+        isLoading: false,
+        error: null,
+        initialConfirmingClear: true,
+        onBack: vi.fn(),
+        onRetry: vi.fn(),
+      })
+    );
+
+    expect(html).toContain("Clear schedule?");
+    expect(html).toContain("2 sections");
+    expect(html).toContain("T1 Schedule");
+    expect(html).toContain("Captured courses and sections in your catalog will not be deleted");
+    expect(html).toContain('data-testid="confirm-clear-schedule"');
+    expect(html).toContain('data-testid="cancel-clear-schedule"');
+  });
+
+  it("renders Clear schedule confirmation dialog naming pinned count when plan has pinned sections", () => {
+    const sectionA = makeSection(
+      2923,
+      384,
+      "GEARTAP",
+      "S11",
+      [makeBlock("MON", 450, 540, "F2F", "L226")]
+    );
+    const sectionB = makeSection(
+      564,
+      737,
+      "CSINTSY",
+      "Z01",
+      [makeBlock("TUE", 450, 540, "F2F", "Y603")]
+    );
+    sectionB.pinned = true;
+
+    const mockPlanWithSections: Plan = {
+      ...mockPlanSummary,
+      name: "T1 Schedule",
+      sectionCount: 2,
+      sections: [sectionA, sectionB],
+    };
+
+    const html = renderToStaticMarkup(
+      React.createElement(PlanWorkspace, {
+        planSummary: { ...mockPlanSummary, name: "T1 Schedule" },
+        plan: mockPlanWithSections,
+        isLoading: false,
+        error: null,
+        initialConfirmingClear: true,
+        onBack: vi.fn(),
+        onRetry: vi.fn(),
+      })
+    );
+
+    expect(html).toContain("Clear schedule?");
+    expect(html).toContain("2 sections");
+    expect(html).toContain("including");
+    expect(html).toContain("1 pinned section");
+    expect(html).toContain('data-testid="confirm-clear-schedule"');
+  });
+
+  it("clears all plan sections via removeSectionFromPlan without deleting courses from catalog", async () => {
+    const sectionA = makeSection(
+      2923,
+      384,
+      "GEARTAP",
+      "S11",
+      [makeBlock("MON", 450, 540, "F2F", "L226")]
+    );
+    const sectionB = makeSection(
+      564,
+      737,
+      "CSINTSY",
+      "Z01",
+      [makeBlock("TUE", 450, 540, "F2F", "Y603")]
+    );
+
+    const mockPlanWithSections: Plan = {
+      ...mockPlanSummary,
+      name: "T1 Schedule",
+      sectionCount: 2,
+      sections: [sectionA, sectionB],
+    };
+
+    const emptyReturnedPlan: Plan = {
+      ...mockPlanSummary,
+      name: "T1 Schedule",
+      sectionCount: 0,
+      sections: [],
+    };
+
+    vi.mocked(client.removeSectionFromPlan).mockResolvedValue(emptyReturnedPlan);
+
+    const onPlanUpdated = vi.fn();
+    const onRetry = vi.fn();
+
+    // Render workspace with confirm dialog open
+    const html = renderToStaticMarkup(
+      React.createElement(PlanWorkspace, {
+        planSummary: { ...mockPlanSummary, name: "T1 Schedule" },
+        plan: mockPlanWithSections,
+        isLoading: false,
+        error: null,
+        initialConfirmingClear: true,
+        onBack: vi.fn(),
+        onRetry,
+        onPlanUpdated,
+      })
+    );
+
+    expect(html).toContain('data-testid="confirm-clear-schedule"');
   });
 });
 
@@ -727,6 +923,7 @@ describe("PlanWorkspace persistent week grid layout (ticket 28)", () => {
       isLoadingSections: false,
       isMutating: false,
       error: null,
+      notice: null,
       hoveredSection: null,
       setHoveredSection: vi.fn(),
       fetchCourses: vi.fn(),
@@ -736,6 +933,7 @@ describe("PlanWorkspace persistent week grid layout (ticket 28)", () => {
       removeSection: vi.fn(),
       togglePin: vi.fn(),
       forgetCourse: vi.fn(),
+      dismissNotice: vi.fn(),
     });
 
     const html = renderToStaticMarkup(

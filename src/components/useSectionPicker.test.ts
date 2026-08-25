@@ -347,4 +347,30 @@ describe("useSectionPickerState", () => {
     expect(state.sections).toEqual([]);
     expect(state.error).toBeNull();
   });
+
+  it("sets notice reporting removal and affected plans", async () => {
+    vi.mocked(client.listCapturedCourses).mockResolvedValue(mockCourses);
+    vi.mocked(client.listCapturedSections).mockResolvedValue(mockGeartapSections);
+    const mockOutcome = {
+      summary: { campusId: 7, sessionId: 155, sectionCount: 5, courseCount: 1 },
+      affectedPlans: [{ planId: "p1", removedSections: 2 }],
+    };
+    vi.mocked(client.forgetCapturedCourse).mockResolvedValue(mockOutcome);
+
+    const state = useSectionPickerState({
+      campusId: 7,
+      sessionId: 155,
+      planId: "p1",
+    });
+
+    await state.fetchCourses();
+    await state.forgetCourse(2923);
+
+    expect(state.notice).toContain("GEARTAP");
+    expect(state.notice).toContain("2 sections");
+    expect(state.error).toBeNull();
+
+    state.dismissNotice();
+    expect(state.notice).toBeNull();
+  });
 });

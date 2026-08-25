@@ -5,6 +5,7 @@ import {
   isSectionInPlan,
   isSectionPinned,
   findCandidateConflicts,
+  groupSectionsForPicker,
 } from "./section";
 import type { PlanSection, ScheduleBlock, Section } from "../adapters/ipc/types";
 
@@ -179,6 +180,52 @@ describe("section core logic", () => {
       ]);
       const conflicts = findCandidateConflicts(sameSection, planSections);
       expect(conflicts).toEqual([]);
+    });
+  });
+
+  describe("groupSectionsForPicker", () => {
+    const sec1 = makeSection(2923, 101, "GEARTAP", "S01", [makeBlock("MON", 450, 540)]);
+    const sec2 = makeSection(2923, 102, "GEARTAP", "S02", [makeBlock("MON", 550, 640)]);
+    const sec3 = makeSection(2923, 103, "GEARTAP", "S03", [makeBlock("TUE", 450, 540)]);
+    const sec4 = makeSection(2923, 104, "GEARTAP", "S04", [makeBlock("TUE", 550, 640)]);
+    const catalogSections = [sec1, sec2, sec3, sec4];
+
+    it("returns empty inPlan and all catalog sections in other when no sections are in plan", () => {
+      const result = groupSectionsForPicker(catalogSections, []);
+      expect(result.inPlan).toEqual([]);
+      expect(result.other).toEqual(catalogSections);
+    });
+
+    it("places sections in plan first, with pinned sections ahead of unpinned within inPlan", () => {
+      // Plan has sec3 (pinned) and sec1 (unpinned)
+      const planSections = [
+        makePlanSection(2923, 101, "GEARTAP", "S01", [makeBlock("MON", 450, 540)], false),
+        makePlanSection(2923, 103, "GEARTAP", "S03", [makeBlock("TUE", 450, 540)], true),
+      ];
+
+      const result = groupSectionsForPicker(catalogSections, planSections);
+
+      // inPlan must have sec3 first (pinned), then sec1 (unpinned)
+      expect(result.inPlan.map((s) => s.sectionCode)).toEqual(["S03", "S01"]);
+      // other must preserve catalog order for remaining sections: sec2, sec4
+      expect(result.other.map((s) => s.sectionCode)).toEqual(["S02", "S04"]);
+    });
+
+    it("preserves relative catalog order among multiple pinned sections and among multiple unpinned sections in plan", () => {
+      // Plan has sec1 (pinned), sec4 (pinned), sec2 (unpinned), sec3 (unpinned)
+      const planSections = [
+        makePlanSection(2923, 104, "GEARTAP", "S04", [makeBlock("TUE", 550, 640)], true),
+        makePlanSection(2923, 101, "GEARTAP", "S01", [makeBlock("MON", 450, 540)], true),
+        makePlanSection(2923, 103, "GEARTAP", "S03", [makeBlock("TUE", 450, 540)], false),
+        makePlanSection(2923, 102, "GEARTAP", "S02", [makeBlock("MON", 550, 640)], false),
+      ];
+
+      const result = groupSectionsForPicker(catalogSections, planSections);
+
+      // Pinned group (sec1, sec4) should follow catalog order (sec1 then sec4)
+      // Unpinned in-plan group (sec2, sec3) should follow catalog order (sec2 then sec3)
+      expect(result.inPlan.map((s) => s.sectionCode)).toEqual(["S01", "S04", "S02", "S03"]);
+      expect(result.other).toEqual([]);
     });
   });
 });
