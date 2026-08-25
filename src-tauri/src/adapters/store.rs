@@ -841,6 +841,23 @@ impl Store {
         Ok(catalog)
     }
 
+    /// The freshest snapshot timestamp under a `(campus, session)` scope,
+    /// or `None` when nothing is captured there (ticket 34). The solve
+    /// result carries it so the student can judge how old the enrolment
+    /// numbers behind an exclusion are. Timestamps are ISO 8601 UTC, so the
+    /// lexicographic maximum is the chronological one.
+    pub fn latest_snapshot_at(&self, scope: &CaptureScope) -> Result<Option<String>, StoreError> {
+        self.conn
+            .query_row(
+                "SELECT MAX(sn.captured_at) FROM snapshots sn
+                 JOIN sections s ON s.id = sn.section_fk
+                 WHERE s.campus_id = ?1 AND s.session_id = ?2",
+                rusqlite::params![scope.campus_id, scope.session_id],
+                |row| row.get(0),
+            )
+            .map_err(StoreError::from)
+    }
+
     /// Links a captured section into a plan. The lookup is scoped to the
     /// plan's `(campus, session)`, so a section captured under any other
     /// scope is rejected here — the constraint is never left to the UI.
@@ -4357,5 +4374,64 @@ mod tests {
             .plan_fixed_sections("missing")
             .expect_err("an unknown plan cannot seed a solve");
         assert!(matches!(err, StoreError::PlanNotFound { .. }), "got {err:?}");
+    }
+
+    #[test]
+    fn latest_snapshot_at_reports_the_freshest_enrolment_number_in_the_scope() {
+        // Ticket 34: a student deciding whether to trust an exclusion needs
+        // to know how old the numbers are, so the solve carries the latest
+        // snapshot timestamp of the plan's scope.
+        let mut store = store();
+        assert_eq!(
+            store.latest_snapshot_at(&SCOPE).expect("empty scope"),
+            None,
+            "nothing captured yet — there is no age to report"
+        );
+
+        store
+            .record_capture(
+                &SCOPE,
+                &[parsed_section(
+                    2923,
+                    384,
+                    "S01",
+                    None,
+                    Some(20),
+                    vec![online_block(Day::Mon, 450, 540)],
+                )],
+                T1,
+            )
+            .expect("first capture");
+        assert_eq!(
+            store.latest_snapshot_at(&SCOPE).expect("one capture"),
+            Some(T1.to_string())
+        );
+
+        // A later capture of another section moves the stamp forward.
+        let earlier = parsed_section(2923, 385, "S02", None, Some(30), vec![
+            online_block(Day::Tue, 450, 540),
+        ]);
+        store
+            .record_capture(&SCOPE, &[earlier], T2)
+            .expect("second capture");
+        assert_eq!(
+            store.latest_snapshot_at(&SCOPE).expect("two captures"),
+            Some(T2.to_string()),
+            "the freshest snapshot wins"
+        );
+
+        // Another scope's snapshots never leak in.
+        store
+            .record_capture(
+                &OTHER_SCOPE,
+                &[parsed_section(2923, 999, "S99", None, Some(1), vec![])],
+                "2026-08-24T00:00:00Z",
+            )
+            .expect("other-scope capture");
+        assert_eq!(
+            store.latest_snapshot_at(&SCOPE).expect("scoped read"),
+            Some(T2.to_string()),
+            "the stamp is scoped to (campus, session)"
+        );
     }
 }

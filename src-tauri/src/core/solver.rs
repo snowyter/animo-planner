@@ -23,11 +23,17 @@
 //!   restarting it.
 //!
 //! Constraints (ticket 15) filter candidates only: day blacklist, earliest
-//! start / latest end bounds, and exclude-full. Fixed (plan) sections are
+//! start / latest end bounds, and exclude-full. Exclude-full defaults on
+//! (ticket 34) — a section at capacity cannot be enlisted into — but the
+//! student can turn it off, so the exclusion is never quiet: the outcome
+//! reports how many sections it removed, and a course left with only full
+//! sections is named `Unsatisfiable` with that reason. A missing or
+//! unreadable count is never treated as full. Fixed (plan) sections are
 //! never reassigned and never dropped — a pinned section that violates a
 //! constraint is user-authored and passes through untouched, exactly like a
-//! user-authored conflict (ADR-0009). Section-code prefixes are never read,
-//! and a blank teacher is never a mismatch: no constraint branches on either.
+//! user-authored conflict (ADR-0009); being at capacity does not change
+//! that. Section-code prefixes are never read, and a blank teacher is never
+//! a mismatch: no constraint branches on either.
 //!
 //! Every run consumes at most one node budget before returning, so the
 //! interface thread is never blocked: the Tauri command layer (ticket 20)
@@ -44,7 +50,7 @@
 
 use crate::core::ipc_types::{
     Day, Preset, ScheduleBlock, ScoreComponent, SolutionSection, SolveOptions, SolveStatus,
-    TransitionWarning, UnsatisfiableCourse,
+    TransitionWarning, UnsatisfiableCourse, UnsatisfiableReason,
 };
 use crate::core::scoring::{self, Evaluation};
 use serde::{Deserialize, Serialize};
@@ -127,7 +133,8 @@ pub struct SolveConstraints {
     pub earliest_start_min: Option<i64>,
     /// No solver-placed block may end after this minute.
     pub latest_end_min: Option<i64>,
-    /// When set, candidates at or over capacity are dropped. Off by default.
+    /// When set, candidates at or over capacity are dropped. On by default
+    /// (ticket 34): the student can still turn it off in the constraints.
     pub exclude_full: bool,
 }
 
@@ -151,14 +158,16 @@ impl SolveConstraints {
     /// Whether a candidate satisfies every constraint. Unary: the check does
     /// not depend on any other assignment.
     fn candidate_allowed(&self, candidate: &SolverSection) -> bool {
-        if self.exclude_full {
-            if let (Some(enrolled), Some(enroll_cap)) = (candidate.enrolled, candidate.enroll_cap)
-            {
-                if enrolled >= enroll_cap {
-                    return false;
-                }
-            }
+        if self.exclude_full && is_full(candidate) {
+            return false;
         }
+        self.candidate_allowed_except_full(candidate)
+    }
+
+    /// Every constraint except exclude-full. The unsatisfiable-reason
+    /// attribution needs the split: a course whose sections all pass here
+    /// but fail fullness lost them to exclusion, not to anything else.
+    fn candidate_allowed_except_full(&self, candidate: &SolverSection) -> bool {
         for block in &candidate.blocks {
             if self.day_blacklist.contains(&block.day) {
                 return false;
@@ -174,6 +183,51 @@ impl SolveConstraints {
     }
 }
 
+/// Whether a candidate overlaps any fixed (plan) section.
+fn conflicts_with_fixed(fixed: &[SolutionSection], candidate: &SolverSection) -> bool {
+    fixed
+        .iter()
+        .any(|f| blocks_conflict(&f.blocks, &candidate.blocks))
+}
+
+/// How many candidate sections exclude-full removed (ticket 34): a
+/// candidate counts only when it is full *and* would otherwise have been
+/// placeable — conflict-free against the plan and within the other
+/// constraints. A full section that was unplaceable anyway was never the
+/// constraint's doing.
+fn count_excluded_as_full(
+    fixed: &[SolutionSection],
+    courses: &[CourseVar],
+    constraints: &SolveConstraints,
+) -> usize {
+    if !constraints.exclude_full {
+        return 0;
+    }
+    courses
+        .iter()
+        .map(|course| {
+            course
+                .candidates
+                .iter()
+                .filter(|candidate| {
+                    constraints.candidate_allowed_except_full(candidate)
+                        && !conflicts_with_fixed(fixed, candidate)
+                        && is_full(candidate)
+                })
+                .count()
+        })
+        .sum()
+}
+
+/// Full means `enrolled >= enroll_cap` on the latest snapshot. A missing or
+/// unreadable count is never full: unknown is not a closed door (ticket 34).
+fn is_full(candidate: &SolverSection) -> bool {
+    match (candidate.enrolled, candidate.enroll_cap) {
+        (Some(enrolled), Some(enroll_cap)) => enrolled >= enroll_cap,
+        _ => false,
+    }
+}
+
 /// The outcome of a bounded solve run.
 #[derive(Debug, Clone, PartialEq)]
 pub struct SolveOutcome {
@@ -183,6 +237,11 @@ pub struct SolveOutcome {
     /// [`Solver::from_token`] continues the search.
     pub resume_token: Option<String>,
     pub unsatisfiable_courses: Vec<UnsatisfiableCourse>,
+    /// How many candidate sections the exclude-full constraint removed,
+    /// across every unassigned course (ticket 34). Surfaced so the student
+    /// can see the constraint doing something and turn it off when the
+    /// numbers look stale. Zero when the constraint is off.
+    pub excluded_full_count: usize,
 }
 
 /// Failure to resume a search from a token.
@@ -321,6 +380,10 @@ pub struct Solver {
     /// detected before any node is spent. Non-empty means the solve cannot
     /// even start; the result names these courses.
     unsatisfiable: Vec<UnsatisfiableCourse>,
+    /// Candidate sections dropped by exclude-full (ticket 34). Derived from
+    /// the same inputs on every construction, so a resumed solver reports
+    /// the same number without carrying it through the token.
+    excluded_full_count: usize,
 }
 
 impl Solver {
@@ -372,14 +435,31 @@ impl Solver {
         let mut unsatisfiable: Vec<UnsatisfiableCourse> = ordered
             .iter()
             .filter(|(_, valid)| *valid == 0)
-            .map(|(course, _)| UnsatisfiableCourse {
-                course_id: course.course_id,
-                code: course.code.clone(),
+            .map(|(course, _)| {
+                // Name the reason (ticket 34): if some section would have
+                // been valid but for its fullness, exclusion is the cause;
+                // otherwise nothing else about the catalog allowed a fill.
+                let lost_to_exclusion = course.candidates.iter().any(|candidate| {
+                    constraints.candidate_allowed_except_full(candidate)
+                        && !conflicts_with_fixed(&fixed, candidate)
+                        && is_full(candidate)
+                });
+                UnsatisfiableCourse {
+                    course_id: course.course_id,
+                    code: course.code.clone(),
+                    reason: if lost_to_exclusion {
+                        UnsatisfiableReason::AllSectionsFull
+                    } else {
+                        UnsatisfiableReason::NoValidSection
+                    },
+                }
             })
             .collect();
         unsatisfiable.sort_by_key(|course| course.course_id);
 
         let courses: Vec<CourseVar> = ordered.into_iter().map(|(course, _)| course).collect();
+        let excluded_full_count =
+            count_excluded_as_full(&fixed, &courses, &constraints);
         Solver {
             state: SearchState {
                 version: SOLVER_STATE_VERSION,
@@ -395,6 +475,7 @@ impl Solver {
                 done: false,
             },
             unsatisfiable,
+            excluded_full_count,
         }
     }
 
@@ -410,9 +491,12 @@ impl Solver {
             });
         }
         validate_state(&state)?;
+        let excluded_full_count =
+            count_excluded_as_full(&state.fixed, &state.courses, &state.constraints);
         Ok(Solver {
             state,
             unsatisfiable: Vec::new(),
+            excluded_full_count,
         })
     }
 
@@ -453,6 +537,7 @@ impl Solver {
                 }],
                 resume_token: None,
                 unsatisfiable_courses: Vec::new(),
+                excluded_full_count: self.excluded_full_count,
             };
         }
         if self.state.done {
@@ -524,6 +609,7 @@ impl Solver {
         };
         SolveOutcome {
             status,
+            excluded_full_count: self.excluded_full_count,
             solutions: self
                 .state
                 .results
@@ -1057,10 +1143,12 @@ mod tests {
                 UnsatisfiableCourse {
                     course_id: 2,
                     code: "IMPOS".to_string(),
+                    reason: UnsatisfiableReason::NoValidSection,
                 },
                 UnsatisfiableCourse {
                     course_id: 3,
                     code: "EMPTY".to_string(),
+                    reason: UnsatisfiableReason::NoValidSection,
                 },
             ],
             "only courses with no valid section are named; FINE stays out"
@@ -1298,6 +1386,7 @@ mod tests {
             vec![UnsatisfiableCourse {
                 course_id: 1,
                 code: "A".to_string(),
+                reason: UnsatisfiableReason::NoValidSection,
             }],
             "a course every one of whose sections is blacklisted is named, not dropped"
         );
@@ -1360,11 +1449,11 @@ mod tests {
             unknown_fill,
         ]);
 
-        // Off by default: every section is a candidate.
+        // Constraint off: every section is a candidate, full or not.
         let mut solver = Solver::new(vec![course_a.clone()], vec![], options(12));
         let outcome = solver.run();
         assert_eq!(outcome.status, SolveStatus::Complete);
-        assert_eq!(outcome.solutions.len(), 4, "exclude-full is off by default");
+        assert_eq!(outcome.solutions.len(), 4, "with exclude-full off, nothing drops");
 
         // On: sections at or over capacity drop; unknown fill is never
         // treated as full.
@@ -1400,6 +1489,187 @@ mod tests {
         );
         let outcome = solver.run();
         assert_eq!(outcome.status, SolveStatus::Unsatisfiable, "no section survives both filters");
+    }
+
+    #[test]
+    fn a_course_left_with_only_full_sections_is_named_unsatisfiable_for_that_reason() {
+        // Ticket 34: when exclusion removes every section of a course, the
+        // course comes back in the unsatisfiable result naming the reason,
+        // so "no solutions" never appears without saying why.
+        let mut solve_options = options(12);
+        solve_options.exclude_full = true;
+        let mut solver = Solver::new(
+            vec![course(
+                1,
+                "A",
+                vec![
+                    candidate(1, vec![block(Day::Mon, 450, 540)], Some(45), Some(45), None),
+                    candidate(2, vec![block(Day::Tue, 450, 540)], Some(50), Some(45), None),
+                ],
+            )],
+            vec![],
+            solve_options,
+        );
+        let outcome = solver.run();
+
+        assert_eq!(outcome.status, SolveStatus::Unsatisfiable);
+        assert_eq!(
+            outcome.unsatisfiable_courses,
+            vec![UnsatisfiableCourse {
+                course_id: 1,
+                code: "A".to_string(),
+                reason: UnsatisfiableReason::AllSectionsFull,
+            }],
+            "the exclusion is named as the cause, never silent"
+        );
+
+        // The same catalog without the constraint solves fine, so the
+        // reason really is the exclusion and nothing else.
+        let mut solver = Solver::new(
+            vec![course(
+                1,
+                "A",
+                vec![
+                    candidate(1, vec![block(Day::Mon, 450, 540)], Some(45), Some(45), None),
+                    candidate(2, vec![block(Day::Tue, 450, 540)], Some(50), Some(45), None),
+                ],
+            )],
+            vec![],
+            options(12),
+        );
+        let outcome = solver.run();
+        assert_eq!(outcome.status, SolveStatus::Complete);
+        assert!(outcome.unsatisfiable_courses.is_empty());
+    }
+
+    #[test]
+    fn unknown_counts_are_never_read_as_full_so_the_course_stays_fillable() {
+        // Every number unreadable: unknown is never a closed door.
+        let mut solve_options = options(12);
+        solve_options.exclude_full = true;
+        let mut solver = Solver::new(
+            vec![course(
+                1,
+                "A",
+                vec![
+                    candidate(1, vec![block(Day::Mon, 450, 540)], None, None, None),
+                    candidate(2, vec![block(Day::Tue, 450, 540)], Some(30), None, None),
+                    candidate(3, vec![block(Day::Wed, 450, 540)], None, Some(45), None),
+                ],
+            )],
+            vec![],
+            solve_options,
+        );
+        let outcome = solver.run();
+        assert_eq!(outcome.status, SolveStatus::Complete);
+        assert!(outcome.unsatisfiable_courses.is_empty());
+    }
+
+    #[test]
+    fn the_result_reports_how_many_sections_were_excluded_as_full() {
+        // Two genuinely full candidates plus one that is full but would
+        // have conflicted with the plan anyway — only the ones the
+        // constraint actually removed count.
+        let pinned = fixed(9, 1, vec![block(Day::Mon, 450, 540)]);
+        let catalog = vec![
+            course(
+                1,
+                "A",
+                vec![
+                    candidate(1, vec![block(Day::Mon, 450, 540)], Some(45), Some(45), None),
+                    candidate(2, vec![block(Day::Mon, 450, 540)], Some(50), Some(45), None),
+                    candidate(3, vec![block(Day::Wed, 450, 540)], Some(10), Some(45), None),
+                    candidate(4, vec![block(Day::Thu, 450, 540)], Some(45), Some(45), None),
+                ],
+            ),
+            course(
+                2,
+                "B",
+                vec![
+                    candidate(1, vec![block(Day::Fri, 450, 540)], Some(45), Some(45), None),
+                    candidate(2, vec![block(Day::Sat, 450, 540)], Some(12), Some(20), None),
+                ],
+            ),
+        ];
+        let mut solve_options = options(12);
+        solve_options.exclude_full = true;
+        let mut solver = Solver::new(catalog, vec![pinned], solve_options);
+        let outcome = solver.run();
+
+        assert_eq!(outcome.status, SolveStatus::Complete);
+        assert_eq!(
+            outcome.excluded_full_count, 2,
+            "A4 and B1 were dropped as full; A1 and A2 were unplaceable against \
+             the plan anyway, so they are not the constraint's doing"
+        );
+
+        // With the constraint off nothing is excluded and the count is zero.
+        let catalog = vec![
+            course(
+                1,
+                "A",
+                vec![
+                    candidate(1, vec![block(Day::Mon, 450, 540)], Some(45), Some(45), None),
+                    candidate(2, vec![block(Day::Mon, 450, 540)], Some(50), Some(45), None),
+                    candidate(3, vec![block(Day::Wed, 450, 540)], Some(10), Some(45), None),
+                    candidate(4, vec![block(Day::Thu, 450, 540)], Some(45), Some(45), None),
+                ],
+            ),
+            course(
+                2,
+                "B",
+                vec![
+                    candidate(1, vec![block(Day::Fri, 450, 540)], Some(45), Some(45), None),
+                    candidate(2, vec![block(Day::Sat, 450, 540)], Some(12), Some(20), None),
+                ],
+            ),
+        ];
+        let mut solver = Solver::new(catalog, vec![], options(12));
+        let outcome = solver.run();
+        assert_eq!(
+            outcome.excluded_full_count, 0,
+            "the constraint did nothing when it is off"
+        );
+    }
+
+    #[test]
+    fn a_resumed_solver_reports_the_same_exclusion_count() {
+        let wide = course(
+            1,
+            "A",
+            (0..6i64)
+                .map(|i| {
+                    candidate(
+                        i + 1,
+                        vec![block(Day::Mon, 450 + i * 90, 540 + i * 90)],
+                        if i < 4 { Some(45) } else { Some(10) },
+                        Some(45),
+                        None,
+                    )
+                })
+                .collect(),
+        );
+        let narrow = course(2, "B", (0..6i64)
+            .map(|i| section(i + 1, vec![block(Day::Tue, 450 + i * 90, 540 + i * 90)]))
+            .collect());
+        let mut solve_options = options(1);
+        solve_options.exclude_full = true;
+
+        let mut whole = Solver::new(vec![wide.clone(), narrow.clone()], vec![], solve_options.clone());
+        let expected = whole.run_with_budget(u64::MAX).excluded_full_count;
+        assert_eq!(expected, 4);
+
+        let mut chunked = Solver::new(vec![wide, narrow], vec![], solve_options);
+        let mut outcome = chunked.run_with_budget(3);
+        while outcome.status == SolveStatus::Partial {
+            let token = outcome.resume_token.expect("partial carries a token");
+            chunked = Solver::from_token(&token).expect("resume");
+            outcome = chunked.run_with_budget(3);
+        }
+        assert_eq!(
+            outcome.excluded_full_count, expected,
+            "resuming reports the exclusion count of the same search"
+        );
     }
 
     // ---------- pinned sections vs constraints ----------

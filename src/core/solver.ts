@@ -45,6 +45,10 @@ export const PRESET_INFOS: readonly PresetInfo[] = [
 
 /**
  * Returns default SolveOptions with sensible defaults.
+ *
+ * Ticket 34: exclude-full defaults to on — a section at capacity cannot be
+ * enlisted into, so a fresh solve never builds around one. The student can
+ * still turn it off in secondary constraints.
  */
 export function defaultSolveOptions(preset: Preset = "fewest_campus_days"): SolveOptions {
   return {
@@ -52,7 +56,7 @@ export function defaultSolveOptions(preset: Preset = "fewest_campus_days"): Solv
     dayBlacklist: [],
     earliestStartMin: null,
     latestEndMin: null,
-    excludeFull: false,
+    excludeFull: true,
     resultLimit: 20,
   };
 }
@@ -76,6 +80,17 @@ export function formatWarningLabel(warning: TransitionWarning): string {
 }
 
 /**
+ * Names a course and, when exclusion is the cause (ticket 34), says so —
+ * "no solutions" never appears without its reason.
+ */
+function unsatisfiableCourseLabel(course: UnsatisfiableCourse): string {
+  if (course.reason === "all_sections_full") {
+    return `${course.code} (every section is full)`;
+  }
+  return course.code;
+}
+
+/**
  * Formats a message describing why no solutions could be found.
  */
 export function formatUnsatisfiableCoursesMessage(
@@ -85,10 +100,41 @@ export function formatUnsatisfiableCoursesMessage(
     return "No conflict-free schedules found matching your constraints.";
   }
   if (unsatisfiableCourses.length === 1) {
-    return `No conflict-free schedules found. Course ${unsatisfiableCourses[0].code} could not be satisfied with the current constraints.`;
+    return `No conflict-free schedules found. Course ${unsatisfiableCourseLabel(
+      unsatisfiableCourses[0]
+    )} could not be satisfied with the current constraints.`;
   }
-  const codes = unsatisfiableCourses.map((c) => c.code).join(", ");
+  const codes = unsatisfiableCourses.map(unsatisfiableCourseLabel).join(", ");
   return `No conflict-free schedules found. The following courses could not be satisfied: ${codes}.`;
+}
+
+/**
+ * The exclusion notice the solve dialog renders next to its results
+ * (ticket 34): how many sections exclude-full removed and how old the
+ * enrolment numbers behind that decision are, so the student can tell a
+ * five-minute-old exclusion from a five-day-old one and turn the
+ * constraint off when the numbers look stale. `null` when nothing was
+ * excluded — no notice, never a nag.
+ */
+export function formatExclusionNotice(
+  excludedFullCount: number,
+  snapshotTakenAt: string | null
+): string | null {
+  if (excludedFullCount <= 0) {
+    return null;
+  }
+  const sections = excludedFullCount === 1 ? "section" : "sections";
+  let notice = `Excluded ${excludedFullCount} full ${sections} from this solve.`;
+  if (snapshotTakenAt) {
+    const captured = new Date(snapshotTakenAt);
+    const rendered = isNaN(captured.getTime())
+      ? snapshotTakenAt
+      : captured.toLocaleString();
+    notice += ` Enrolment numbers were captured ${rendered}.`;
+  }
+  notice +=
+    ' If these numbers look stale, turn off "Exclude full sections" under Secondary Constraints and solve again.';
+  return notice;
 }
 
 /**

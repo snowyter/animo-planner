@@ -10,6 +10,7 @@ import {
   ChevronUp,
   XCircle,
   RotateCcw,
+  Info,
 } from "lucide-react";
 import {
   Dialog,
@@ -23,7 +24,7 @@ import { Alert, AlertTitle, AlertDescription } from "./ui/alert";
 import { SolutionThumbnail } from "./SolutionThumbnail";
 import type { Day, Plan, Preset, Solution, SolveOptions, SolveResult } from "../adapters/ipc/types";
 import { DAY_INFOS } from "../core/grid";
-import { PRESET_INFOS, defaultSolveOptions, formatUnsatisfiableCoursesMessage } from "../core/solver";
+import { PRESET_INFOS, defaultSolveOptions, formatExclusionNotice, formatUnsatisfiableCoursesMessage } from "../core/solver";
 import * as client from "../adapters/ipc/client";
 import { formatErrorMessage } from "../core/error";
 import { solutionToSectionRefs } from "../core/solver";
@@ -164,11 +165,17 @@ export function SolveDialog({
     }
   };
 
+  // Exclude-full defaults to on (ticket 34): only a *deviation* from the
+  // defaults — turning it off included — counts as an active constraint.
   const hasNonDefaultConstraints =
     options.dayBlacklist.length > 0 ||
     options.earliestStartMin !== null ||
     options.latestEndMin !== null ||
-    options.excludeFull;
+    options.excludeFull !== defaultSolveOptions(options.preset).excludeFull;
+
+  const exclusionNotice = result
+    ? formatExclusionNotice(result.excludedFullCount, result.snapshotTakenAt)
+    : null;
 
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
@@ -444,6 +451,15 @@ export function SolveDialog({
                 <Sparkles className="h-3.5 w-3.5 mr-1 text-amber-600" />
                 {isContinuing ? "Searching..." : "Keep searching"}
               </Button>
+            </div>
+          )}
+
+          {/* Exclusion notice (ticket 34): the constraint is visible and
+              its staleness is judgeable — never a quiet exclusion. */}
+          {exclusionNotice && (
+            <div className="flex items-start gap-2.5 rounded-xl border border-sky-200 bg-sky-50/70 p-4">
+              <Info className="h-4 w-4 text-sky-600 shrink-0 mt-0.5" />
+              <p className="text-xs text-sky-900 leading-relaxed">{exclusionNotice}</p>
             </div>
           )}
 

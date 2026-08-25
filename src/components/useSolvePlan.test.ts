@@ -35,6 +35,8 @@ describe("useSolvePlanState", () => {
     solutions: [mockSolution],
     resumeToken: null,
     unsatisfiableCourses: [],
+    excludedFullCount: 0,
+    snapshotTakenAt: null,
   };
 
   beforeEach(() => {
@@ -48,7 +50,8 @@ describe("useSolvePlanState", () => {
     expect(state.options.dayBlacklist).toEqual([]);
     expect(state.options.earliestStartMin).toBeNull();
     expect(state.options.latestEndMin).toBeNull();
-    expect(state.options.excludeFull).toBe(false);
+    // Ticket 34: exclude-full defaults to on.
+    expect(state.options.excludeFull).toBe(true);
     expect(state.isSolving).toBe(false);
     expect(state.isApplying).toBe(false);
     expect(state.error).toBeNull();
@@ -74,14 +77,15 @@ describe("useSolvePlanState", () => {
     state.setLatestEndMin(1080);
     expect(state.options.latestEndMin).toBe(1080);
 
-    state.setExcludeFull(true);
-    expect(state.options.excludeFull).toBe(true);
+    state.setExcludeFull(false);
+    expect(state.options.excludeFull).toBe(false);
 
     state.resetConstraints();
     expect(state.options.dayBlacklist).toEqual([]);
     expect(state.options.earliestStartMin).toBeNull();
     expect(state.options.latestEndMin).toBeNull();
-    expect(state.options.excludeFull).toBe(false);
+    // Reset returns to the ticket-34 default: exclude-full back on.
+    expect(state.options.excludeFull).toBe(true);
     // Preset is retained when resetting constraints
     expect(state.options.preset).toBe("no_early_mornings");
   });
@@ -119,6 +123,8 @@ describe("useSolvePlanState", () => {
       solutions: [mockSolution],
       resumeToken: "token-abc",
       unsatisfiableCourses: [],
+      excludedFullCount: 0,
+      snapshotTakenAt: null,
     };
     const resumedResult: SolveResult = {
       status: "complete",
@@ -132,6 +138,8 @@ describe("useSolvePlanState", () => {
       ],
       resumeToken: null,
       unsatisfiableCourses: [],
+      excludedFullCount: 0,
+      snapshotTakenAt: null,
     };
 
     vi.mocked(client.solvePlan).mockResolvedValue(partialResult);

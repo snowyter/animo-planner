@@ -188,9 +188,17 @@ export interface Solution {
 
 export type SolveStatus = "complete" | "partial" | "cancelled" | "unsatisfiable";
 
+/**
+ * Why a course could not be filled (ticket 34). `all_sections_full` names
+ * exclude-full as the cause, so "no solutions" never appears without saying
+ * why.
+ */
+export type UnsatisfiableReason = "no_valid_section" | "all_sections_full";
+
 export interface UnsatisfiableCourse {
   courseId: number;
   code: string;
+  reason: UnsatisfiableReason;
 }
 
 export interface SolveResult {
@@ -199,6 +207,18 @@ export interface SolveResult {
   /** Present iff status is "partial"; pass to continueSolve. */
   resumeToken: string | null;
   unsatisfiableCourses: UnsatisfiableCourse[];
+  /**
+   * How many sections the exclude-full constraint removed (ticket 34).
+   * Surfaced so the student can see the constraint working and turn it off
+   * when the numbers look stale.
+   */
+  excludedFullCount: number;
+  /**
+   * The latest snapshot timestamp of the plan's scope (ticket 34) — how old
+   * the enrolment numbers behind any exclusion are. Null when nothing is
+   * captured in the scope yet.
+   */
+  snapshotTakenAt: string | null;
 }
 
 export interface CaptureSummary {
