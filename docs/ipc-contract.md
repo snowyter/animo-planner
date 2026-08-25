@@ -128,6 +128,26 @@ retained Rust-side at the capture-failure site and scrubbed there before any rep
 assembled, so raw DOM never crosses into the webview; the command matches `error` against
 the failures this launch announced and rejects if none match.
 
+### Updates
+
+| Command | Arguments | Returns |
+|---|---|---|
+| `check_for_update` | — | `UpdateCheck` |
+| `install_update` | — | `InstallUpdateOutcome` |
+
+**Amended in ticket 38:** two commands reach the updater plugin that ticket 03 configured,
+Rust-side behind the existing seam rather than through a JS plugin — no new frontend
+dependency and no `updater:*` capability granted to the webview. `check_for_update` reads
+the static `latest.json` from GitHub Releases with no identifying parameters or headers
+(the app's third static read; ADR-0017, extending ADR-0004). A failed or unreachable check
+is an ordinary answer — `status: "failed"` plus a distinguishable `failureReason` — never a
+rejected promise: offline, a 404, a malformed document, and an unverifiable signature all
+resolve this way, and the app stays fully usable offline. When the updater is compiled out
+(`--no-default-features`) both commands exist with the same signature and answer
+`status: "unavailable"`. Nothing installs unless `install_update` is called; it downloads,
+verifies against the pubkey in `tauri.conf.json`, installs, and restarts into the new
+version. A signature that does not verify is a failed install, never a prompt.
+
 ## Types
 
 ### `CampusOption`
@@ -353,6 +373,39 @@ continues from there. On `"offline"` nothing changed.
 fully scrubbed (`hdnStudId`, `userID`, `IP_ADDRESS`, `MAC_ADDRESS` removed, along with
 anything shaped like a MAC or IPv4 address); the app never posts it — the student reviews
 and opens `issueUrl` themselves.
+
+### `UpdateCheck`
+
+```json
+{ "status": "available", "currentVersion": "0.1.0", "availableVersion": "0.2.0",
+  "notes": "release notes", "failureReason": null, "failureDetail": null }
+```
+
+`status`: `"available" | "up_to_date" | "failed" | "unavailable"`. `availableVersion` and
+`notes` are non-null only when `status` is `"available"`; `notes` carries the release notes
+when the endpoint has them. On `"failed"`, `failureReason` and `failureDetail` name why —
+see `UpdateFailureReason`. On `"unavailable"` the updater was compiled out of this build.
+
+### `UpdateFailureReason`
+
+`"network" | "endpoint" | "malformed" | "signature" | "unknown"`.
+
+`"network"` covers offline/DNS/TLS/timeouts; `"endpoint"` a 404 on `latest.json` or a
+document missing this platform; `"malformed"` an unreadable or unparseable document;
+`"signature"` an artifact whose signature did not verify against the configured pubkey.
+The UI may show any of these quietly — none is a crash.
+
+### `InstallUpdateOutcome`
+
+```json
+{ "status": "installed", "failureReason": null, "failureDetail": null }
+```
+
+`status`: `"installed" | "nothing_to_install" | "failed" | "unavailable"`. A real install
+restarts the app into the new version, so `"installed"` is rarely observed by the caller.
+`"nothing_to_install"` means the check found nothing newer. On `"failed"`,
+`failureReason`/`failureDetail` say why — a signature that does not verify lands here as
+`"signature"`, never as an install.
 
 ## Ownership notes
 

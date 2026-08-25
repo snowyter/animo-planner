@@ -65,6 +65,22 @@ pub fn run() {
             });
             app.manage(adapters::capture_window::CaptureWindowScope::default());
             app.manage(interface::commands::SolveCancellation::default());
+
+            // The update commands (ticket 38) sit behind the same IPC seam
+            // as everything else: the plugin-backed gateway when the updater
+            // feature is compiled in, and a stub that answers "unavailable"
+            // otherwise — the commands exist with the same signature in both
+            // configurations. The check is one of the app's static reads
+            // (ADR-0017); only an explicit install_update ever installs.
+            #[cfg(feature = "updater")]
+            let update_gateway: adapters::update_service::SharedGateway = std::sync::Arc::new(
+                adapters::update_service::PluginGateway::new(app.handle().clone()),
+            );
+            #[cfg(not(feature = "updater"))]
+            let update_gateway: adapters::update_service::SharedGateway =
+                std::sync::Arc::new(adapters::update_service::DisabledGateway);
+            app.manage(interface::update::UpdateService::new(update_gateway));
+
             tauri::async_runtime::spawn(async move {
                 server.serve().await;
             });
@@ -98,6 +114,8 @@ pub fn run() {
             get_missing_sections,
             export_plan_ics,
             build_capture_report,
+            interface::update::check_for_update,
+            interface::update::install_update,
             interface::version::get_app_version
         ])
         .run(tauri::generate_context!())
@@ -116,6 +134,32 @@ mod tests {
     #[test]
     fn updater_feature_flag_matches_compile_time_config() {
         assert_eq!(UPDATER_ENABLED, cfg!(feature = "updater"));
+    }
+
+    /// The updater being registered-but-unreachable is the exact state this
+    /// app shipped in before ticket 38: the plugin loaded, no code path
+    /// reaching it. The update commands must be on the invoke handler with a
+    /// gateway managed behind them — in both feature configurations.
+    #[test]
+    fn update_commands_are_registered_with_a_gateway_behind_them() {
+        let src = std::fs::read_to_string("src/lib.rs")
+            .expect("lib.rs must be readable from the package root");
+        // Only the production half of the file: this test module's own text
+        // would otherwise satisfy every assertion.
+        let production = src.split("#[cfg(test)]").next().expect("non-empty");
+        for required in [
+            "interface::update::check_for_update",
+            "interface::update::install_update",
+            "interface::update::UpdateService::new(",
+            "adapters::update_service::SharedGateway",
+            "PluginGateway::new(",
+            "DisabledGateway",
+        ] {
+            assert!(
+                production.contains(required),
+                "lib.rs must wire {required}; an unregistered command is unreachable"
+            );
+        }
     }
 
     #[test]
@@ -137,6 +181,35 @@ mod tests {
             }),
             "at least one updater endpoint must be a GitHub Releases latest.json URL, got: {endpoints:?}"
         );
+    }
+
+    /// Config guard for ADR-0004/ADR-0017 (ticket 38): the update check is
+    /// the app's third static read and must reveal nothing about the asking
+    /// machine. The updater substitutes `{{current_version}}`, `{{target}}`,
+    /// `{{arch}}`, and `{{bundle_type}}` into query parameters when present,
+    /// so a templated or parameterised endpoint would quietly turn the check
+    /// into telemetry. Pinned so a config edit cannot reintroduce it.
+    #[test]
+    fn updater_endpoints_are_plain_static_urls_with_no_query_or_placeholders() {
+        let conf = read_tauri_conf();
+        let endpoints = conf["plugins"]["updater"]["endpoints"]
+            .as_array()
+            .expect("plugins.updater.endpoints must be an array");
+        assert!(!endpoints.is_empty(), "at least one endpoint is configured");
+        for endpoint in endpoints {
+            let url = reqwest::Url::parse(endpoint.as_str().expect("endpoint must be a string"))
+                .expect("each updater endpoint must be a valid URL");
+            assert_eq!(url.scheme(), "https", "fetched over https only: {url}");
+            assert!(
+                url.query().is_none(),
+                "an updater endpoint must carry no query parameters: {url}"
+            );
+            assert!(
+                !endpoint.as_str().unwrap_or_default().contains("{{"),
+                "an updater endpoint must carry no template placeholders — they would \
+                 be substituted into the query and reveal machine state: {url}"
+            );
+        }
     }
 
     fn read_tauri_conf() -> serde_json::Value {

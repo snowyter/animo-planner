@@ -27,6 +27,7 @@ import type {
   Conflict,
   Day,
   ForgetCourseOutcome,
+  InstallUpdateOutcome,
   IcsExport,
   MissingSection,
   Plan,
@@ -38,6 +39,7 @@ import type {
   SectionRef,
   SessionOption,
   SolveResult,
+  UpdateCheck,
 } from "./types";
 
 // Options & app info
@@ -228,6 +230,28 @@ export function exportPlanIcs(args: { planId: string }): Promise<IcsExport> {
  */
 export function buildCaptureReport(args: { error: string }): Promise<CaptureReport> {
   return invoke("build_capture_report", { args });
+}
+
+// Updates (ticket 38 — headless; the student decides, nothing installs itself)
+
+/**
+ * Checks GitHub Releases for a newer version. Offline, a 404, a malformed
+ * document, or a bad signature each resolve to `status: "failed"` with a
+ * distinguishable reason — an ordinary answer the UI may show quietly. The
+ * app stays fully usable offline.
+ */
+export function checkForUpdate(): Promise<UpdateCheck> {
+  return invoke("check_for_update");
+}
+
+/**
+ * Installs the update the check found and restarts the app into it.
+ * Nothing installs without this being called. A signature that does not
+ * verify aborts as `status: "failed"` with reason `"signature"` — never an
+ * install.
+ */
+export function installUpdate(): Promise<InstallUpdateOutcome> {
+  return invoke("install_update");
 }
 
 // Events (Rust → main window)

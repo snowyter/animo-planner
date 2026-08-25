@@ -156,6 +156,8 @@ describe("ipc client", () => {
         "build_capture_report",
         [{ error: "boom" }],
       ],
+      [client.checkForUpdate, "check_for_update", []],
+      [client.installUpdate, "install_update", []],
     ];
 
     for (const [call, name, args] of cases) {

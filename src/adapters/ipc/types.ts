@@ -275,3 +275,54 @@ export interface CaptureReport {
   body: string;
   issueUrl: string;
 }
+
+export type UpdateCheckStatus =
+  | "available"
+  | "up_to_date"
+  | "failed"
+  | "unavailable";
+
+/**
+ * Why a check or install did not succeed (ticket 38). Coarse enough for a
+ * UI to switch on; `failureDetail` carries the underlying message.
+ */
+export type UpdateFailureReason =
+  | "network"
+  | "endpoint"
+  | "malformed"
+  | "signature"
+  | "unknown";
+
+/**
+ * What `checkForUpdate` answers: whether one is available, the version
+ * offered, the version running, and the release notes if the endpoint
+ * carries them. A failed or unreachable check is an ordinary answer
+ * (`status: "failed"` plus a distinguishable reason), never a rejected
+ * promise; `"unavailable"` means the updater was compiled out of this build.
+ */
+export interface UpdateCheck {
+  status: UpdateCheckStatus;
+  currentVersion: string;
+  availableVersion: string | null;
+  notes: string | null;
+  failureReason: UpdateFailureReason | null;
+  failureDetail: string | null;
+}
+
+export type InstallUpdateStatus =
+  | "installed"
+  | "nothing_to_install"
+  | "failed"
+  | "unavailable";
+
+/**
+ * What `installUpdate` answers. Nothing installs unless this command is
+ * called; a signature that does not verify surfaces as `status: "failed"`
+ * with reason `"signature"` — never as an installed update. A real install
+ * ends with the app restarting into the new version.
+ */
+export interface InstallUpdateOutcome {
+  status: InstallUpdateStatus;
+  failureReason: UpdateFailureReason | null;
+  failureDetail: string | null;
+}
