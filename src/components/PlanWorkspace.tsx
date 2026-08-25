@@ -33,7 +33,7 @@ import { SolveDialog } from "./SolveDialog";
 import { usePlanRefresh } from "./usePlanRefresh";
 import { MissingSectionBanner } from "./MissingSectionBanner";
 import * as client from "../adapters/ipc/client";
-import type { Plan, PlanSummary, Section } from "../adapters/ipc/types";
+import type { Plan, PlanSection, PlanSummary, Section } from "../adapters/ipc/types";
 import { formatSectionCount } from "../core/plan";
 import { findConflicts } from "../core/conflicts";
 import {
@@ -190,9 +190,9 @@ export function PlanWorkspace({
     }
   };
 
-  const handleRemoveSection = async (section: Section) => {
+  const handleRemoveSection = async (section: Section | PlanSection) => {
     try {
-      await removeSection(section);
+      await removeSection(section as Section);
       await fetchMissingSections();
       onRetry();
     } catch {
@@ -215,9 +215,9 @@ export function PlanWorkspace({
     }
   };
 
-  const handleTogglePin = async (section: Section, pinned: boolean) => {
+  const handleTogglePin = async (section: Section | PlanSection, pinned: boolean) => {
     try {
-      await togglePin(section, pinned);
+      await togglePin(section as Section, pinned);
       onRetry();
     } catch {
       // Error handled in picker state
@@ -660,6 +660,12 @@ export function PlanWorkspace({
                 sections={currentSections}
                 ghostSection={hoveredSection}
                 conflicts={conflicts}
+                onTogglePin={handleTogglePin}
+                onRemoveSection={handleRemoveSection}
+                onShowOtherSections={(courseId) => {
+                  selectCourse(courseId);
+                  setIsPickerOpen(true);
+                }}
               />
             </div>
             </div>
@@ -715,6 +721,12 @@ export function PlanWorkspace({
                 sections={currentSections}
                 ghostSection={hoveredSection}
                 conflicts={conflicts}
+                onTogglePin={handleTogglePin}
+                onRemoveSection={handleRemoveSection}
+                onShowOtherSections={(courseId) => {
+                  selectCourse(courseId);
+                  setIsPickerOpen(true);
+                }}
               />
             </div>
           </div>

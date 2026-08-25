@@ -1071,7 +1071,16 @@ describe("PlanWorkspace plan-mutating handlers reload the plan", () => {
     "handleRemoveCourse",
     "handleRemoveMissingSection",
     "handleClearSchedule",
+    "handleRemoveSection",
+    "handleTogglePin",
   ])("%s calls onRetry so the week grid re-renders without a manual refresh", (name) => {
     expect(handlerBody(name)).toContain("onRetry()");
   });
+
+  it("wires onTogglePin, onRemoveSection, and onShowOtherSections to WeekGrid in PlanWorkspace JSX", () => {
+    expect(planWorkspaceSource).toContain("onTogglePin={handleTogglePin}");
+    expect(planWorkspaceSource).toContain("onRemoveSection={handleRemoveSection}");
+    expect(planWorkspaceSource).toContain("onShowOtherSections=");
+  });
 });
+

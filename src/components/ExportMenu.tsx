@@ -390,6 +390,7 @@ export function ExportMenu({
         <WeekGrid
           sections={currentSections}
           conflicts={conflicts}
+          interactive={false}
         />
       </div>
     </div>
