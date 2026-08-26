@@ -28,6 +28,14 @@ The scaffold shipped React + Vite only. `SPEC.md` §7 calls for **Tailwind + sha
 | shadcn/ui component prerequisites | `clsx`, `tailwind-merge`, `class-variance-authority`, `lucide-react` | 06 |
 | Radix primitives behind individual shadcn components | `@radix-ui/react-*`, as each copied component requires | 06+ |
 | PNG export of the week grid | `html-to-image` | 22 |
+| Animation for the visual revision | `motion` | 33 |
+
+**`motion` is approved for ticket 33 and only there** — decided by a human, who asked for an app that
+feels modern *and* lightweight. Both halves are the decision. It must be used as `LazyMotion` plus the
+`m` component rather than the full `motion` component, so the whole feature set is not shipped to load
+a fade; `MotionConfig reducedMotion="user"` is the single reduced-motion pattern; and it must not put a
+per-element animation on repeated elements — the week grid holds ~40 blocks and the section list ~42
+cards. A later ticket wanting it elsewhere is a new question, not a precedent.
 
 **shadcn components are copied into the repo, not pulled at runtime** (`SPEC.md` §7). Ticket 06 sets up Tailwind and the shadcn init; later UI tickets copy in only the components they use.
 

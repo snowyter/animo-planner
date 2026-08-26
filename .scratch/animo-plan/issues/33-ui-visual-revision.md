@@ -37,7 +37,7 @@ This runs in WebView2 on student laptops, during enlistment, often on battery, w
 - [ ] **Nothing loops forever on a large surface.** Ambient gradients are static, or move via `transform` on a small number of layers. An idle app must have **zero continuously animating elements** — check with paint flashing and the frame-rate meter, on an idle plan workspace
 - [ ] **No animation runs while a solve or a refresh is in flight.** Those are the moments the student is waiting and the machine is busiest
 - [ ] **Repeated elements stay cheap.** The week grid holds ~40 blocks and the section list ~42 cards. No per-item transition firing on every render, no per-item shadow or filter
-- [ ] **Stagger is CSS `animation-delay`, not a chain of `setTimeout`s** or per-item JS state
+- [ ] **Stagger comes from CSS `animation-delay` or `motion`'s own variant stagger — never a chain of `setTimeout`s** or per-item JS state
 - [ ] **No WebGL and no canvas-driven backgrounds.** CSS gradients and transforms only
 - [ ] Scrolling the section list with a full 42-section course stays smooth, and the grid does not repaint on hover of a single block
 
@@ -69,7 +69,12 @@ Animo Plan is used during enlistment, under time pressure, while comparing secti
 - **ADR-0009 — conflicts are displayed, never prevented.** No animation may delay or soften a conflict appearing
 - **Contrast holds.** Body text meets WCAG AA (4.5:1); large text and UI chrome meet 3:1. A frosted panel that fails contrast over its own background is a defect
 - **`prefers-reduced-motion` is honoured on every animation**, verified by toggling it
-- **New dependencies need a decision.** `docs/agents/dependencies.md` pre-approves a set and no animation library is on it. CSS-only proceeds; anything needing `motion`, `gsap`, or similar stops and asks, naming the component that needs it
+- **`motion` is approved for this ticket**, decided by a human who asked for an app that feels modern *and* lightweight — both halves are the decision, and the conditions below are how the second half is kept. Anything else still stops and asks: `gsap`, `three`, `ogl`, and any other animation or graphics package are not approved
+  - **`LazyMotion` + the `m` component, never the full `motion` component.** The full component pulls the whole feature set into the initial bundle to play a fade; `m` with a lazily loaded feature bundle is a fraction of it. Load the smallest feature set that does the job and check what the bundle actually gains — Vite reports it
+  - **`MotionConfig reducedMotion="user"` is the single reduced-motion pattern**, set once near the root. That satisfies the foundation's reduced-motion requirement for everything under it; a component reaching for its own handling is a smell
+  - **No per-element `motion` on repeated elements.** The week grid holds ~40 blocks and the section list ~42 cards. Animate the container, not each child
+  - **No *persistent* layout animation on the grid.** A `layout` prop on every block makes all ~40 of them measure on every render, and the grid is the surface that must stay still and readable. A **one-shot `layoutId` handoff for the ghost-into-place transition is the exception and is why `motion` was approved** — it is transient, it involves two elements rather than forty, and it is the one animation here that carries meaning
+  - **Components must still render assertable HTML under `renderToStaticMarkup`.** A surface that renders empty without a browser is not acceptable, and `AnimatePresence` around content the tests assert on is the likely way to break that
 - **The suite renders to static markup** — no DOM, no effects, no refs, no rAF. Every component touched must still render assertable HTML with animation inert. A component that renders empty without a browser is not acceptable
 
 ## Acceptance criteria
@@ -106,7 +111,7 @@ The app currently signs itself with a green rounded tile holding a `BookOpen` gl
 
 - [ ] Screen and dialog transitions animate rather than cut. Short, never blocking input
 - [ ] Solve results appear with a **brief stagger** so the ranking reads as an ordering
-- [ ] **Adding a section animates the ghost into place** on the grid — the preview the student is hovering becomes the committed block. This is the one piece of motion that carries meaning rather than polish
+- [ ] **Adding a section animates the ghost into place** on the grid — the preview the student is hovering becomes the committed block. This is the one piece of motion that carries meaning rather than polish, and the one case where a shared-element (`layoutId`) transition is worth it. It must not leave measurement running on the other blocks once it settles
 - [ ] Every animation is disabled under `prefers-reduced-motion`, verified
 
 ### States that currently say nothing
@@ -138,4 +143,9 @@ The app currently signs itself with a green rounded tile holding a `BookOpen` gl
 
 **This is the largest ticket in the project and it touches almost every component.** Land the foundation first and commit it before restyling surfaces — a token change after twelve components have been restyled means restyling them twice. If it proves too large to land as one change, say so and propose a split rather than shipping half a design system.
 
-**React Bits** (reactbits.dev) was raised as a source. Its model is copy-the-source-in, like shadcn, which this project already uses, so it fits. Its components split into CSS-only, `motion`-based, and WebGL-based: **only the first tier is usable without a decision**, and the WebGL tier is ruled out entirely. Take individual components rather than adopting a look wholesale — the app has a visual language and this ticket refines it rather than replacing it.
+**React Bits** (reactbits.dev) was raised as a source. Its model is copy-the-source-in, like shadcn, which this project already uses, so it fits. Its components split roughly into CSS-only, `motion`-based, and WebGL-based:
+
+- **CSS-only and `motion`-based are both open now** that `motion` is approved
+- **The WebGL tier is ruled out entirely** — it is the tier React Bits is best known for (the animated background family built on `ogl`), and none of it is usable here. No canvas, no WebGL, and a looping background fails the idle-app rule on its own
+
+Take individual components rather than adopting a look wholesale, and hold each one to this ticket's performance rules rather than assuming a published component respects them — several are written for landing pages, where a permanently animating hero is the point. The app has a visual language; this ticket refines it rather than replacing it.
