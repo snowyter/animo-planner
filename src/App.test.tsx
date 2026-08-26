@@ -5,7 +5,7 @@ import App from "./App";
 import * as client from "./adapters/ipc/client";
 import { PlanWorkspace } from "./components/PlanWorkspace";
 import { AppHeader } from "./components/AppHeader";
-import type { PlanSummary } from "./adapters/ipc/types";
+import type { PlanSummary, UpdateCheck } from "./adapters/ipc/types";
 
 vi.mock("./adapters/ipc/client", () => ({
   listPlans: vi.fn(),
@@ -24,6 +24,15 @@ vi.mock("./adapters/ipc/client", () => ({
   }),
   buildCaptureReport: vi.fn(),
   clearBrowserSession: vi.fn(),
+  checkForUpdate: vi.fn().mockResolvedValue({
+    status: "up_to_date",
+    currentVersion: "0.1.0",
+    availableVersion: null,
+    notes: null,
+    failureReason: null,
+    failureDetail: null,
+  }),
+  installUpdate: vi.fn(),
   onCaptureUpdated: vi.fn().mockResolvedValue(() => {}),
   onCaptureFailed: vi.fn().mockResolvedValue(() => {}),
 }));
@@ -152,5 +161,52 @@ describe("App shell and navigation", () => {
 
     // Restore
     (globalThis as unknown as { localStorage: unknown }).localStorage = originalLocalStorage;
+  });
+
+  it("renders a quiet waiting update notice with the offered version without opening a dialog", () => {
+    vi.mocked(client.listPlans).mockResolvedValue([]);
+    vi.mocked(client.getCampusOptions).mockResolvedValue([]);
+    vi.mocked(client.getSessionOptions).mockResolvedValue([]);
+
+    const availableCheck: UpdateCheck = {
+      status: "available",
+      currentVersion: "0.1.0",
+      availableVersion: "0.2.0",
+      notes: "Release notes",
+      failureReason: null,
+      failureDetail: null,
+    };
+
+    const html = renderToStaticMarkup(
+      React.createElement(App, {
+        initialUpdateCheck: availableCheck,
+      })
+    );
+
+    expect(html).toContain("0.2.0");
+    expect(html).toMatch(/A new version of Animo Plan/i);
+  });
+
+  it("does not render update notice banner when up to date or failed", () => {
+    vi.mocked(client.listPlans).mockResolvedValue([]);
+    vi.mocked(client.getCampusOptions).mockResolvedValue([]);
+    vi.mocked(client.getSessionOptions).mockResolvedValue([]);
+
+    const failedCheck: UpdateCheck = {
+      status: "failed",
+      currentVersion: "0.1.0",
+      availableVersion: null,
+      notes: null,
+      failureReason: "network",
+      failureDetail: "Network error",
+    };
+
+    const html = renderToStaticMarkup(
+      React.createElement(App, {
+        initialUpdateCheck: failedCheck,
+      })
+    );
+
+    expect(html).not.toMatch(/A new version of Animo Plan/i);
   });
 });

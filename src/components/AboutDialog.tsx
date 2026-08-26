@@ -9,6 +9,9 @@ import {
   CheckCircle2,
   AlertCircle,
   RefreshCw,
+  Sparkles,
+  Download,
+  Info,
 } from "lucide-react";
 import {
   Dialog,
@@ -22,18 +25,25 @@ import { Button } from "./ui/button";
 import { Badge } from "./ui/badge";
 import { Alert, AlertDescription, AlertTitle } from "./ui/alert";
 import * as client from "../adapters/ipc/client";
-import type { AppInfo } from "../adapters/ipc/types";
+import type { AppInfo, UpdateCheck } from "../adapters/ipc/types";
 import {
   DISCLAIMER_TEXT,
   PUBLIC_SOURCE_REPO_URL,
   formatSelectorConfigSource,
 } from "../core/diagnostics";
+import { formatUpdateFailureReason } from "../core/updater";
 
 export interface AboutDialogProps {
   open: boolean;
   onOpenChange: (open: boolean) => void;
   onOpenReport?: () => void;
   initialAppInfo?: AppInfo | null;
+  initialUpdateCheck?: UpdateCheck | null;
+  isCheckingUpdate?: boolean;
+  isInstallingUpdate?: boolean;
+  onCheckForUpdate?: () => void;
+  onInstallUpdate?: () => void;
+  onUpdateCheckChange?: (check: UpdateCheck) => void;
 }
 
 export function AboutDialog({
@@ -41,6 +51,12 @@ export function AboutDialog({
   onOpenChange,
   onOpenReport,
   initialAppInfo,
+  initialUpdateCheck,
+  isCheckingUpdate: externalIsChecking,
+  isInstallingUpdate: externalIsInstalling,
+  onCheckForUpdate,
+  onInstallUpdate,
+  onUpdateCheckChange,
 }: AboutDialogProps) {
   const [appInfo, setAppInfo] = useState<AppInfo | null>(() => initialAppInfo ?? null);
   const [isLoadingInfo, setIsLoadingInfo] = useState<boolean>(false);
@@ -49,11 +65,29 @@ export function AboutDialog({
   const [clearStatus, setClearStatus] = useState<"success" | "error" | null>(null);
   const [clearError, setClearError] = useState<string | null>(null);
 
+  // Updater state
+  const [updateCheck, setUpdateCheck] = useState<UpdateCheck | null>(
+    () => initialUpdateCheck ?? null
+  );
+  const [internalIsChecking, setInternalIsChecking] = useState<boolean>(false);
+  const [internalIsInstalling, setInternalIsInstalling] = useState<boolean>(false);
+  const [installError, setInstallError] = useState<string | null>(null);
+
+  const isChecking = externalIsChecking ?? internalIsChecking;
+  const isInstalling = externalIsInstalling ?? internalIsInstalling;
+
+  useEffect(() => {
+    if (initialUpdateCheck !== undefined) {
+      setUpdateCheck(initialUpdateCheck);
+    }
+  }, [initialUpdateCheck]);
+
   useEffect(() => {
     if (!open) {
       setIsConfirmingClear(false);
       setClearStatus(null);
       setClearError(null);
+      setInstallError(null);
       return;
     }
 
@@ -104,6 +138,58 @@ export function AboutDialog({
     }
   };
 
+  const handleCheckForUpdate = async () => {
+    if (isChecking || isInstalling) return;
+    if (onCheckForUpdate) {
+      onCheckForUpdate();
+      return;
+    }
+
+    setInternalIsChecking(true);
+    setInstallError(null);
+    try {
+      const result = await client.checkForUpdate();
+      setUpdateCheck(result);
+      onUpdateCheckChange?.(result);
+    } catch {
+      const failedCheck: UpdateCheck = {
+        status: "failed",
+        currentVersion: appInfo?.appVersion ?? "0.1.0",
+        availableVersion: null,
+        notes: null,
+        failureReason: "unknown",
+        failureDetail: "Update check failed",
+      };
+      setUpdateCheck(failedCheck);
+      onUpdateCheckChange?.(failedCheck);
+    } finally {
+      setInternalIsChecking(false);
+    }
+  };
+
+  const handleInstall = async () => {
+    if (isInstalling || isChecking) return;
+    if (onInstallUpdate) {
+      onInstallUpdate();
+      return;
+    }
+
+    setInternalIsInstalling(true);
+    setInstallError(null);
+    try {
+      const outcome = await client.installUpdate();
+      if (outcome.status === "failed") {
+        setInstallError(outcome.failureDetail ?? "Update installation failed");
+      }
+    } catch (err: unknown) {
+      setInstallError(err instanceof Error ? err.message : "Update installation failed");
+    } finally {
+      setInternalIsInstalling(false);
+    }
+  };
+
+  const isUpdaterCompiledOut = updateCheck?.status === "unavailable";
+
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
       <DialogContent className="max-w-2xl max-h-[90vh] flex flex-col p-6 overflow-hidden">
@@ -137,7 +223,7 @@ export function AboutDialog({
             </div>
           </Alert>
 
-          {/* Versions and Selector Config Status (SPEC §9, ADR-0013) */}
+          {/* Versions and Selector Config Status (SPEC §9, ADR-0013, Ticket 39) */}
           <div className="rounded-lg border border-slate-200 bg-white p-4 space-y-3 shadow-2xs">
             <h4 className="text-xs font-bold text-slate-900 uppercase tracking-wider">
               Version & Configuration
@@ -168,6 +254,120 @@ export function AboutDialog({
                 )}
               </div>
             </div>
+
+            {/* Updates area — omitted when updater is compiled out */}
+            {!isUpdaterCompiledOut && (
+              <div className="pt-2 border-t border-slate-100 space-y-2.5">
+                {updateCheck?.status === "available" && (
+                  <div className="rounded-md bg-emerald-50/80 border border-emerald-200 p-3 space-y-2">
+                    <div className="flex items-center justify-between gap-2">
+                      <div className="flex items-center gap-1.5 text-xs font-semibold text-emerald-950">
+                        <Sparkles className="h-4 w-4 text-emerald-600 shrink-0" />
+                        <span>Animo Plan v{updateCheck.availableVersion} is available</span>
+                      </div>
+                      <Badge variant="default" className="text-[10px] bg-emerald-600">
+                        New Version
+                      </Badge>
+                    </div>
+
+                    {updateCheck.notes && (
+                      <p className="text-xs text-slate-700 bg-white/70 rounded p-2 border border-emerald-100 font-sans leading-relaxed">
+                        {updateCheck.notes}
+                      </p>
+                    )}
+
+                    <p className="text-[11px] text-slate-500">
+                      The app will restart after updating.
+                    </p>
+
+                    {installError && (
+                      <Alert variant="destructive" className="py-1.5">
+                        <AlertCircle className="h-3.5 w-3.5" />
+                        <AlertDescription className="text-xs">{installError}</AlertDescription>
+                      </Alert>
+                    )}
+
+                    <div className="pt-1 flex items-center gap-2">
+                      <Button
+                        type="button"
+                        size="sm"
+                        disabled={isInstalling || isChecking}
+                        onClick={handleInstall}
+                        className="h-7 text-xs bg-emerald-700 hover:bg-emerald-800 text-white flex items-center gap-1.5 shadow-xs"
+                      >
+                        {isInstalling ? (
+                          <RefreshCw className="h-3 w-3 animate-spin" />
+                        ) : (
+                          <Download className="h-3.5 w-3.5" />
+                        )}
+                        <span>
+                          {isInstalling ? "Installing & restarting..." : "Install and Restart"}
+                        </span>
+                      </Button>
+                    </div>
+                  </div>
+                )}
+
+                {updateCheck?.status === "up_to_date" && (
+                  <div className="flex items-center justify-between text-xs text-slate-600 bg-slate-50 rounded-md p-2.5 border border-slate-100">
+                    <div className="flex items-center gap-1.5 text-emerald-800 font-medium">
+                      <CheckCircle2 className="h-4 w-4 text-emerald-600" />
+                      <span>Animo Plan is up to date</span>
+                    </div>
+                    <Button
+                      type="button"
+                      variant="ghost"
+                      size="sm"
+                      disabled={isChecking}
+                      onClick={handleCheckForUpdate}
+                      className="h-6 text-[11px] text-slate-600 hover:text-slate-900 px-2"
+                    >
+                      {isChecking ? "Checking..." : "Check again"}
+                    </Button>
+                  </div>
+                )}
+
+                {updateCheck?.status === "failed" && (
+                  <div className="flex items-center justify-between text-xs text-slate-600 bg-slate-50 rounded-md p-2.5 border border-slate-100">
+                    <div className="flex items-center gap-1.5 text-slate-700">
+                      <Info className="h-4 w-4 text-slate-500 shrink-0" />
+                      <span>{formatUpdateFailureReason(updateCheck.failureReason)}</span>
+                    </div>
+                    <Button
+                      type="button"
+                      variant="ghost"
+                      size="sm"
+                      disabled={isChecking}
+                      onClick={handleCheckForUpdate}
+                      className="h-6 text-[11px] text-slate-600 hover:text-slate-900 px-2"
+                    >
+                      {isChecking ? "Checking..." : "Check again"}
+                    </Button>
+                  </div>
+                )}
+
+                {(!updateCheck || (updateCheck.status !== "available" && updateCheck.status !== "up_to_date" && updateCheck.status !== "failed")) && (
+                  <div className="flex items-center justify-between pt-1">
+                    <span className="text-xs text-slate-500">Check GitHub Releases for updates</span>
+                    <Button
+                      type="button"
+                      variant="outline"
+                      size="sm"
+                      disabled={isChecking}
+                      onClick={handleCheckForUpdate}
+                      className="h-7 text-xs border-slate-200 text-slate-700 hover:text-slate-900 flex items-center gap-1.5"
+                    >
+                      {isChecking ? (
+                        <RefreshCw className="h-3 w-3 animate-spin" />
+                      ) : (
+                        <RefreshCw className="h-3 w-3" />
+                      )}
+                      <span>{isChecking ? "Checking for updates..." : "Check for updates"}</span>
+                    </Button>
+                  </div>
+                )}
+              </div>
+            )}
           </div>
 
           {/* Public Source Repository (ADR-0005, SPEC §8) */}

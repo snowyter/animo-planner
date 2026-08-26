@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useState, useEffect } from "react";
 import { AppHeader } from "./components/AppHeader";
 import { PlanList } from "./components/PlanList";
 import { CreatePlanDialog } from "./components/CreatePlanDialog";
@@ -6,15 +6,20 @@ import { PlanWorkspace } from "./components/PlanWorkspace";
 import { AboutDialog } from "./components/AboutDialog";
 import { ReportBrokenCaptureDialog } from "./components/ReportBrokenCaptureDialog";
 import { OnboardingDialog } from "./components/OnboardingDialog";
+import { UpdateNotice } from "./components/UpdateNotice";
 import { usePlans } from "./components/usePlans";
 import { useOptions } from "./components/useOptions";
 import { usePlanDetail } from "./components/usePlanDetail";
-import { openCaptureWindow } from "./adapters/ipc/client";
+import { openCaptureWindow, checkForUpdate } from "./adapters/ipc/client";
 import { isOnboardingCompleted, setOnboardingCompleted } from "./core/onboarding";
-import type { PlanSummary } from "./adapters/ipc/types";
+import type { PlanSummary, UpdateCheck } from "./adapters/ipc/types";
 import "./App.css";
 
-function AppContent() {
+export interface AppProps {
+  initialUpdateCheck?: UpdateCheck | null;
+}
+
+function AppContent({ initialUpdateCheck }: AppProps) {
   const [isOnboardingOpen, setIsOnboardingOpen] = useState(() => !isOnboardingCompleted());
   const [activePlanSummary, setActivePlanSummary] = useState<PlanSummary | null>(null);
   const [isCreateOpen, setIsCreateOpen] = useState(false);
@@ -24,6 +29,30 @@ function AppContent() {
   const [isAboutOpen, setIsAboutOpen] = useState(false);
   const [isReportOpen, setIsReportOpen] = useState(false);
   const [reportFailureError, setReportFailureError] = useState<string | null>(null);
+
+  // Updater state
+  const [updateCheck, setUpdateCheck] = useState<UpdateCheck | null>(
+    () => initialUpdateCheck ?? null
+  );
+  const [isUpdateDismissed, setIsUpdateDismissed] = useState(false);
+
+  // Startup check runs off the critical path without delaying first paint or blocking plans
+  useEffect(() => {
+    let active = true;
+    checkForUpdate()
+      .then((check) => {
+        if (active) {
+          setUpdateCheck(check);
+        }
+      })
+      .catch(() => {
+        // A failed check is quiet (SPEC §9, ADR-0017)
+      });
+
+    return () => {
+      active = false;
+    };
+  }, []);
 
   const {
     plans,
@@ -104,6 +133,13 @@ function AppContent() {
         onOpenTour={() => setIsOnboardingOpen(true)}
       />
 
+      <UpdateNotice
+        updateCheck={updateCheck}
+        dismissed={isUpdateDismissed}
+        onOpenAbout={() => setIsAboutOpen(true)}
+        onDismiss={() => setIsUpdateDismissed(true)}
+      />
+
       <main className="flex-1">
         {activePlanSummary ? (
           <PlanWorkspace
@@ -166,6 +202,8 @@ function AppContent() {
         open={isAboutOpen}
         onOpenChange={setIsAboutOpen}
         onOpenReport={() => handleOpenReport()}
+        initialUpdateCheck={updateCheck}
+        onUpdateCheckChange={setUpdateCheck}
       />
 
       <ReportBrokenCaptureDialog
@@ -177,8 +215,8 @@ function AppContent() {
   );
 }
 
-function App() {
-  return <AppContent />;
+export function App(props: AppProps) {
+  return <AppContent {...props} />;
 }
 
 export default App;
