@@ -81,6 +81,22 @@ Animo Plan is used during enlistment, under time pressure, while comparing secti
 - [ ] **A single reduced-motion pattern** every animation uses, established once
 - [ ] The stray `dark:` variants are removed and the app is consistently light
 
+### Identity and icon restraint
+
+The app currently signs itself with a green rounded tile holding a `BookOpen` glyph, the wordmark, and a subtitle. The glyph is a generic stock icon standing in for a logo, and it is the least distinctive thing on the screen.
+
+- [ ] **The mark is the wordmark.** "Animo Plan", set as type — bold, tight tracking, confident. The `BookOpen` tile goes. No icon, no monogram, no invented emblem
+- [ ] The wordmark is **the app's most deliberate piece of typography** and should look chosen rather than defaulted: it is the one place a display weight, tighter tracking, or optical size earns its keep
+- [ ] Decide whether the "Archer's Hub Enlistment Planner" subtitle survives. If it does, it is subordinate to the wordmark, not a second line of equal weight
+- [ ] **"Read-only • No credentials stored" stays visible.** It is the app's trust claim (ADR-0001, ADR-0002), not decoration, and it is not a candidate for the icon cull
+
+**Then thin the icons everywhere they are decoration.** Icon counts today: `WeekGrid` 35, `SectionPicker` 33, `PlanWorkspace` 30, `AboutDialog` 26, `SolveDialog` 24. Most of them label something the adjacent text already says.
+
+- [ ] **An icon beside a word that already says the same thing is noise.** Prefer the word. A button reading "About" does not need an ℹ; a heading reading "Capture Sections" does not need a glyph
+- [ ] **Icons that carry meaning stay, and are not up for negotiation.** Specifically: the grid's `Building2`/`Globe` modality marks (modality is derived per-block and displayed — ADR-0007), the conflict indicator (ADR-0009), and pin state. Hue is already spent on course identity (ADR-0012), so those glyphs are load-bearing information, not chrome. **Removing them destroys data the student is reading**
+- [ ] An icon standing alone as a control — no visible label — keeps an accessible name
+- [ ] The result is judged on the dense surfaces, not the calm ones: the week grid and the section list should read as *quieter*, not emptier
+
 ### Ambient surfaces
 
 - [ ] **Plan list**, **onboarding**, and **About** gain a slow, low-contrast CSS gradient. Content sits on an opaque or frosted surface above it so text contrast is unaffected
