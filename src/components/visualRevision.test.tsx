@@ -16,7 +16,7 @@ import { OnboardingDialog } from "./OnboardingDialog";
 import { PlanList } from "./PlanList";
 import { PlanWorkspace } from "./PlanWorkspace";
 import { SectionPicker } from "./SectionPicker";
-import { SolveDialog } from "./SolveDialog";
+import { SolvePanel } from "./SolvePanel";
 import { UpdateNotice } from "./UpdateNotice";
 import { WeekGrid } from "./WeekGrid";
 import type {
@@ -306,9 +306,7 @@ describe("empty states say what to do next", () => {
     };
 
     const html = renderToStaticMarkup(
-      React.createElement(SolveDialog, {
-        open: true,
-        onOpenChange: vi.fn(),
+      React.createElement(SolvePanel, {
         planId: "p1",
         initialResult: result,
       })
@@ -331,9 +329,7 @@ describe("solve results read as a ranking", () => {
   };
 
   const html = renderToStaticMarkup(
-    React.createElement(SolveDialog, {
-      open: true,
-      onOpenChange: vi.fn(),
+    React.createElement(SolvePanel, {
       planId: "p1",
       initialResult: result,
     })
@@ -513,7 +509,7 @@ describe("the ghost-into-place handoff", () => {
     const html = renderToStaticMarkup(
       React.createElement(WeekGrid, {
         sections: [planSection],
-        ghostSection: ghost,
+        previewSections: [ghost],
       })
     );
 
@@ -558,8 +554,9 @@ describe("Clear schedule sits with the thing it clears", () => {
 
     // And no longer up in the plan-scope banner, which now carries only the
     // plan's identity, its counts, and Export.
-    const captureBar = html.indexOf("Capture Sections");
-    expect(clearButton).toBeGreaterThan(captureBar);
+    const planBanner = html.indexOf("Plan Scope:");
+    expect(planBanner).toBeGreaterThan(-1);
+    expect(clearButton).toBeGreaterThan(planBanner);
   });
 
   it("appears exactly once", () => {
@@ -660,6 +657,8 @@ describe("the section row says what it collides with", () => {
             sectionCount: sections.length,
             firstSeenAt: "2026-08-22T00:00:00Z",
             lastSeenAt: "2026-08-22T00:00:00Z",
+            included: true,
+            lastRefreshedAt: null,
           },
         ],
         selectedCourseId: 1,
@@ -719,6 +718,8 @@ describe("plan-state badges are edge-aligned with their controls", () => {
             sectionCount: 1,
             firstSeenAt: "2026-08-22T00:00:00Z",
             lastSeenAt: "2026-08-22T00:00:00Z",
+            included: true,
+            lastRefreshedAt: null,
           },
         ],
         selectedCourseId: 2923,
@@ -772,12 +773,15 @@ describe("pinned columns clear the app header", () => {
   // grid column that is the whole "Weekly Schedule / Clear schedule / Export"
   // row.
   it("pins the week grid column below the header, not behind it", () => {
+    // Only a two-column row has a column to pin: with the tools folded the
+    // grid takes the whole width and there is nothing to pin it against.
     const html = renderToStaticMarkup(
       React.createElement(PlanWorkspace, {
         planSummary,
         plan: emptyPlan,
         isLoading: false,
         error: null,
+        initialToolsOpen: true,
         onBack: vi.fn(),
         onRetry: vi.fn(),
       })

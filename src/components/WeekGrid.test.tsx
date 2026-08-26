@@ -1,4 +1,4 @@
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import React from "react";
 import { renderToStaticMarkup } from "react-dom/server";
 import { WeekGrid, blockTooltip } from "./WeekGrid";
@@ -329,7 +329,7 @@ describe("WeekGrid component", () => {
     const html = renderToStaticMarkup(
       React.createElement(WeekGrid, {
         sections: [planSection],
-        ghostSection: ghostCandidate,
+        previewSections: [ghostCandidate],
       })
     );
 
@@ -358,7 +358,7 @@ describe("WeekGrid component", () => {
     const html = renderToStaticMarkup(
       React.createElement(WeekGrid, {
         sections: [planSection],
-        ghostSection: ghostConflicting,
+        previewSections: [ghostConflicting],
       })
     );
 
@@ -367,7 +367,7 @@ describe("WeekGrid component", () => {
     expect(html).toContain("hatched");
   });
 
-  it("does not render ghost blocks when ghostSection is null", () => {
+  it("does not render preview blocks when nothing is previewed", () => {
     const planSection = makeSection(
       2923,
       384,
@@ -379,11 +379,182 @@ describe("WeekGrid component", () => {
     const html = renderToStaticMarkup(
       React.createElement(WeekGrid, {
         sections: [planSection],
-        ghostSection: null,
+        previewSections: null,
       })
     );
 
     expect(html).not.toContain("data-ghost=\"true\"");
+  });
+
+  /**
+   * Ticket 46 — one preview mechanism.
+   *
+   * The picker previews one hovered section; the solver previews a whole
+   * candidate schedule. They are the same concept and share this one prop, so
+   * two systems can never race for the same surface.
+   */
+  describe("previewing a whole set of sections", () => {
+    it("draws every section of a previewed solution as a preview block", () => {
+      const previewA = makeSection(
+        2923,
+        384,
+        "GEARTAP",
+        "S11",
+        [makeBlock("TUE", 870, 960, "F2F", "L226")]
+      );
+      const previewB = makeSection(
+        564,
+        737,
+        "CSINTSY",
+        "Z01",
+        [makeBlock("WED", 450, 540, "ONLINE")]
+      );
+
+      const html = renderToStaticMarkup(
+        React.createElement(WeekGrid, {
+          sections: [],
+          previewSections: [previewA, previewB],
+        })
+      );
+
+      expect(html.match(/data-ghost="true"/g)).toHaveLength(2);
+      expect(html).toContain("GEARTAP");
+      expect(html).toContain("CSINTSY");
+    });
+
+    it("keeps a previewed set from being mistaken for the applied plan", () => {
+      const previewA = makeSection(
+        2923,
+        384,
+        "GEARTAP",
+        "S11",
+        [makeBlock("TUE", 870, 960, "F2F", "L226")]
+      );
+
+      const html = renderToStaticMarkup(
+        React.createElement(WeekGrid, {
+          sections: [],
+          previewSections: [previewA],
+          previewLabel: "Previewing Schedule #1",
+        })
+      );
+
+      // Marked on the block, and named on the grid itself.
+      expect(html).toContain("Preview");
+      expect(html).toContain('data-testid="week-grid-preview-notice"');
+      expect(html).toContain("Previewing Schedule #1");
+      expect(html).toContain("pointer-events-none");
+    });
+
+    it("hides the plan's own sections behind the previewed set, not beside it", () => {
+      // A solution preview replaces the schedule for as long as it is shown.
+      // Drawing both at once would read as a plan with double the sections.
+      const planSection = makeSection(
+        2923,
+        384,
+        "GEARTAP",
+        "S11",
+        [makeBlock("MON", 450, 540, "F2F", "L226")]
+      );
+      const previewOther = makeSection(
+        2923,
+        385,
+        "GEARTAP",
+        "S12",
+        [makeBlock("THU", 450, 540, "F2F", "L226")]
+      );
+
+      const html = renderToStaticMarkup(
+        React.createElement(WeekGrid, {
+          sections: [planSection],
+          previewSections: [previewOther],
+          previewReplacesPlan: true,
+        })
+      );
+
+      expect(html).toContain("S12");
+      expect(html).not.toContain("S11");
+    });
+
+    it("offers to apply the schedule from the grid the student is reading", () => {
+      // The decision is made while looking at the week, not at the card that
+      // produced it. Making them go back to the panel to act on what they
+      // just decided is the seam where a preview stops feeling live.
+      const previewA = makeSection(
+        2923,
+        384,
+        "GEARTAP",
+        "S11",
+        [makeBlock("TUE", 870, 960, "F2F", "L226")]
+      );
+
+      const html = renderToStaticMarkup(
+        React.createElement(WeekGrid, {
+          sections: [],
+          previewSections: [previewA],
+          previewLabel: "Previewing Schedule #1",
+          previewReplacesPlan: true,
+          onApplyPreview: vi.fn(),
+          onClearPreview: vi.fn(),
+        })
+      );
+
+      const notice = html.slice(html.indexOf('data-testid="week-grid-preview-notice"'));
+      expect(notice).toContain('data-testid="week-grid-apply-preview"');
+      expect(notice).toContain('data-testid="week-grid-clear-preview"');
+    });
+
+    it("offers no apply control when applying is not the caller's to offer", () => {
+      const previewA = makeSection(
+        2923,
+        384,
+        "GEARTAP",
+        "S11",
+        [makeBlock("TUE", 870, 960, "F2F", "L226")]
+      );
+
+      const html = renderToStaticMarkup(
+        React.createElement(WeekGrid, {
+          sections: [],
+          previewSections: [previewA],
+          previewLabel: "Previewing Schedule #1",
+          previewReplacesPlan: true,
+          onClearPreview: vi.fn(),
+        })
+      );
+
+      expect(html).not.toContain('data-testid="week-grid-apply-preview"');
+    });
+
+    it("still ghosts a single hovered candidate over the plan it would join", () => {
+      const planSection = makeSection(
+        2923,
+        384,
+        "GEARTAP",
+        "S11",
+        [makeBlock("MON", 450, 540, "F2F", "L226")]
+      );
+      const hovered = makeSection(
+        564,
+        737,
+        "CSINTSY",
+        "Z01",
+        [makeBlock("WED", 450, 540, "ONLINE")]
+      );
+
+      const html = renderToStaticMarkup(
+        React.createElement(WeekGrid, {
+          sections: [planSection],
+          previewSections: [hovered],
+        })
+      );
+
+      expect(html).toContain("S11");
+      expect(html).toContain("Z01");
+      expect(html.match(/data-ghost="true"/g)).toHaveLength(1);
+      // And nothing to dismiss: a hover preview is not a mode.
+      expect(html).not.toContain('data-testid="week-grid-preview-notice"');
+    });
   });
 
   it("renders missing section visibly on the grid marked with data-missing='true' and missing indicator", () => {
@@ -550,7 +721,7 @@ describe("WeekGrid component", () => {
       const html = renderToStaticMarkup(
         React.createElement(WeekGrid, {
           sections: [planSection],
-          ghostSection,
+          previewSections: [ghostSection],
         })
       );
 

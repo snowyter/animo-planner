@@ -23,6 +23,15 @@ export interface CaptureBarProps {
   onOpenCapture: () => void;
   onDismissFailure: () => void;
   onReportBrokenCapture?: (error: string) => void;
+  /**
+   * Which half to render (ticket 46).
+   *
+   * The controls belong on the Capture tab, but a capture that failed to
+   * parse must be visible from Pick and Solve too — tabs hide state, and a
+   * notice is exactly the state that must not be hidden. `"notices"` renders
+   * the alerts alone, above the tabs; `"controls"` renders the panel.
+   */
+  render?: "all" | "notices" | "controls";
 }
 
 /**
@@ -62,6 +71,7 @@ export function CaptureBar({
   onOpenCapture,
   onDismissFailure,
   onReportBrokenCapture,
+  render = "all",
 }: CaptureBarProps) {
   const sectionCount = summary?.sectionCount ?? 0;
   const courseCount = summary?.courseCount ?? 0;
@@ -71,7 +81,7 @@ export function CaptureBar({
   return (
     <div className="space-y-3">
       {/* Non-blocking Capture Failure Notice (ADR-0004, Ticket 12/23) */}
-      {captureFailure && (
+      {render !== "controls" && captureFailure && (
         /* Informative, not alarming: amber, a plain heading, and the two
            things the student can do about it. Nothing here is an error. */
         <Alert variant="warning" className="relative pr-12">
@@ -117,78 +127,80 @@ export function CaptureBar({
       )}
 
       {/* IPC Error Alert */}
-      {error && (
+      {render !== "controls" && error && (
         <Alert variant="destructive">
           <AlertTitle className="text-sm font-semibold">Capture error</AlertTitle>
           <AlertDescription className="text-xs font-mono">{error}</AlertDescription>
         </Alert>
       )}
 
-      {/* Capture Control and Live Counter Panel */}
-      <div className="rounded-panel border border-border bg-card p-4 sm:p-panel">
-        <div className="flex flex-col lg:flex-row lg:items-center lg:justify-between gap-4">
-          {/* Left Column: Scope & Plain Privacy Disclaimer (ADR-0002) */}
-          <div className="space-y-1.5 min-w-0 lg:flex-1">
-            <div className="flex items-center gap-2">
-              <span className="text-sm font-bold text-foreground">
-                Capture Sections
-              </span>
-              <Badge variant="outline" className="font-normal text-muted-foreground">
-                {campusName} • {sessionName}
-              </Badge>
-            </div>
-            <p className="text-xs text-muted-foreground leading-relaxed">
-              You will sign in directly on De La Salle University&#39;s Archer&#39;s Hub portal.
-              Animo Plan never stores your credentials. Captures update silently.
-            </p>
+      {/* Capture Control and Live Counter Panel.
+          One column, always (ticket 46). This lives in a ~440px tool panel,
+          and Tailwind's `lg:` keys off the viewport rather than off the column
+          the markup is in — on the 1400x900 window the app opens at, the old
+          `lg:flex-row` put the paragraph and the button row side by side
+          inside 440px and crushed the text to one word per line. */}
+      {render !== "notices" && (
+      <div className="rounded-panel border border-border bg-card p-4 space-y-4">
+        {/* Scope & plain privacy disclaimer (ADR-0002) */}
+        <div className="space-y-1.5 min-w-0">
+          <div className="flex flex-wrap items-center gap-2">
+            <span className="text-sm font-bold text-foreground">
+              Capture Sections
+            </span>
+            <Badge variant="outline" className="font-normal text-muted-foreground">
+              {campusName} • {sessionName}
+            </Badge>
           </div>
+          <p className="text-xs text-muted-foreground leading-relaxed">
+            You will sign in directly on De La Salle University&#39;s Archer&#39;s Hub portal.
+            Animo Plan never stores your credentials. Captures update silently.
+          </p>
+        </div>
 
-          {/* Right Column: Actions & Live Running Counter.
-              Kept on one line: wrapping put Open Archer's Hub on a row of its
-              own and left the rest of the panel empty beside it. The text
-              column shrinks instead. */}
-          <div className="flex flex-wrap items-center gap-3 lg:flex-nowrap lg:shrink-0">
-            {/* Live running counter */}
-            <div
-              className="flex shrink-0 items-center rounded-card bg-muted px-3 py-2 border border-border text-sm whitespace-nowrap"
-              aria-live="polite"
-            >
-              {isLoading ? (
-                <span className="font-semibold text-muted-foreground">Loading...</span>
-              ) : (
-                <CaptureCounter text={counterText} />
-              )}
-            </div>
+        {/* Live running counter, on a row of its own: the text is as wide as
+            "98 sections from 6 courses" and never shortens. */}
+        <div
+          className="flex items-center rounded-card bg-muted px-3 py-2 border border-border text-sm"
+          aria-live="polite"
+        >
+          {isLoading ? (
+            <span className="font-semibold text-muted-foreground">Loading...</span>
+          ) : (
+            <CaptureCounter text={counterText} />
+          )}
+        </div>
 
-            {/* Refresh sits with capture because both reach Archer's Hub for
-                fresh numbers; it is never automatic or on a timer (ticket 21). */}
-            {onRefresh && (
-              <Button
-                type="button"
-                variant="outline"
-                size="sm"
-                disabled={isRefreshing}
-                onClick={onRefresh}
-                className="h-10 shrink-0 whitespace-nowrap text-xs font-semibold px-3.5"
-                title="Re-run every captured course in this scope to refresh its enrolment numbers"
-              >
-                {isRefreshing ? "Refreshing..." : "Refresh"}
-              </Button>
-            )}
-
-            {/* Launch Archer's Hub Popup Button */}
+        <div data-testid="capture-actions" className="flex flex-wrap items-center gap-2">
+          {/* Refresh sits with capture because both reach Archer's Hub for
+              fresh numbers; it is never automatic or on a timer (ticket 21). */}
+          {onRefresh && (
             <Button
-              variant="default"
-              onClick={onOpenCapture}
-              disabled={isOpening}
-              className="flex shrink-0 whitespace-nowrap items-center gap-1.5 text-sm font-medium"
+              type="button"
+              variant="outline"
+              size="sm"
+              disabled={isRefreshing}
+              onClick={onRefresh}
+              className="h-10 shrink-0 whitespace-nowrap text-xs font-semibold px-3.5"
+              title="Re-run every captured course in this scope to refresh its enrolment numbers"
             >
-              {!isOpening && <ExternalLink className="h-4 w-4" aria-hidden="true" />}
-              <span>{isOpening ? "Opening..." : "Open Archer's Hub"}</span>
+              {isRefreshing ? "Refreshing..." : "Refresh"}
             </Button>
-          </div>
+          )}
+
+          {/* Launch Archer's Hub Popup Button */}
+          <Button
+            variant="default"
+            onClick={onOpenCapture}
+            disabled={isOpening}
+            className="flex shrink-0 whitespace-nowrap items-center gap-1.5 text-sm font-medium"
+          >
+            {!isOpening && <ExternalLink className="h-4 w-4" aria-hidden="true" />}
+            <span>{isOpening ? "Opening..." : "Open Archer's Hub"}</span>
+          </Button>
         </div>
       </div>
+      )}
     </div>
   );
 }

@@ -156,6 +156,15 @@ pub struct CapturedSectionsArgs {
 
 #[derive(Debug, Deserialize)]
 #[serde(rename_all = "camelCase")]
+pub struct CourseInclusionArgs {
+    pub campus_id: i64,
+    pub session_id: i64,
+    pub course_id: i64,
+    pub included: bool,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
 pub struct SectionInPlanArgs {
     pub plan_id: String,
     pub course_id: i64,
@@ -415,6 +424,28 @@ fn forget_captured_course_impl(
         .map_err(|err| err.to_string())
 }
 
+/// Marks whether the student intends to enrol in a captured course.
+///
+/// Excluding is not forgetting: nothing is deleted, the counter does not
+/// move, and the course stays in the catalog. It stops being a course the
+/// solver has to satisfy, which is what makes searching forty courses to
+/// browse them survivable.
+fn set_course_included_impl(
+    store: &mut Store,
+    args: CourseInclusionArgs,
+) -> Result<Vec<CapturedCourse>, String> {
+    let scope = CaptureScope {
+        campus_id: args.campus_id,
+        session_id: args.session_id,
+    };
+    store
+        .set_course_included(&scope, args.course_id, args.included)
+        .map_err(|err| err.to_string())?;
+    // The updated catalog comes back with it: one loaded list, so the tab
+    // that toggles and the tab that browses cannot disagree about it.
+    store.captured_courses(&scope).map_err(|err| err.to_string())
+}
+
 // ---------- commands: options & app info ----------
 
 #[tauri::command]
@@ -522,6 +553,15 @@ pub fn forget_captured_course(
 ) -> Result<ForgetCourseOutcome, String> {
     let mut store = store.lock().unwrap_or_else(|poisoned| poisoned.into_inner());
     forget_captured_course_impl(&mut store, args)
+}
+
+#[tauri::command]
+pub fn set_course_included(
+    args: CourseInclusionArgs,
+    store: tauri::State<'_, StoreHandle>,
+) -> Result<Vec<CapturedCourse>, String> {
+    let mut store = store.lock().unwrap_or_else(|poisoned| poisoned.into_inner());
+    set_course_included_impl(&mut store, args)
 }
 
 // ---------- commands: plan membership ----------

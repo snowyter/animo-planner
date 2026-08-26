@@ -98,6 +98,19 @@ pub struct CapturedCourse {
     pub section_count: i64,
     pub first_seen_at: String,
     pub last_seen_at: String,
+    /// Whether the student intends to enrol in this course.
+    ///
+    /// Capturing a course and intending to take it are different acts: a
+    /// student searches a course to look at it, and the solver used to treat
+    /// every such search as a course it had to schedule. An excluded course
+    /// stays captured, stays counted, and stays browsable — it is simply not
+    /// a course the solve has to satisfy.
+    pub included: bool,
+    /// When a refresh last re-read this course, if one ever has.
+    ///
+    /// A capture and a refresh both advance `last_seen_at`, so it alone
+    /// cannot say which act the student is looking at the result of.
+    pub last_refreshed_at: Option<String>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]

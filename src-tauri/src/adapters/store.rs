@@ -371,6 +371,24 @@ WHERE id = 'sample-plan' AND is_sample = 1
     )
 }
 
+/// Migration 7: a captured course says whether the student intends to take
+/// it, and whether a refresh has ever re-read it.
+///
+/// The solver filled every captured course in scope, so searching forty
+/// courses to browse them produced a solve that insisted on scheduling all
+/// forty. `included` separates the search from the intent. Courses captured
+/// before this migration default to `1`: they were the only behaviour there
+/// was, and silently dropping them out of the solve would empty a plan the
+/// student had already built.
+///
+/// `last_refreshed_at` is NULL until a refresh writes the course. Both a
+/// capture and a refresh advance `last_seen_at`, so it alone cannot say
+/// which act produced the numbers on screen.
+const MIGRATION_V7: &str = r#"
+ALTER TABLE courses ADD COLUMN included INTEGER NOT NULL DEFAULT 1 CHECK (included IN (0, 1));
+ALTER TABLE courses ADD COLUMN last_refreshed_at TEXT;
+"#;
+
 fn migrations() -> Vec<String> {
     vec![
         MIGRATION_V1.to_string(),
@@ -379,6 +397,7 @@ fn migrations() -> Vec<String> {
         MIGRATION_V4.to_string(),
         migration_v5(),
         migration_v6(),
+        MIGRATION_V7.to_string(),
     ]
 }
 
@@ -595,6 +614,44 @@ impl Store {
     /// rows went away is dropped rather than left dangling. Returns a
     /// [`ForgetCourseOutcome`]: the updated [`CaptureSummary`] so the
     /// counter re-renders from one source of truth, plus the affected-plan
+    /// Marks whether the student intends to enrol in a captured course.
+    ///
+    /// Excluding is not forgetting (ADR-0008 and ticket 29 own that): the
+    /// course keeps its sections, its snapshots, and its place in the
+    /// catalog. It simply stops being a course the solver has to satisfy,
+    /// which is what makes capturing forty courses to browse them survivable.
+    ///
+    /// Loud rather than a silent no-op when the course is not in this scope,
+    /// matching `forget_course`.
+    pub fn set_course_included(
+        &mut self,
+        scope: &CaptureScope,
+        course_id: i64,
+        included: bool,
+    ) -> Result<(), StoreError> {
+        let changed = self.conn.execute(
+            "UPDATE courses SET included = ?4
+             WHERE campus_id = ?1 AND session_id = ?2 AND course_id = ?3",
+            rusqlite::params![
+                scope.campus_id,
+                scope.session_id,
+                course_id,
+                i64::from(included)
+            ],
+        )?;
+
+        if changed == 0 {
+            return Err(StoreError::CourseNotFound {
+                campus_id: scope.campus_id,
+                session_id: scope.session_id,
+                course_id,
+            });
+        }
+
+        Ok(())
+    }
+
+
     /// report.
     pub fn forget_course(
         &mut self,
@@ -784,7 +841,8 @@ impl Store {
     pub fn captured_courses(&self, scope: &CaptureScope) -> Result<Vec<CapturedCourse>, StoreError> {
         let mut stmt = self.conn.prepare(
             "SELECT c.course_id, c.code, c.title,
-                    COUNT(s.id), MIN(s.first_seen_at), MAX(s.last_seen_at)
+                    COUNT(s.id), MIN(s.first_seen_at), MAX(s.last_seen_at),
+                    c.included, c.last_refreshed_at
              FROM courses c
              JOIN sections s ON s.campus_id = c.campus_id AND s.session_id = c.session_id
                            AND s.course_id = c.course_id
@@ -802,6 +860,8 @@ impl Store {
                     section_count: row.get(3)?,
                     first_seen_at: row.get(4)?,
                     last_seen_at: row.get(5)?,
+                    included: row.get::<_, i64>(6)? != 0,
+                    last_refreshed_at: row.get(7)?,
                 })
             },
         )?;
@@ -992,7 +1052,7 @@ impl Store {
              FROM courses c
              JOIN sections s ON s.campus_id = c.campus_id AND s.session_id = c.session_id
                            AND s.course_id = c.course_id
-             WHERE c.campus_id = ?1 AND c.session_id = ?2
+             WHERE c.campus_id = ?1 AND c.session_id = ?2 AND c.included = 1
              ORDER BY c.course_id, s.section_id",
         )?;
         let rows = stmt.query_map(
@@ -1371,6 +1431,15 @@ impl Store {
         };
         let tx = self.conn.transaction()?;
         record_capture_tx(&tx, &scope, sections, captured_at)?;
+
+        // A refresh is an act the student pressed, and the catalog says so.
+        // `last_seen_at` advances on a capture too, so it alone cannot tell
+        // the two apart on screen.
+        tx.execute(
+            "UPDATE courses SET last_refreshed_at = ?4
+             WHERE campus_id = ?1 AND session_id = ?2 AND course_id = ?3",
+            rusqlite::params![scope.campus_id, scope.session_id, course_id, captured_at],
+        )?;
 
         let present: HashSet<i64> = sections.iter().map(|section| section.section_id).collect();
         let members: Vec<(i64, i64)> = {
@@ -2141,7 +2210,7 @@ mod tests {
             .conn
             .query_row("PRAGMA user_version", [], |row| row.get(0))
             .expect("user_version must be readable");
-        assert_eq!(version, 6, "every migration applies exactly once");
+        assert_eq!(version, 7, "every migration applies exactly once");
     }
 
     #[test]
@@ -2168,7 +2237,15 @@ mod tests {
         let expected: Vec<(&str, &[&str])> = vec![
             (
                 "courses",
-                &["campus_id", "session_id", "course_id", "code", "title"],
+                &[
+                    "campus_id",
+                    "session_id",
+                    "course_id",
+                    "code",
+                    "title",
+                    "included",
+                    "last_refreshed_at",
+                ],
             ),
             (
                 "sections",
@@ -2592,7 +2669,7 @@ mod tests {
             .conn
             .query_row("PRAGMA user_version", [], |row| row.get(0))
             .expect("user_version must be readable");
-        assert_eq!(version, 6, "a fresh database runs every migration");
+        assert_eq!(version, 7, "a fresh database runs every migration");
         assert!(
             column_names(&store.conn, "plans").contains(&"is_sample".to_string()),
             "plans must carry the sample-data marker"
@@ -2606,7 +2683,7 @@ mod tests {
             .conn
             .query_row("PRAGMA user_version", [], |row| row.get(0))
             .expect("user_version must be readable");
-        assert_eq!(version, 6, "a fresh database runs every migration");
+        assert_eq!(version, 7, "a fresh database runs every migration");
         assert!(
             column_names(&store.conn, "plan_sections").contains(&"missing".to_string()),
             "plan_sections must carry the missing marker"
@@ -2699,7 +2776,7 @@ mod tests {
         let version: i64 = conn
             .query_row("PRAGMA user_version", [], |row| row.get(0))
             .expect("user_version");
-        assert_eq!(version, 6);
+        assert_eq!(version, 7);
         let is_sample: i64 = conn
             .query_row("SELECT is_sample FROM plans WHERE id = 'p1'", [], |row| row.get(0))
             .expect("is_sample must be readable");
@@ -2733,7 +2810,7 @@ mod tests {
         let version: i64 = conn
             .query_row("PRAGMA user_version", [], |row| row.get(0))
             .expect("user_version");
-        assert_eq!(version, 6);
+        assert_eq!(version, 7);
         let missing: i64 = conn
             .query_row("SELECT missing FROM plan_sections", [], |row| row.get(0))
             .expect("missing must be readable");
@@ -4684,4 +4761,178 @@ mod tests {
             "the stamp is scoped to (campus, session)"
         );
     }
+
+    /// Ticket 46 follow-up: a captured course carries whether the student
+    /// actually intends to enrol in it.
+    ///
+    /// The solver filled *every* captured course in scope, so a student who
+    /// searched forty courses to browse them got a solve that insisted on
+    /// scheduling all forty. Capturing and intending are different acts, and
+    /// this is the second one.
+    #[test]
+    fn a_captured_course_is_included_until_the_student_says_otherwise() {
+        let mut store = store();
+        store
+            .record_capture(
+                &SCOPE,
+                &[parsed_section(
+                    2923,
+                    384,
+                    "S11",
+                    None,
+                    Some(30),
+                    vec![room_block(Day::Mon, 450, 540, "L226")],
+                )],
+                T1,
+            )
+            .expect("capture must record");
+
+        let courses = store.captured_courses(&SCOPE).expect("courses must list");
+        assert_eq!(courses.len(), 1);
+        assert!(
+            courses[0].included,
+            "capturing a course is the student's own search: it counts until they say it does not"
+        );
+    }
+
+    #[test]
+    fn excluding_a_course_keeps_it_captured_and_takes_it_out_of_the_solve() {
+        let mut store = store();
+        for course_id in [2923, 564] {
+            store
+                .record_capture(
+                    &SCOPE,
+                    &[parsed_section(
+                        course_id,
+                        course_id * 10,
+                        "S11",
+                        None,
+                        Some(30),
+                        vec![room_block(Day::Mon, 450, 540, "L226")],
+                    )],
+                    T1,
+                )
+                .expect("capture must record");
+        }
+
+        store
+            .set_course_included(&SCOPE, 564, false)
+            .expect("exclusion must apply");
+
+        // Still captured, still browsable, still counted.
+        let courses = store.captured_courses(&SCOPE).expect("courses must list");
+        assert_eq!(courses.len(), 2, "excluding is not forgetting");
+        let excluded = courses
+            .iter()
+            .find(|c| c.course_id == 564)
+            .expect("the excluded course stays in the catalog");
+        assert!(!excluded.included);
+
+        // But the solver stops trying to schedule it.
+        let solver_courses = store.solver_courses(&SCOPE).expect("solver catalog");
+        assert!(
+            solver_courses.iter().all(|c| c.course_id != 564),
+            "an excluded course must not be a course the solve has to satisfy"
+        );
+        assert!(
+            solver_courses.iter().any(|c| c.course_id == 2923),
+            "an included course stays a candidate"
+        );
+    }
+
+    #[test]
+    fn including_a_course_again_puts_it_back_in_the_solve() {
+        let mut store = store();
+        store
+            .record_capture(
+                &SCOPE,
+                &[parsed_section(
+                    2923,
+                    384,
+                    "S11",
+                    None,
+                    Some(30),
+                    vec![room_block(Day::Mon, 450, 540, "L226")],
+                )],
+                T1,
+            )
+            .expect("capture must record");
+
+        store
+            .set_course_included(&SCOPE, 2923, false)
+            .expect("exclusion must apply");
+        store
+            .set_course_included(&SCOPE, 2923, true)
+            .expect("inclusion must apply");
+
+        let solver_courses = store.solver_courses(&SCOPE).expect("solver catalog");
+        assert!(solver_courses.iter().any(|c| c.course_id == 2923));
+    }
+
+    #[test]
+    fn excluding_a_course_that_was_never_captured_is_a_loud_error() {
+        let mut store = store();
+        let err = store
+            .set_course_included(&SCOPE, 9999, false)
+            .expect_err("a course that is not in the catalog cannot be excluded");
+        assert!(
+            matches!(err, StoreError::CourseNotFound { .. }),
+            "unexpected error: {err:?}"
+        );
+    }
+
+    /// A capture and a refresh both advance `last_seen_at`, so the catalog
+    /// could not say which one the student was looking at. Only refresh
+    /// stamps `last_refreshed_at`.
+    #[test]
+    fn only_a_refresh_stamps_the_course_as_refreshed() {
+        let mut store = store();
+        store
+            .record_capture(
+                &SCOPE,
+                &[parsed_section(
+                    2923,
+                    384,
+                    "S11",
+                    None,
+                    Some(30),
+                    vec![room_block(Day::Mon, 450, 540, "L226")],
+                )],
+                T1,
+            )
+            .expect("capture must record");
+
+        let courses = store.captured_courses(&SCOPE).expect("courses must list");
+        assert_eq!(
+            courses[0].last_refreshed_at, None,
+            "a course that has only ever been captured was never refreshed"
+        );
+
+        store
+            .create_plan("p1", "T1 load", &SCOPE, T1)
+            .expect("plan must create");
+        store
+            .apply_refresh(
+                "p1",
+                2923,
+                &[parsed_section(
+                    2923,
+                    384,
+                    "S11",
+                    None,
+                    Some(31),
+                    vec![room_block(Day::Mon, 450, 540, "L226")],
+                )],
+                T2,
+            )
+            .expect("refresh must apply");
+
+        let courses = store.captured_courses(&SCOPE).expect("courses must list");
+        assert_eq!(
+            courses[0].last_refreshed_at.as_deref(),
+            Some(T2),
+            "a refresh is what the student pressed, and the catalog says so"
+        );
+    }
+
 }

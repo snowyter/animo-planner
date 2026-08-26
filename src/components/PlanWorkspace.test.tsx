@@ -3,7 +3,7 @@ import React from "react";
 import { renderToStaticMarkup } from "react-dom/server";
 import { PlanWorkspace } from "./PlanWorkspace";
 import * as client from "../adapters/ipc/client";
-import type { Plan, PlanSection, PlanSummary, ScheduleBlock, Section } from "../adapters/ipc/types";
+import type { Plan, PlanSection, PlanSummary, ScheduleBlock, Section, Solution } from "../adapters/ipc/types";
 import planWorkspaceSource from "./PlanWorkspace.tsx?raw";
 
 vi.mock("../adapters/ipc/client", () => ({
@@ -139,7 +139,7 @@ describe("PlanWorkspace", () => {
     expect(html).toContain("Retry");
   });
 
-  it("renders entry point affordances for section picker and solver", () => {
+  it("offers the picker and the solver as tools, not as entry points", () => {
     const mockFullPlan: Plan = {
       ...mockPlanSummary,
       sections: [],
@@ -156,8 +156,11 @@ describe("PlanWorkspace", () => {
       })
     );
 
-    expect(html).toContain("Pick my own sections");
-    expect(html).toContain("Let the solver build it");
+    // The fork between "pick my own" and "let the solver build it" was never
+    // a mode (SPEC §7); it is now two tabs over the same permanent grid.
+    expect(html).toContain("Capture");
+    expect(html).toContain("Solve");
+    expect(html).toContain("Pick");
   });
 
   it("renders the week grid and displays persistent conflict count in plan header", () => {
@@ -238,6 +241,7 @@ describe("PlanWorkspace", () => {
         plan: null,
         isLoading: false,
         error: null,
+        initialToolsOpen: true,
         onBack: vi.fn(),
         onRetry: vi.fn(),
       })
@@ -260,6 +264,8 @@ describe("PlanWorkspace", () => {
         plan: mockFullPlan,
         isLoading: false,
         error: null,
+        initialTab: "pick",
+        initialToolsOpen: true,
         onBack: vi.fn(),
         onRetry: vi.fn(),
       })
@@ -279,6 +285,8 @@ describe("PlanWorkspace", () => {
           sectionCount: 2,
           firstSeenAt: "2026-08-22T00:00:00Z",
           lastSeenAt: "2026-08-22T00:00:00Z",
+          included: true,
+          lastRefreshedAt: null,
         },
       ],
       selectedCourseId: 2923,
@@ -297,6 +305,7 @@ describe("PlanWorkspace", () => {
       removeSection: vi.fn(),
       togglePin: vi.fn(),
       forgetCourse: vi.fn(),
+      setCourseIncluded: vi.fn(),
       dismissNotice: vi.fn(),
     });
 
@@ -311,6 +320,8 @@ describe("PlanWorkspace", () => {
         plan: mockFullPlan,
         isLoading: false,
         error: null,
+        initialTab: "pick",
+        initialToolsOpen: true,
         onBack: vi.fn(),
         onRetry: vi.fn(),
       })
@@ -322,7 +333,7 @@ describe("PlanWorkspace", () => {
     spy.mockRestore();
   });
 
-  it("renders Solve the rest button for triggering solver", () => {
+  it("holds the solver in a tab of its own rather than behind a button", () => {
     const mockFullPlan: Plan = {
       ...mockPlanSummary,
       sections: [],
@@ -334,12 +345,15 @@ describe("PlanWorkspace", () => {
         plan: mockFullPlan,
         isLoading: false,
         error: null,
+        initialTab: "solve",
+        initialToolsOpen: true,
         onBack: vi.fn(),
         onRetry: vi.fn(),
       })
     );
 
     expect(html).toContain("Solve the rest");
+    expect(html).toContain('data-testid="solve-panel"');
   });
 
   it("renders explicit Refresh control button on the plan", () => {
@@ -354,6 +368,7 @@ describe("PlanWorkspace", () => {
         plan: mockFullPlan,
         isLoading: false,
         error: null,
+        initialToolsOpen: true,
         onBack: vi.fn(),
         onRetry: vi.fn(),
       })
@@ -755,24 +770,25 @@ describe("PlanWorkspace persistent week grid layout (ticket 28)", () => {
     sectionCount: 0,
   };
 
-  it("renders section picker and sticky week grid container side by side while picking is open", () => {
+  it("renders the tool panel and the week grid side by side", () => {
     const html = renderToStaticMarkup(
       React.createElement(PlanWorkspace, {
         planSummary: mockPlanSummary,
         plan: { ...mockPlanSummary, sections: [] },
         isLoading: false,
         error: null,
+        initialToolsOpen: true,
         onBack: vi.fn(),
         onRetry: vi.fn(),
       })
     );
 
-    // Both section picker and week grid are present
-    expect(html).toContain("Pick my own sections");
+    // Both the tool panel and the week grid are present
+    expect(html).toContain('data-testid="tool-panel"');
     expect(html).toContain("Weekly Schedule");
 
     // Responsive 2-column container exists
-    expect(html).toContain("data-testid=\"picking-layout\"");
+    expect(html).toContain('data-testid="workspace-columns"');
 
     // The app opens at 1200x800 (tauri.conf.json), so the two-column layout
     // must engage at lg (1024px). Gating it at xl (1280px) left every fresh
@@ -807,33 +823,29 @@ describe("PlanWorkspace persistent week grid layout (ticket 28)", () => {
     expect((html.match(/Close section picker/g) ?? []).length).toBeLessThanOrEqual(1);
   });
 
-  it("puts the picker chrome above the two-column row, not inside a column", () => {
+  it("keeps the picker whole inside the tool panel, not split across the row", () => {
     const html = renderToStaticMarkup(
       React.createElement(PlanWorkspace, {
         planSummary: mockPlanSummary,
         plan: { ...mockPlanSummary, sections: [] },
         isLoading: false,
         error: null,
+        initialTab: "pick",
+        initialToolsOpen: true,
         onBack: vi.fn(),
         onRetry: vi.fn(),
       })
     );
 
-    const layoutAt = html.indexOf('data-testid="picking-layout"');
-    expect(layoutAt).toBeGreaterThan(-1);
+    const panelAt = html.indexOf('data-testid="tool-panel"');
+    expect(panelAt).toBeGreaterThan(-1);
 
-    // Search only inside the picking layout: `lg:flex-row` appears earlier on
-    // the page for unrelated elements.
-    const layout = html.slice(layoutAt);
-    const titleAt = layout.indexOf("Pick my own sections");
-    const columnsAt = layout.indexOf("lg:flex-row");
-
-    expect(titleAt).toBeGreaterThan(-1);
-    expect(columnsAt).toBeGreaterThan(-1);
-    expect(
-      titleAt,
-      "the chrome must render before the columns so the list tops out level with the grid",
-    ).toBeLessThan(columnsAt);
+    // The chrome and the section list used to sit in different columns so
+    // they would line up with the grid. Inside a tool panel they are one
+    // column, and the picker renders whole.
+    const panel = html.slice(panelAt);
+    expect(panel).toContain("Pick my own sections");
+    expect((html.match(/data-testid="course-select"/g) ?? []).length).toBeLessThanOrEqual(1);
   });
 
   it("orders the week grid ahead of the section list in single-column fallback", () => {
@@ -843,6 +855,7 @@ describe("PlanWorkspace persistent week grid layout (ticket 28)", () => {
         plan: { ...mockPlanSummary, sections: [] },
         isLoading: false,
         error: null,
+        initialToolsOpen: true,
         onBack: vi.fn(),
         onRetry: vi.fn(),
       })
@@ -913,6 +926,8 @@ describe("PlanWorkspace persistent week grid layout (ticket 28)", () => {
           sectionCount: 1,
           firstSeenAt: "2026-08-22T00:00:00Z",
           lastSeenAt: "2026-08-22T00:00:00Z",
+          included: true,
+          lastRefreshedAt: null,
         },
       ],
       selectedCourseId: 2923,
@@ -931,6 +946,7 @@ describe("PlanWorkspace persistent week grid layout (ticket 28)", () => {
       removeSection: vi.fn(),
       togglePin: vi.fn(),
       forgetCourse: vi.fn(),
+      setCourseIncluded: vi.fn(),
       dismissNotice: vi.fn(),
     });
 
@@ -940,15 +956,17 @@ describe("PlanWorkspace persistent week grid layout (ticket 28)", () => {
         plan: { ...mockPlanSummary, sections: [] },
         isLoading: false,
         error: null,
+        initialTab: "pick",
+        initialToolsOpen: true,
         onBack: vi.fn(),
         onRetry: vi.fn(),
       })
     );
 
-    // Picker row is rendered in the new layout
-    expect(html).toContain("data-testid=\"section-row-S11\"");
-
+    // Picker row is rendered in the tool panel, beside the permanent grid
     spy.mockRestore();
+    expect(html).toContain('data-testid="section-row-S11"');
+    expect(html).toContain('data-testid="week-grid"');
   });
 
   it("renders ghost preview with preview badge on the week grid when hovering candidate section", () => {
@@ -958,14 +976,15 @@ describe("PlanWorkspace persistent week grid layout (ticket 28)", () => {
         plan: { ...mockPlanSummary, sections: [] },
         isLoading: false,
         error: null,
+        initialToolsOpen: true,
         onBack: vi.fn(),
         onRetry: vi.fn(),
       })
     );
 
-    // Week grid rendered within picking layout
-    expect(html).toContain("data-testid=\"week-grid\"");
-    expect(html).toContain("data-testid=\"picking-layout\"");
+    // Week grid rendered beside the tool panel, on every tab
+    expect(html).toContain('data-testid="week-grid"');
+    expect(html).toContain('data-testid="tool-panel"');
   });
 
   it("keeps conflict display and hatched styling intact in persistent week grid layout", () => {
@@ -1040,6 +1059,638 @@ describe("PlanWorkspace persistent week grid layout (ticket 28)", () => {
 });
 
 
+
+/**
+ * Ticket 46 — one tabbed tool panel, one permanent week grid.
+ *
+ * The workspace was four cards stacked vertically and the grid sat below the
+ * fold on the window the app actually opens at. It is now two regions: the
+ * tools are tabs, the grid is not.
+ */
+describe("the tool panel and the permanent week grid", () => {
+  const planSummary: PlanSummary = {
+    id: "p1",
+    name: "T1 Target Schedule",
+    campusId: 7,
+    campusName: "Manila",
+    sessionId: 155,
+    sessionName: "AY2026-27 T1",
+    createdAt: "2026-08-22T00:00:00Z",
+    sectionCount: 0,
+  };
+
+  const emptyPlan: Plan = { ...planSummary, sections: [] };
+
+  const planSection: PlanSection = {
+    courseId: 2923,
+    courseCode: "GEARTAP",
+    courseTitle: "Art Appreciation",
+    sectionId: 384,
+    sectionCode: "S11",
+    pinned: false,
+    missing: false,
+    modality: "F2F",
+    blocks: [
+      { day: "MON", startMin: 450, endMin: 540, modality: "F2F", location: "L226" },
+    ],
+    latestSnapshot: {
+      capturedAt: "2026-08-22T00:00:00Z",
+      enrolled: 42,
+      teacher: "Prof X",
+      remark: null,
+    },
+  };
+
+  /**
+   * The live week grid alone.
+   *
+   * Two other things on this page draw the same sections: `ExportMenu`
+   * renders an off-screen copy above it (ticket 40), and the Solve panel
+   * lists the plan's sections below it. Slicing to the end of the document
+   * would catch both.
+   */
+  const liveGrid = (html: string) =>
+    html.slice(
+      html.lastIndexOf('data-testid="week-grid"', html.indexOf('data-testid="tool-panel"')),
+      html.indexOf('data-testid="tool-panel"')
+    );
+
+  const render = (props: Record<string, unknown> = {}) =>
+    renderToStaticMarkup(
+      React.createElement(PlanWorkspace, {
+        planSummary,
+        plan: emptyPlan,
+        isLoading: false,
+        error: null,
+        // The panel starts collapsed (see "the collapsible tool panel"
+        // below); these assertions are about what it holds when it is open.
+        initialToolsOpen: true,
+        onBack: vi.fn(),
+        onRetry: vi.fn(),
+        ...props,
+      })
+    );
+
+  beforeEach(() => {
+    vi.clearAllMocks();
+    vi.mocked(client.getCaptureSummary).mockResolvedValue({
+      campusId: 7,
+      sessionId: 155,
+      sectionCount: 42,
+      courseCount: 8,
+    });
+    vi.mocked(client.onCaptureUpdated).mockResolvedValue(() => {});
+    vi.mocked(client.onCaptureFailed).mockResolvedValue(() => {});
+  });
+
+  describe("the tabs", () => {
+    it("offers exactly three tools, in the order the work happens", () => {
+      const html = render();
+      const labels = [...html.matchAll(/role="tab"[^>]*>([A-Za-z]+)/g)].map((m) => m[1]);
+
+      expect(labels).toEqual(["Capture", "Solve", "Pick"]);
+    });
+
+    it("gives the tabs the roles that make arrow keys work", () => {
+      const html = render();
+
+      expect(html).toContain('role="tablist"');
+      expect(html).toContain('role="tabpanel"');
+      // The panel is named by the tab that selects it.
+      expect(html).toMatch(/role="tabpanel"[^>]*aria-labelledby="/);
+      expect(html).toMatch(/role="tab"[^>]*aria-selected="true"/);
+    });
+
+    it("opens on Capture, the arrival surface", () => {
+      const html = render();
+      const selected = /aria-selected="true"[^>]*>([A-Za-z]+)/.exec(html);
+
+      expect(selected?.[1]).toBe("Capture");
+    });
+
+    it("selects the tab it is told to, so the suite can drive it", () => {
+      const solve = /aria-selected="true"[^>]*>([A-Za-z]+)/.exec(
+        render({ initialTab: "solve" })
+      );
+      expect(solve?.[1]).toBe("Solve");
+
+      const pick = /aria-selected="true"[^>]*>([A-Za-z]+)/.exec(
+        render({ initialTab: "pick" })
+      );
+      expect(pick?.[1]).toBe("Pick");
+    });
+  });
+
+  describe("what each tab holds", () => {
+    it("Capture keeps the counter, Refresh, and Open Archer's Hub", () => {
+      const html = render({ initialTab: "capture" });
+
+      expect(html).toContain('data-testid="capture-counter"');
+      expect(html).toContain("Refresh");
+      expect(html).toMatch(/Open Archer/);
+    });
+
+    it("Capture shows what has landed, not only the way in", () => {
+      const html = render({ initialTab: "capture" });
+
+      expect(html).toContain('data-testid="captured-catalog"');
+    });
+
+    it("Pick keeps the course dropdown and the bounded section list", async () => {
+      const useSectionPickerModule = await import("./useSectionPicker");
+      const spy = vi
+        .spyOn(useSectionPickerModule, "useSectionPicker")
+        .mockReturnValue({
+          courses: [
+            {
+              courseId: 2923,
+              code: "GEARTAP",
+              title: "Art Appreciation",
+              sectionCount: 1,
+              firstSeenAt: "2026-08-22T00:00:00Z",
+              lastSeenAt: "2026-08-22T00:00:00Z",
+              included: true,
+              lastRefreshedAt: null,
+            },
+          ],
+          selectedCourseId: 2923,
+          sections: [],
+          isLoadingCourses: false,
+          isLoadingSections: false,
+          isMutating: false,
+          error: null,
+          notice: null,
+          hoveredSection: null,
+          setHoveredSection: vi.fn(),
+          fetchCourses: vi.fn(),
+          syncCourses: vi.fn(),
+          selectCourse: vi.fn(),
+          addSection: vi.fn(),
+          removeSection: vi.fn(),
+          togglePin: vi.fn(),
+          forgetCourse: vi.fn(),
+          setCourseIncluded: vi.fn(),
+          dismissNotice: vi.fn(),
+        } as unknown as ReturnType<typeof useSectionPickerModule.useSectionPicker>);
+
+      const html = render({ initialTab: "pick" });
+      spy.mockRestore();
+
+      expect(html).toContain('data-testid="course-select"');
+      expect(html).toContain("Pick my own sections");
+    });
+
+    it("Solve is a panel in the tool column, never a modal", () => {
+      const html = render({ initialTab: "solve" });
+
+      expect(html).toContain('data-testid="solve-panel"');
+      expect(html).not.toContain('role="dialog"');
+    });
+  });
+
+  describe("the layout", () => {
+    it("draws the week grid on every tab, in the same place", () => {
+      for (const initialTab of ["capture", "solve", "pick"]) {
+        const html = render({ initialTab });
+        expect(
+          html,
+          `the grid must be present on the ${initialTab} tab`
+        ).toContain('data-testid="week-grid"');
+        expect(html).toContain('data-testid="grid-region"');
+      }
+    });
+
+    it("keeps the plan header above both regions, untabbed", () => {
+      const html = render();
+      const header = html.indexOf("T1 Target Schedule");
+      const tablist = html.indexOf('role="tablist"');
+
+      expect(header).toBeGreaterThan(-1);
+      expect(tablist).toBeGreaterThan(header);
+    });
+
+    it("gives the grid the larger share of a two-column row from lg", () => {
+      const html = render();
+      const columns = html.slice(html.indexOf('data-testid="workspace-columns"'));
+
+      // The app opens at 1400x900 with a 1024 minimum: two columns from lg.
+      expect(columns).toMatch(/lg:flex-row|lg:grid/);
+      expect(columns).not.toMatch(/xl:flex-row|xl:grid/);
+      // The tool panel is the fixed column; the grid takes what is left.
+      expect(columns).toMatch(/lg:w-\[\d+px\]/);
+      expect(columns).toContain("lg:flex-1");
+    });
+
+    it("scrolls the tool panel inside its own bounds rather than growing the page", () => {
+      const html = render();
+      const panel = /<div[^>]*data-testid="tool-panel"[^>]*>/.exec(html);
+      const scroll = /<div[^>]*data-testid="tool-panel-scroll"[^>]*>/.exec(html);
+
+      expect(panel, "the tool panel must be findable").not.toBeNull();
+      expect(panel![0]).toMatch(/max-h-/);
+      expect(scroll, "the tool must have its own scroll region").not.toBeNull();
+      expect(scroll![0]).toMatch(/overflow-y-auto/);
+    });
+
+    it("keeps the tab strip still while the tool under it scrolls", () => {
+      const html = render();
+      const tablist = html.indexOf('role="tablist"');
+      const scroll = html.indexOf('data-testid="tool-panel-scroll"');
+
+      expect(tablist).toBeGreaterThan(-1);
+      expect(scroll).toBeGreaterThan(-1);
+      // Outside the scroll region, not merely `sticky` inside it: a sticky
+      // offset would have to be kept in sync with the strip's own height,
+      // and the picker's course selector pins to the same edge.
+      expect(
+        tablist,
+        "Capture / Solve / Pick must not scroll away with the panel"
+      ).toBeLessThan(scroll);
+    });
+
+    it("puts the grid above the panel when the row stops fitting", () => {
+      const html = render();
+      const columns = html.slice(html.indexOf('data-testid="workspace-columns"'));
+      const grid = columns.indexOf('data-testid="grid-region"');
+      const panel = columns.indexOf('data-testid="tool-panel"');
+
+      expect(grid).toBeGreaterThan(-1);
+      expect(panel).toBeGreaterThan(-1);
+      // Source order is the stacked order; `order-*` puts the panel first
+      // again once there are two columns.
+      expect(grid).toBeLessThan(panel);
+      expect(columns).toMatch(/lg:order-1/);
+      expect(columns).toMatch(/lg:order-2/);
+    });
+  });
+
+  describe("nothing gets hidden that must be seen", () => {
+    it("keeps global notices outside the tabs, visible from every one of them", async () => {
+      const usePlanRefreshModule = await import("./usePlanRefresh");
+      const spy = vi.spyOn(usePlanRefreshModule, "usePlanRefresh").mockReturnValue({
+        isRefreshing: false,
+        isResuming: false,
+        progress: null,
+        outcome: null,
+        sessionExpired: true,
+        offline: false,
+        error: null,
+        missingSections: [],
+        startRefresh: vi.fn(),
+        resumeRefresh: vi.fn(),
+        fetchMissingSections: vi.fn(),
+        dismissNotice: vi.fn(),
+      } as unknown as ReturnType<typeof usePlanRefreshModule.usePlanRefresh>);
+
+      for (const initialTab of ["capture", "solve", "pick"]) {
+        const html = render({ initialTab });
+        expect(
+          html,
+          `a dead refresh must be visible from the ${initialTab} tab`
+        ).toContain("Session expired");
+      }
+
+      spy.mockRestore();
+    });
+
+    it("marks the Capture tab while the catalog behind it is empty", () => {
+      const html = render();
+      const trigger = /data-empty-catalog="true"[\s\S]*?<\/button>/.exec(html);
+
+      expect(trigger, "the Capture trigger must carry the signal").not.toBeNull();
+      expect(trigger![0]).toContain("Capture");
+      expect(trigger![0]).toContain("Empty");
+    });
+
+    it("points an empty Pick tab at the tab that fixes it", () => {
+      const html = render({ initialTab: "pick" });
+
+      expect(html).toContain("No captured courses");
+      expect(html).toMatch(/Capture tab/);
+    });
+  });
+
+  describe("the solver previews on the real grid", () => {
+    const previewSolution: Solution = {
+      id: "solution-0",
+      score: 150,
+      breakdown: [],
+      warnings: [],
+      sections: [
+        {
+          courseId: 2923,
+          courseCode: "GEARTAP",
+          sectionId: 385,
+          sectionCode: "S12",
+          pinned: false,
+          blocks: [
+            {
+              day: "THU",
+              startMin: 450,
+              endMin: 540,
+              modality: "F2F",
+              location: "L226",
+            },
+          ],
+        },
+      ],
+    };
+
+    it("draws the whole selected solution on the week grid, at full size", () => {
+      const html = render({
+        initialTab: "solve",
+        initialPreviewSolution: previewSolution,
+      });
+
+      const grid = liveGrid(html);
+      expect(grid).toContain("S12");
+      expect(grid).toContain('data-ghost="true"');
+    });
+
+    it("lets the student commit the schedule from the grid they are reading", () => {
+      const html = render({
+        initialTab: "solve",
+        initialPreviewSolution: previewSolution,
+      });
+
+      expect(html).toContain('data-testid="week-grid-apply-preview"');
+      expect(html).toContain("Apply this schedule");
+    });
+
+    it("says the preview is a preview and offers the way back", () => {
+      const html = render({
+        initialTab: "solve",
+        initialPreviewSolution: previewSolution,
+      });
+
+      expect(html).toContain('data-testid="week-grid-preview-notice"');
+      expect(html).toContain("Previewing Schedule #1");
+      expect(html).toContain('data-testid="week-grid-clear-preview"');
+    });
+
+    it("hides the plan behind the preview so the two are never read as one", () => {
+      const html = render({
+        initialTab: "solve",
+        plan: { ...planSummary, sectionCount: 1, sections: [planSection] },
+        initialPreviewSolution: previewSolution,
+      });
+
+      const grid = liveGrid(html);
+      expect(grid).toContain("S12");
+      expect(grid).not.toContain("S11");
+    });
+
+    it("shows the real plan again once nothing is selected", () => {
+      const html = render({
+        initialTab: "solve",
+        plan: { ...planSummary, sectionCount: 1, sections: [planSection] },
+      });
+
+      const grid = liveGrid(html);
+      expect(grid).toContain("S11");
+      expect(html).not.toContain('data-testid="week-grid-preview-notice"');
+    });
+  });
+
+  /**
+   * Capturing a course and intending to take it are different acts.
+   */
+  describe("choosing which courses count", () => {
+    const catalog = [
+      {
+        courseId: 2923,
+        code: "GEARTAP",
+        title: "Art Appreciation",
+        sectionCount: 42,
+        firstSeenAt: "2026-08-22T00:00:00Z",
+        lastSeenAt: "2026-08-22T00:00:00Z",
+        included: true,
+        lastRefreshedAt: null,
+      },
+      {
+        courseId: 564,
+        code: "CSINTSY",
+        title: "Intelligent Systems",
+        sectionCount: 5,
+        firstSeenAt: "2026-08-22T00:00:00Z",
+        lastSeenAt: "2026-08-22T00:00:00Z",
+        included: false,
+        lastRefreshedAt: null,
+      },
+    ];
+
+    const withCatalog = async () => {
+      const useSectionPickerModule = await import("./useSectionPicker");
+      return vi.spyOn(useSectionPickerModule, "useSectionPicker").mockReturnValue({
+        courses: catalog,
+        selectedCourseId: 2923,
+        sections: [],
+        isLoadingCourses: false,
+        isLoadingSections: false,
+        isMutating: false,
+        error: null,
+        notice: null,
+        hoveredSection: null,
+        setHoveredSection: vi.fn(),
+        fetchCourses: vi.fn(),
+        syncCourses: vi.fn(),
+        selectCourse: vi.fn(),
+        addSection: vi.fn(),
+        removeSection: vi.fn(),
+        togglePin: vi.fn(),
+        forgetCourse: vi.fn(),
+        setCourseIncluded: vi.fn(),
+        dismissNotice: vi.fn(),
+      } as unknown as ReturnType<typeof useSectionPickerModule.useSectionPicker>);
+    };
+
+    it("shows the whole catalog on Capture, checked and unchecked alike", async () => {
+      const spy = await withCatalog();
+      const html = render({ initialTab: "capture" });
+      spy.mockRestore();
+
+      // Excluding is not forgetting — an unchecked course is still managed here.
+      expect(html).toContain('data-testid="captured-course-2923"');
+      expect(html).toContain('data-testid="captured-course-564"');
+      expect(html).toContain('data-testid="include-course-564"');
+      expect(html).toContain('data-testid="forget-course-564"');
+    });
+
+    it("offers only the checked courses to the picker", async () => {
+      const spy = await withCatalog();
+      const html = render({ initialTab: "pick" });
+      spy.mockRestore();
+
+      const select = html.slice(html.indexOf('data-testid="course-select"'));
+      const options = select.slice(0, select.indexOf("</select>"));
+      expect(options).toContain("GEARTAP");
+      expect(
+        options,
+        "an unchecked course is not one the student is picking sections for"
+      ).not.toContain("CSINTSY");
+    });
+  });
+
+  /**
+   * The tools fold away so the schedule can have the window.
+   *
+   * The grid is the artifact; the three tools act on it, and a student
+   * comparing a full week does not need any of them on screen. Opening a plan
+   * is that moment, so the panel starts folded and the schedule starts whole.
+   */
+  describe("the collapsible tool panel", () => {
+    it("opens a plan on the schedule, with the tools folded away", () => {
+      const html = renderToStaticMarkup(
+        React.createElement(PlanWorkspace, {
+          planSummary,
+          plan: emptyPlan,
+          isLoading: false,
+          error: null,
+          onBack: vi.fn(),
+          onRetry: vi.fn(),
+        })
+      );
+
+      expect(html).not.toContain('data-testid="tool-panel"');
+      expect(html).toContain('data-testid="week-grid"');
+    });
+
+    it("gives the grid the whole row while the tools are folded", () => {
+      const html = renderToStaticMarkup(
+        React.createElement(PlanWorkspace, {
+          planSummary,
+          plan: emptyPlan,
+          isLoading: false,
+          error: null,
+          onBack: vi.fn(),
+          onRetry: vi.fn(),
+        })
+      );
+
+      const region = /<div[^>]*data-testid="grid-region"[^>]*>/.exec(html);
+      expect(region).not.toBeNull();
+      // No fixed column beside it to leave room for.
+      expect(region![0]).not.toMatch(/lg:sticky/);
+      expect(region![0]).toMatch(/w-full/);
+    });
+
+    it("names the way back, so the tools are never merely gone", () => {
+      const html = renderToStaticMarkup(
+        React.createElement(PlanWorkspace, {
+          planSummary,
+          plan: emptyPlan,
+          isLoading: false,
+          error: null,
+          onBack: vi.fn(),
+          onRetry: vi.fn(),
+        })
+      );
+
+      const show = /<button[^>]*data-testid="show-tools"[^>]*>[\s\S]*?<\/button>/.exec(
+        html
+      );
+      expect(show, "a folded panel must say how to unfold it").not.toBeNull();
+      expect(show![0]).toMatch(/Tools/);
+    });
+
+    it("offers the way to fold them again once they are open", () => {
+      const html = render();
+
+      expect(html).toContain('data-testid="hide-tools"');
+      expect(html).not.toContain('data-testid="show-tools"');
+    });
+
+    it("carries the empty-catalog signal even while the tools are folded", () => {
+      // Folding hides more state than a tab does. A student who opens a plan
+      // with nothing captured must still see that the catalog is empty.
+      const html = renderToStaticMarkup(
+        React.createElement(PlanWorkspace, {
+          planSummary,
+          plan: emptyPlan,
+          isLoading: false,
+          error: null,
+          onBack: vi.fn(),
+          onRetry: vi.fn(),
+        })
+      );
+
+      const show = /<button[^>]*data-testid="show-tools"[^>]*>[\s\S]*?<\/button>/.exec(
+        html
+      );
+      expect(show![0]).toContain("Empty");
+    });
+
+    it("keeps global notices visible while the tools are folded", async () => {
+      const usePlanRefreshModule = await import("./usePlanRefresh");
+      const spy = vi.spyOn(usePlanRefreshModule, "usePlanRefresh").mockReturnValue({
+        isRefreshing: false,
+        isResuming: false,
+        progress: null,
+        outcome: null,
+        sessionExpired: true,
+        offline: false,
+        error: null,
+        missingSections: [],
+        startRefresh: vi.fn(),
+        resumeRefresh: vi.fn(),
+        fetchMissingSections: vi.fn(),
+        dismissNotice: vi.fn(),
+      } as unknown as ReturnType<typeof usePlanRefreshModule.usePlanRefresh>);
+
+      const html = renderToStaticMarkup(
+        React.createElement(PlanWorkspace, {
+          planSummary,
+          plan: emptyPlan,
+          isLoading: false,
+          error: null,
+          onBack: vi.fn(),
+          onRetry: vi.fn(),
+        })
+      );
+      spy.mockRestore();
+
+      expect(html).toContain("Session expired");
+    });
+  });
+
+  /**
+   * Export exported the schedule from two places at once — the plan banner and
+   * the schedule's own header — and each rendered its own off-screen copy of
+   * the week grid to do it (ticket 40).
+   */
+  describe("one Export, beside the thing it exports", () => {
+    it("offers exactly one export control", () => {
+      const html = render();
+
+      expect(html.match(/data-testid="export-wrapper"/g)).toHaveLength(1);
+    });
+
+    it("keeps it in the schedule header, not up in the plan banner", () => {
+      const html = render();
+      const planBanner = html.slice(0, html.indexOf('data-testid="workspace-columns"'));
+
+      expect(planBanner).toContain("Plan Scope:");
+      expect(planBanner, "the plan banner carries identity and counts, not actions").not.toContain(
+        "Export"
+      );
+      expect(html.indexOf("Export")).toBeGreaterThan(html.indexOf("Weekly Schedule"));
+    });
+  });
+
+  // Every mutation reloads the plan. Landing back on Capture after adding a
+  // section would be maddening, and the suite cannot re-render to prove it —
+  // so the guard is that nothing derives the selected tab from the plan.
+  it("keeps the selected tab in state a plan reload cannot reach", () => {
+    expect(planWorkspaceSource).toMatch(/useState<ToolTab>\(/);
+    expect(planWorkspaceSource).not.toMatch(/setActiveTab[\s\S]{0,80}\[plan/);
+    const effects = planWorkspaceSource.match(/useEffect\([\s\S]*?\}, \[[^\]]*\]\)/g) ?? [];
+    for (const effect of effects) {
+      expect(effect, "no effect may reset the selected tab").not.toContain(
+        "setActiveTab"
+      );
+    }
+  });
+});
 
 /**
  * Source-level guard. The suite renders to static markup, so it cannot click

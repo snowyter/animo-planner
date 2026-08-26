@@ -73,6 +73,7 @@ Guarded by `wraps every command payload in the args envelope` in
 | `list_captured_courses` | `{ campusId, sessionId }` | `CapturedCourse[]` |
 | `list_captured_sections` | `{ campusId, sessionId, courseId }` | `Section[]` |
 | `forget_captured_course` | `{ campusId, sessionId, courseId }` | `ForgetCourseOutcome` |
+| `set_course_included` | `{ campusId, sessionId, courseId, included }` | `CapturedCourse[]` |
 
 **Amended in ticket 35:** `forget_captured_course` removes one captured course — its
 sections, blocks, and snapshots under exactly the given `(campusId, sessionId)` — and releases
@@ -80,6 +81,25 @@ any plan holding one of those sections, pinned or not, in the same transaction. 
 a `ForgetCourseOutcome`: the updated `CaptureSummary` plus the affected-plan report (which plan
 lost how many sections), so the UI says what happened rather than leaving the student to
 discover it. It no longer refuses with a "held by plans" error.
+
+**Amended after ticket 46:** `set_course_included` marks whether the student intends to enrol
+in a captured course. Searching a course and intending to take it are different acts, and the
+solver previously treated every capture as a course it had to schedule — so browsing forty
+courses produced a solve that insisted on filling all forty.
+
+Excluding is **not** forgetting: nothing is deleted, no plan is released, and the capture counter
+does not move. An excluded course stays in `list_captured_courses` (carrying `included: false`)
+so the Capture tab can still show it and check it again; it is simply not offered by the section
+picker and not a course `solve_plan` has to satisfy. A section already in a plan stays in that
+plan — excluding its course only stops the solver treating it as a slot to fill.
+
+The command answers with the whole updated catalog rather than an acknowledgement, so the tab
+that toggles and the tab that browses read one loaded list (ticket 32).
+
+`CapturedCourse` gained two fields with this command: `included`, and `lastRefreshedAt` — the
+instant a refresh last re-read the course, or `null`. Both a capture and a refresh advance
+`lastSeenAt`, so it alone cannot say which act produced the numbers on screen. Courses captured
+before this migration read as `included: true`, which is the behaviour that already existed.
 
 ### Plan membership
 

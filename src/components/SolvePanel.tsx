@@ -1,17 +1,10 @@
-import { useState, useEffect, useCallback } from "react";
+import { useState, useEffect, useCallback, useRef } from "react";
 /** Disclosure is an affordance no adjacent word supplies. Everything else on
  *  this surface labelled something the text already said. */
 import { ChevronDown, ChevronUp } from "lucide-react";
-import {
-  Dialog,
-  DialogContent,
-  DialogHeader,
-  DialogTitle,
-  DialogDescription,
-} from "./ui/dialog";
 import { Button } from "./ui/button";
 import { Alert, AlertTitle, AlertDescription } from "./ui/alert";
-import { SolutionThumbnail } from "./SolutionThumbnail";
+import { SolutionCard } from "./SolutionCard";
 import type { Day, Plan, PlanSection, Preset, Solution, SolveOptions, SolveResult } from "../adapters/ipc/types";
 import { DAY_INFOS } from "../core/grid";
 import { PRESET_INFOS, defaultSolveOptions, formatExclusionNotice, formatUnsatisfiableCoursesMessage } from "../core/solver";
@@ -19,15 +12,36 @@ import * as client from "../adapters/ipc/client";
 import { formatErrorMessage } from "../core/error";
 import { solutionToSectionRefs } from "../core/solver";
 
-export interface SolveDialogProps {
-  open: boolean;
-  onOpenChange: (open: boolean) => void;
+/** Which ranked result the grid is previewing. Rank is how the grid names it. */
+export interface SolutionSelection {
+  solution: Solution;
+  rank: number;
+}
+
+export interface SolvePanelProps {
   planId: string;
   planSections?: PlanSection[];
   onTogglePin?: (section: PlanSection, pinned: boolean) => void;
   initialResult?: SolveResult | null;
   defaultShowConstraints?: boolean;
+  /**
+   * Test seam for the in-flight state. The suite renders to static markup, so
+   * a solve never actually runs and the progress row plus its Cancel control
+   * would otherwise be unassertable.
+   */
+  initialIsSolving?: boolean;
   onPlanUpdated?: (plan: Plan) => void;
+  /**
+   * Which solution is being previewed on the week grid, and how the panel
+   * says so (ticket 46). The preview itself lives on the grid, one region
+   * over; this panel only names the choice.
+   *
+   * Controlled from the workspace rather than held here, because leaving the
+   * Solve tab has to restore the real plan — and the tab is not this
+   * component's to know about.
+   */
+  selectedSolutionId?: string | null;
+  onSelectSolution?: (selection: SolutionSelection | null) => void;
 }
 
 const EARLIEST_START_OPTIONS: { label: string; min: number | null }[] = [
@@ -51,19 +65,20 @@ const LATEST_END_OPTIONS: { label: string; min: number | null }[] = [
   { label: "By 09:00 PM", min: 1260 },
 ];
 
-export function SolveDialog({
-  open,
-  onOpenChange,
+export function SolvePanel({
   planId,
   planSections,
   onTogglePin,
   initialResult = null,
   defaultShowConstraints = false,
+  initialIsSolving = false,
   onPlanUpdated,
-}: SolveDialogProps) {
+  selectedSolutionId = null,
+  onSelectSolution,
+}: SolvePanelProps) {
   const [options, setOptions] = useState<SolveOptions>(() => defaultSolveOptions());
   const [showConstraints, setShowConstraints] = useState(defaultShowConstraints);
-  const [isSolving, setIsSolving] = useState(false);
+  const [isSolving, setIsSolving] = useState(initialIsSolving);
   const [isContinuing, setIsContinuing] = useState(false);
   const [isApplying, setIsApplying] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -125,12 +140,17 @@ export function SolveDialog({
     [planId]
   );
 
-  // When dialog opens and no initial result was passed, trigger solve
+  // The panel only exists while the Solve tab is selected, so mounting is the
+  // same event that opening the dialog used to be: solve once, on arrival.
+  // Every later solve comes from a control the student pressed.
+  const hasSolvedRef = useRef(false);
   useEffect(() => {
-    if (open && !initialResult) {
-      runSolve(options);
+    if (hasSolvedRef.current || initialResult) {
+      return;
     }
-  }, [open, initialResult, runSolve]);
+    hasSolvedRef.current = true;
+    runSolve(options);
+  }, [initialResult, options, runSolve]);
 
   const handlePresetSelect = (preset: Preset) => {
     const nextOpts: SolveOptions = { ...options, preset };
@@ -178,6 +198,13 @@ export function SolveDialog({
     }
   };
 
+  /** Selecting the same solution twice clears the preview, as a toggle. */
+  const handleSelectSolution = (solution: Solution, rank: number) => {
+    onSelectSolution?.(
+      selectedSolutionId === solution.id ? null : { solution, rank }
+    );
+  };
+
   const handleApplySolution = async (solution: Solution) => {
     setIsApplying(true);
     setError(null);
@@ -187,7 +214,9 @@ export function SolveDialog({
         sections: solutionToSectionRefs(solution),
       });
       onPlanUpdated?.(updatedPlan);
-      onOpenChange(false);
+      // The plan now *is* the solution, so a preview of it would be a preview
+      // of what is already on the grid.
+      onSelectSolution?.(null);
     } catch (err) {
       setError(formatErrorMessage(err));
     } finally {
@@ -208,26 +237,25 @@ export function SolveDialog({
     : null;
 
   return (
-    <Dialog open={open} onOpenChange={onOpenChange}>
-      <DialogContent className="max-w-4xl max-h-[90vh] flex flex-col p-0 gap-0 overflow-hidden sm:rounded-2xl">
-        {/* Header */}
-        <DialogHeader className="p-6 pb-4 border-b border-border bg-card">
-          <DialogTitle className="text-xl font-bold text-foreground">
-            Solve the rest
-          </DialogTitle>
-          <DialogDescription className="text-xs text-muted-foreground mt-1">
-            Find ranked, conflict-free combinations to fill unassigned courses
-            around your choices. Pinned sections are fixed and never moved;
-            unpinned sections may be moved to find valid combinations.
-          </DialogDescription>
-        </DialogHeader>
+    /* A panel in the tool column, not a modal over the workspace (ticket 46).
+       Its whole point is that the week grid stays visible beside it while a
+       candidate is previewed on it, which a dialog would have covered. */
+    <div data-testid="solve-panel" className="space-y-4">
+      <div className="rounded-panel border border-border bg-card p-4">
+        <h3 className="text-base font-bold text-foreground">Solve the rest</h3>
+        <p className="text-xs text-muted-foreground mt-1 leading-relaxed">
+          Find ranked, conflict-free combinations to fill unassigned courses
+          around your choices. Pinned sections are fixed and never moved;
+          unpinned sections may be moved to find valid combinations. Selecting
+          a result previews it on the week grid.
+        </p>
+      </div>
 
-        {/* Scrollable Main Area */}
-        <div className="flex-1 overflow-y-auto p-6 space-y-6 bg-background">
+      <div className="space-y-6">
           {/* Your Plan Sections & Pinning Panel (Ticket 43) */}
           {currentPlanSections.length > 0 && (
             <div className="rounded-panel border border-border bg-card p-4 space-y-3">
-              <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-1">
+              <div className="flex flex-col gap-1">
                 <span className="text-foreground font-bold text-micro uppercase tracking-wider">
                   Your Plan Sections ({currentPlanSections.length})
                 </span>
@@ -239,7 +267,7 @@ export function SolveDialog({
                 Pinned sections are fixed and never moved. Unpinned sections can be swapped if needed to find conflict-free combinations.
               </p>
 
-              <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-2 pt-1">
+              <div className="grid grid-cols-1 gap-2 pt-1">
                 {currentPlanSections.map((sec) => (
                   <div
                     key={`${sec.courseId}-${sec.sectionId}`}
@@ -301,6 +329,7 @@ export function SolveDialog({
                     size="sm"
                     onClick={handleCancelSolve}
                     className="h-6 text-micro px-2"
+                    data-testid="solve-cancel"
                   >
                     Cancel
                   </Button>
@@ -308,7 +337,7 @@ export function SolveDialog({
               )}
             </div>
 
-            <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
+            <div className="grid grid-cols-1 gap-2">
               {PRESET_INFOS.map((info) => {
                 const isSelected = options.preset === info.preset;
                 return (
@@ -400,7 +429,7 @@ export function SolveDialog({
                 </div>
 
                 {/* Earliest start / Latest end */}
-                <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+                <div className="grid grid-cols-1 gap-3">
                   <div className="space-y-1.5">
                     <label
                       htmlFor="earliest-start"
@@ -452,22 +481,34 @@ export function SolveDialog({
                   </div>
                 </div>
 
-                {/* Exclude full & Actions */}
-                <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3 pt-2">
-                  <label className="flex items-center gap-2 text-xs font-medium text-foreground cursor-pointer select-none">
-                    <input
-                      type="checkbox"
-                      checked={options.excludeFull}
-                      disabled={isSolving}
-                      onChange={(e) =>
-                        setOptions({ ...options, excludeFull: e.target.checked })
-                      }
-                      className="h-4 w-4 rounded-control border-slate-300 text-primary"
-                    />
-                    <span>Exclude full sections (enrolled ≥ capacity)</span>
-                  </label>
+                {/* Exclude full & Actions.
+                    The label is one line and the qualifier sits under it:
+                    "Exclude full sections (enrolled ≥ capacity)" wrapped
+                    mid-parenthesis beside the solve button and stopped
+                    reading as a single control. */}
+                <div className="flex flex-col gap-3 pt-2">
+                  <div className="space-y-1">
+                    <label
+                      data-testid="exclude-full-label"
+                      className="flex items-center gap-2 text-xs font-medium text-foreground cursor-pointer select-none"
+                    >
+                      <input
+                        type="checkbox"
+                        checked={options.excludeFull}
+                        disabled={isSolving}
+                        onChange={(e) =>
+                          setOptions({ ...options, excludeFull: e.target.checked })
+                        }
+                        className="h-4 w-4 shrink-0 rounded-control border-slate-300 text-primary"
+                      />
+                      <span className="whitespace-nowrap">Exclude full sections</span>
+                    </label>
+                    <p className="pl-6 text-nano text-muted-foreground">
+                      Enrolled is at or over capacity.
+                    </p>
+                  </div>
 
-                  <div className="flex items-center gap-2">
+                  <div className="flex flex-wrap items-center gap-2">
                     {hasNonDefaultConstraints && (
                       <Button
                         type="button"
@@ -507,7 +548,7 @@ export function SolveDialog({
 
           {/* Node Cap Partial Result Banner (Ticket 20 requirement: keep searching extends search) */}
           {result?.status === "partial" && (
-            <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3 rounded-panel border border-amber-200 bg-amber-50/70 p-4">
+            <div className="flex flex-col gap-3 rounded-panel border border-amber-200 bg-amber-50/70 p-4">
               <div>
                 <h4 className="text-xs font-bold text-amber-900">
                   Search reached node limit (partial results)
@@ -569,27 +610,29 @@ export function SolveDialog({
                   Ranked Solutions ({result.solutions.length})
                 </h3>
                 <span className="text-xs text-muted-foreground">
-                  Sorted by {options.preset.replace(/_/g, " ")}
+                  Select one to preview it on the week grid · sorted by{" "}
+                  {options.preset.replace(/_/g, " ")}
                 </span>
               </div>
 
-              <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+              <div className="grid grid-cols-1 gap-4">
                 {result.solutions.map((solution, index) => (
-                  <SolutionThumbnail
+                  <SolutionCard
                     key={solution.id}
                     solution={solution}
                     rank={index + 1}
                     topScore={result.solutions[0].score}
                     planSections={currentPlanSections}
                     isApplying={isApplying}
+                    isSelected={selectedSolutionId === solution.id}
+                    onSelect={(picked) => handleSelectSolution(picked, index + 1)}
                     onApply={handleApplySolution}
                   />
                 ))}
               </div>
             </div>
           )}
-        </div>
-      </DialogContent>
-    </Dialog>
+      </div>
+    </div>
   );
 }

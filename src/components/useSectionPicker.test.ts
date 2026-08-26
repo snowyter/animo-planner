@@ -14,6 +14,8 @@ describe("useSectionPickerState", () => {
       sectionCount: 42,
       firstSeenAt: "2026-08-22T00:00:00Z",
       lastSeenAt: "2026-08-22T00:00:00Z",
+      included: true,
+      lastRefreshedAt: null,
     },
     {
       courseId: 564,
@@ -22,6 +24,8 @@ describe("useSectionPickerState", () => {
       sectionCount: 5,
       firstSeenAt: "2026-08-22T00:00:00Z",
       lastSeenAt: "2026-08-22T00:00:00Z",
+      included: true,
+      lastRefreshedAt: null,
     },
   ];
 

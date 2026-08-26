@@ -7,6 +7,7 @@ import {
   findCandidateConflicts,
   formatCandidateConflictLabel,
   groupSectionsForPicker,
+  toPlanSection,
 } from "./section";
 import type { PlanSection, ScheduleBlock, Section } from "../adapters/ipc/types";
 
@@ -332,5 +333,78 @@ describe("formatCandidateConflictLabel", () => {
     expect(formatCandidateConflictLabel(candidate, orphan, [])).toBe(
       "Conflicts with another section"
     );
+  });
+});
+
+/**
+ * Ticket 46 — the week grid previews one hovered candidate or a whole solved
+ * schedule through one code path, and that path needs both kinds of section
+ * in the shape the conflict logic reads.
+ */
+describe("toPlanSection", () => {
+  const block: ScheduleBlock = {
+    day: "MON",
+    startMin: 450,
+    endMin: 540,
+    modality: "F2F",
+    location: "L226",
+  };
+
+  const captured: Section = {
+    campusId: 7,
+    sessionId: 155,
+    courseId: 2923,
+    courseCode: "GEARTAP",
+    courseTitle: "Art Appreciation",
+    sectionId: 384,
+    sectionCode: "S11",
+    courseType: "Lecture",
+    credits: 3,
+    enrollCap: 45,
+    startDate: "2026-07-10",
+    endDate: "2026-12-09",
+    firstSeenAt: "2026-08-22T00:00:00Z",
+    lastSeenAt: "2026-08-22T00:00:00Z",
+    modality: "F2F",
+    blocks: [block],
+    latestSnapshot: {
+      capturedAt: "2026-08-22T00:00:00Z",
+      enrolled: 35,
+      teacher: null,
+      remark: null,
+    },
+  };
+
+  it("keeps a captured section's identity and blocks", () => {
+    const converted = toPlanSection(captured);
+
+    expect(converted.courseId).toBe(2923);
+    expect(converted.sectionId).toBe(384);
+    expect(converted.courseCode).toBe("GEARTAP");
+    expect(converted.blocks).toEqual([block]);
+  });
+
+  it("reads a catalog section as neither pinned nor missing, because it is neither", () => {
+    const converted = toPlanSection(captured);
+
+    expect(converted.pinned).toBe(false);
+    expect(converted.missing).toBe(false);
+  });
+
+  it("leaves a section already in the plan exactly as it was", () => {
+    const inPlan: PlanSection = {
+      courseId: 2923,
+      courseCode: "GEARTAP",
+      courseTitle: "Art Appreciation",
+      sectionId: 384,
+      sectionCode: "S11",
+      pinned: true,
+      missing: true,
+      modality: "F2F",
+      blocks: [block],
+      latestSnapshot: captured.latestSnapshot,
+    };
+
+    expect(toPlanSection(inPlan)).toEqual(inPlan);
   });
 });

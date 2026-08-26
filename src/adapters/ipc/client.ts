@@ -110,6 +110,22 @@ export function forgetCapturedCourse(args: {
   return invoke("forget_captured_course", { args });
 }
 
+/**
+ * Marks whether the student intends to enrol in a captured course.
+ *
+ * Excluding is not forgetting: nothing is deleted and the counter does not
+ * move. The updated catalog comes back with it, so the tab that toggles and
+ * the tab that browses read one loaded list.
+ */
+export function setCourseIncluded(args: {
+  campusId: number;
+  sessionId: number;
+  courseId: number;
+  included: boolean;
+}): Promise<CapturedCourse[]> {
+  return invoke("set_course_included", { args });
+}
+
 // Plan membership
 
 export function addSectionToPlan(args: {

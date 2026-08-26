@@ -52,6 +52,31 @@ export function isSectionPinned(
 }
 
 /**
+ * A section in the shape the plan and the conflict logic read.
+ *
+ * A catalog `Section` and a `PlanSection` differ in exactly two fields, and
+ * both of them describe a section's relationship to a plan rather than the
+ * section itself: a section that is not in the plan is neither pinned nor
+ * missing from it. Everything that has to reason about "a section, wherever
+ * it came from" — conflict checks, the grid's one preview path (ticket 46) —
+ * goes through here rather than restating that mapping.
+ */
+export function toPlanSection(section: Section | PlanSection): PlanSection {
+  return {
+    courseId: section.courseId,
+    courseCode: section.courseCode,
+    courseTitle: section.courseTitle,
+    sectionId: section.sectionId,
+    sectionCode: section.sectionCode,
+    pinned: "pinned" in section ? section.pinned : false,
+    missing: "missing" in section ? section.missing : false,
+    modality: section.modality,
+    blocks: section.blocks,
+    latestSnapshot: section.latestSnapshot,
+  };
+}
+
+/**
  * Check for time conflicts between a candidate section and existing plan sections.
  * Returns any conflicts found.
  */
@@ -64,18 +89,7 @@ export function findCandidateConflicts(
     (s) => !(s.courseId === candidate.courseId && s.sectionId === candidate.sectionId)
   );
 
-  const candidateAsPlanSection: PlanSection = {
-    courseId: candidate.courseId,
-    courseCode: candidate.courseCode,
-    courseTitle: candidate.courseTitle,
-    sectionId: candidate.sectionId,
-    sectionCode: candidate.sectionCode,
-    pinned: "pinned" in candidate ? candidate.pinned : false,
-    missing: "missing" in candidate ? candidate.missing : false,
-    modality: candidate.modality,
-    blocks: candidate.blocks,
-    latestSnapshot: candidate.latestSnapshot,
-  };
+  const candidateAsPlanSection = toPlanSection(candidate);
 
   const combined = [...otherSections, candidateAsPlanSection];
   const allConflicts = findConflicts(combined);
