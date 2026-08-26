@@ -46,7 +46,12 @@ import {
 } from "../core/grid";
 import { getCourseTheme } from "../core/palette";
 import { findConflicts, isBlockConflicting } from "../core/conflicts";
-import { findCandidateConflicts, formatTeacher, formatEnrolledCap } from "../core/section";
+import {
+  findCandidateConflicts,
+  formatTeacher,
+  formatEnrolledCap,
+  toPlanSection,
+} from "../core/section";
 import {
   formatSectionCopyText,
   formatCaptureAge,
@@ -77,7 +82,39 @@ export interface OpenMenuState {
 
 export interface WeekGridProps {
   sections: PlanSection[];
-  ghostSection?: Section | PlanSection | null;
+  /**
+   * The one preview mechanism on this surface (ticket 46).
+   *
+   * The picker previews the single section under the cursor; the solver
+   * previews a whole candidate schedule. They are the same concept, so they
+   * share this prop and one code path — two systems drawing previews on the
+   * same grid is the bug this exists to prevent. Only one is ever active:
+   * they live on different tabs.
+   */
+  previewSections?: (Section | PlanSection)[] | null;
+  /**
+   * Names what is being previewed, and renders the notice that says so. A
+   * hovered candidate needs no label — it is a gesture, not a mode. A solution
+   * preview does, or it is mistakable for the applied plan.
+   */
+  previewLabel?: string | null;
+  /**
+   * A candidate *schedule* stands in place of the plan for as long as it is
+   * shown; a candidate *section* joins the plan it would be added to. Drawing
+   * both sets at once would read as a plan with twice the sections.
+   */
+  previewReplacesPlan?: boolean;
+  /** Restores the real plan on the grid. Rendered beside the notice. */
+  onClearPreview?: () => void;
+  /**
+   * Commits the previewed schedule, offered from the notice.
+   *
+   * A student decides while looking at the week, not at the card that
+   * produced it — sending them back to the panel to act on a decision they
+   * already made is where a live preview stops feeling live.
+   */
+  onApplyPreview?: () => void;
+  isApplyingPreview?: boolean;
   conflicts?: Conflict[];
   onSelectSection?: (section: PlanSection) => void;
   onTogglePin?: (section: PlanSection, pinned: boolean) => void | Promise<void>;
@@ -135,8 +172,13 @@ export function blockTooltip(
 }
 
 export function WeekGrid({
-  sections,
-  ghostSection,
+  sections: planSections,
+  previewSections = null,
+  previewLabel = null,
+  previewReplacesPlan = false,
+  onClearPreview,
+  onApplyPreview,
+  isApplyingPreview = false,
   conflicts: propConflicts,
   onSelectSection,
   onTogglePin,
@@ -162,6 +204,22 @@ export function WeekGrid({
     () => initialFlaggedDetails
   );
   const [copiedId, setCopiedId] = useState<string | null>(null);
+
+  /**
+   * The preview, normalised once.
+   *
+   * `sections` is what the grid draws as the plan. A solution preview stands
+   * in for it; a hovered candidate is drawn over it. Everything below reads
+   * these two, so there is exactly one place the two kinds of preview differ.
+   */
+  const preview = useMemo(
+    () => previewSections ?? [],
+    [previewSections]
+  );
+  const sections = useMemo(
+    () => (previewReplacesPlan && preview.length > 0 ? [] : planSections),
+    [previewReplacesPlan, preview, planSections]
+  );
 
   /**
    * The ghost-to-block handoff (ticket 33).
@@ -217,9 +275,13 @@ export function WeekGrid({
   // Arm the handoff when a hovered ghost stops being a ghost and starts
   // being part of the plan, then disarm it one animation later.
   useEffect(() => {
-    const currentKey = ghostSection
-      ? `${ghostSection.courseId}-${ghostSection.sectionId}`
-      : null;
+    // Only a single-section preview hands off. A solution preview is a whole
+    // schedule, and arming a shared-element transition on every block of it
+    // would put layout measurement on the entire grid.
+    const currentKey =
+      preview.length === 1
+        ? `${preview[0].courseId}-${preview[0].sectionId}`
+        : null;
     const departedKey = previousGhostKey.current;
     previousGhostKey.current = currentKey;
 
@@ -236,18 +298,33 @@ export function WeekGrid({
     setHandoffKey(departedKey);
     const timer = setTimeout(() => setHandoffKey(null), MOTION_DURATION_MS.slow);
     return () => clearTimeout(timer);
-  }, [ghostSection, sections]);
+  }, [preview, sections]);
 
   // Compute conflicts for plan sections if not provided via props
   const conflicts = useMemo(() => {
     return propConflicts ?? findConflicts(sections);
   }, [propConflicts, sections]);
 
-  // Compute ghost conflicts against current plan sections
-  const ghostConflicts = useMemo(() => {
-    if (!ghostSection) return [];
-    return findCandidateConflicts(ghostSection, sections);
-  }, [ghostSection, sections]);
+  /**
+   * A preview's own conflicts.
+   *
+   * A hovered candidate is checked against the plan it would join. A solution
+   * preview stands alone (the solver only ever emits conflict-free sets), so
+   * the same call checks it against the empty plan behind it and finds none.
+   */
+  const previewConflicts = useMemo(() => {
+    const previewAsPlan = preview.map(toPlanSection);
+    return preview.flatMap((candidate) =>
+      findCandidateConflicts(candidate, [
+        ...sections,
+        ...previewAsPlan.filter(
+          (other) =>
+            other.courseId !== candidate.courseId ||
+            other.sectionId !== candidate.sectionId
+        ),
+      ])
+    );
+  }, [preview, sections]);
 
   // Extract unique course IDs for consistent palette distribution
   const uniqueCourseIds = useMemo(() => {
@@ -257,20 +334,22 @@ export function WeekGrid({
         ids.push(section.courseId);
       }
     }
-    if (ghostSection && !ids.includes(ghostSection.courseId)) {
-      ids.push(ghostSection.courseId);
+    for (const candidate of preview) {
+      if (!ids.includes(candidate.courseId)) {
+        ids.push(candidate.courseId);
+      }
     }
     return ids;
-  }, [sections, ghostSection]);
+  }, [sections, preview]);
 
   // Extract all blocks to compute dynamic time bounds
   const allBlocks = useMemo(() => {
     const blocks = sections.flatMap((s) => s.blocks);
-    if (ghostSection) {
-      blocks.push(...ghostSection.blocks);
+    for (const candidate of preview) {
+      blocks.push(...candidate.blocks);
     }
     return blocks;
-  }, [sections, ghostSection]);
+  }, [sections, preview]);
 
   const timeBounds = useMemo(() => {
     return getGridTimeBounds(allBlocks);
@@ -303,26 +382,28 @@ export function WeekGrid({
       }
     }
 
-    // Add ghost blocks if ghostSection is present and not already in plan
-    if (
-      ghostSection &&
-      !sections.some(
-        (s) =>
-          s.courseId === ghostSection.courseId &&
-          s.sectionId === ghostSection.sectionId
-      )
-    ) {
-      for (const block of ghostSection.blocks) {
+    // Preview blocks, for whatever is already not part of the plan.
+    for (const candidate of preview) {
+      if (
+        sections.some(
+          (s) =>
+            s.courseId === candidate.courseId &&
+            s.sectionId === candidate.sectionId
+        )
+      ) {
+        continue;
+      }
+      for (const block of candidate.blocks) {
         const isConflicting = isBlockConflicting(
           block,
           {
-            courseId: ghostSection.courseId,
-            sectionId: ghostSection.sectionId,
+            courseId: candidate.courseId,
+            sectionId: candidate.sectionId,
           },
-          ghostConflicts
+          previewConflicts
         );
         map[block.day].push({
-          section: ghostSection,
+          section: candidate,
           block,
           isConflicting,
           isGhost: true,
@@ -331,7 +412,7 @@ export function WeekGrid({
     }
 
     return map;
-  }, [sections, conflicts, ghostSection, ghostConflicts]);
+  }, [sections, conflicts, preview, previewConflicts]);
 
   const handleCopySectionDetails = (section: PlanSection | Section) => {
     const text = formatSectionCopyText(section);
@@ -342,7 +423,7 @@ export function WeekGrid({
     setTimeout(() => setCopiedId(null), 2000);
   };
 
-  const isEmpty = sections.length === 0 && !ghostSection;
+  const isEmpty = sections.length === 0 && preview.length === 0;
 
   if (isLoading) {
     // The shape of the incoming content is known, so a skeleton says more
@@ -396,6 +477,49 @@ export function WeekGrid({
       className={`relative rounded-panel border border-border bg-card overflow-hidden ${className}`}
       data-testid="week-grid"
     >
+      {/* What a preview says it is (ticket 46).
+          A candidate schedule drawn at full size on the real grid is exactly
+          as convincing as the applied plan, so it names itself and offers the
+          way back. Flat, quiet, and above the grid's own scroll container. */}
+      {previewLabel && preview.length > 0 && (
+        <div
+          data-testid="week-grid-preview-notice"
+          role="status"
+          className="flex flex-wrap items-center justify-between gap-2 border-b border-sky-200 bg-sky-50 px-3 py-2"
+        >
+          <span className="text-xs font-semibold text-sky-900">{previewLabel}</span>
+          <span className="flex flex-wrap items-center gap-2">
+            <span className="text-nano uppercase tracking-wider font-semibold text-sky-800">
+              Not applied
+            </span>
+            {onApplyPreview && (
+              <Button
+                type="button"
+                size="sm"
+                disabled={isApplyingPreview}
+                onClick={onApplyPreview}
+                className="h-6 px-2 text-micro"
+                data-testid="week-grid-apply-preview"
+              >
+                {isApplyingPreview ? "Applying..." : "Apply this schedule"}
+              </Button>
+            )}
+            {onClearPreview && (
+              <Button
+                type="button"
+                variant="outline"
+                size="sm"
+                onClick={onClearPreview}
+                className="h-6 border-sky-300 px-2 text-micro text-sky-900"
+                data-testid="week-grid-clear-preview"
+              >
+                Show my plan
+              </Button>
+            )}
+          </span>
+        </div>
+      )}
+
       {/* Scroll container for smaller viewports */}
       <div className="overflow-x-auto">
         <div className="min-w-[680px]">
@@ -722,10 +846,15 @@ export function WeekGrid({
             <p className="text-base font-semibold text-foreground">
               No sections yet
             </p>
+            {/* Describes the state, never the chrome around it: the tool
+                panel folds away (ticket 46), and this same grid is what the
+                PNG export renders. Naming a surface that may not be on
+                screen — or that does not exist in an exported image — is how
+                an empty state stops being true. */}
             <p className="mt-1.5 text-xs text-muted-foreground leading-relaxed">
-              Pick a course in the section list and hover a section to preview
-              it here. Clicking commits it to the plan — the preview becomes the
-              block.
+              Sections you add to this plan appear here. Hovering a section
+              previews it first — clicking commits it, and the preview becomes
+              the block.
             </p>
           </div>
         </div>

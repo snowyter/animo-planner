@@ -38,6 +38,11 @@ export interface SectionPickerState {
   removeSection: (section: Section) => Promise<Plan>;
   togglePin: (section: Section, pinned: boolean) => Promise<Plan>;
   forgetCourse: (courseId: number) => Promise<ForgetCourseOutcome>;
+  /**
+   * Marks whether the student intends to enrol in a captured course.
+   * Excluding is not forgetting: the course stays captured and counted.
+   */
+  setCourseIncluded: (courseId: number, included: boolean) => Promise<void>;
   setHoveredSection: (section: Section | null) => void;
   dismissNotice: () => void;
 }
@@ -181,6 +186,27 @@ export function useSectionPickerState(options: SectionPickerOptions): SectionPic
     notice = null;
   };
 
+  const setCourseIncluded = async (
+    courseId: number,
+    included: boolean
+  ): Promise<void> => {
+    isMutating = true;
+    error = null;
+    try {
+      courses = await client.setCourseIncluded({
+        campusId: options.campusId,
+        sessionId: options.sessionId,
+        courseId,
+        included,
+      });
+    } catch (err) {
+      error = formatErrorMessage(err);
+      throw err;
+    } finally {
+      isMutating = false;
+    }
+  };
+
   const forgetCourse = async (courseId: number): Promise<ForgetCourseOutcome> => {
     isMutating = true;
     error = null;
@@ -262,6 +288,7 @@ export function useSectionPickerState(options: SectionPickerOptions): SectionPic
     removeSection,
     togglePin,
     forgetCourse,
+    setCourseIncluded,
     setHoveredSection,
     dismissNotice,
   };
@@ -538,6 +565,35 @@ export function useSectionPicker(options: SectionPickerOptions) {
     [courses, options, syncCourses]
   );
 
+  /**
+   * Marks whether the student intends to enrol in a captured course.
+   *
+   * The command returns the updated catalog, so the list is replaced rather
+   * than patched in place — the same rule `forgetCourse` follows, and the
+   * reason ticket 32's disagreeing-copies bug cannot come back.
+   */
+  const setCourseIncluded = useCallback(
+    async (courseId: number, included: boolean): Promise<void> => {
+      setIsMutating(true);
+      setError(null);
+      try {
+        const updated = await client.setCourseIncluded({
+          campusId: options.campusId,
+          sessionId: options.sessionId,
+          courseId,
+          included,
+        });
+        setCourses(updated);
+      } catch (err) {
+        setError(formatErrorMessage(err));
+        throw err;
+      } finally {
+        setIsMutating(false);
+      }
+    },
+    [options]
+  );
+
   return {
     courses,
     selectedCourseId,
@@ -555,6 +611,7 @@ export function useSectionPicker(options: SectionPickerOptions) {
     removeSection,
     togglePin,
     forgetCourse,
+    setCourseIncluded,
     setHoveredSection,
     dismissNotice,
   };

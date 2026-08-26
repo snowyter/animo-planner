@@ -11,6 +11,7 @@
 import type {
   PlanSection,
   Preset,
+  SectionModality,
   ScoreComponent,
   SectionRef,
   Solution,
@@ -62,23 +63,6 @@ export function defaultSolveOptions(preset: Preset = "fewest_campus_days"): Solv
   };
 }
 
-/**
- * Formats advisory transition warnings with day and time details.
- */
-export function formatWarningLabel(warning: TransitionWarning): string {
-  const timeRange = `${formatMinutesToTime24(warning.startMin)}–${formatMinutesToTime24(warning.endMin)}`;
-  switch (warning.kind) {
-    case "f2f_online_back_to_back":
-      return `F2F → Online back-to-back on ${warning.day} (${timeRange})`;
-    case "f2f_f2f_different_buildings":
-      return `F2F → F2F in different buildings on ${warning.day} (${timeRange})`;
-    default:
-      // An unrecognised kind still says something. Falling off the switch
-      // returned undefined, which rendered as an empty warning box: a yellow
-      // panel telling the student nothing at all.
-      return `Tight transition on ${warning.day} (${timeRange})`;
-  }
-}
 
 /**
  * Names a course and, when exclusion is the cause (ticket 34), says so —
@@ -138,6 +122,64 @@ export function formatExclusionNotice(
   return notice;
 }
 
+/** One piece of advice, and every occasion it applies to. */
+export interface WarningGroup {
+  kind: TransitionWarning["kind"];
+  /** The advice itself, with no day or time in it. */
+  label: string;
+  /** "MON 12:30–12:45", in the order the warnings were emitted. */
+  occurrences: string[];
+}
+
+/** The advice alone — the day and the time belong to the occurrence. */
+function warningAdvice(kind: TransitionWarning["kind"]): string {
+  switch (kind) {
+    case "f2f_online_back_to_back":
+      return "F2F → Online back-to-back";
+    case "f2f_f2f_different_buildings":
+      return "F2F → F2F in different buildings";
+    default:
+      // An unrecognised kind still says something rather than rendering an
+      // empty advisory box: a yellow panel telling the student nothing at all.
+      return "Tight transition";
+  }
+}
+
+/**
+ * Folds transition warnings into one row per piece of advice.
+ *
+ * Five warnings read as five separate problems, but three of them were the
+ * same advice about the same walk on different days — and the repeated
+ * sentence is what made the advisory box a wall of near-identical lines.
+ *
+ * Nothing is dropped: warnings stay advisory and stay visible (ADR-0009).
+ * The advice is said once and the occasions are listed after it.
+ */
+export function groupTransitionWarnings(
+  warnings: readonly TransitionWarning[]
+): WarningGroup[] {
+  const groups: WarningGroup[] = [];
+
+  for (const warning of warnings) {
+    const occurrence = `${warning.day} ${formatMinutesToTime24(
+      warning.startMin
+    )}–${formatMinutesToTime24(warning.endMin)}`;
+
+    const existing = groups.find((g) => g.kind === warning.kind);
+    if (existing) {
+      existing.occurrences.push(occurrence);
+    } else {
+      groups.push({
+        kind: warning.kind,
+        label: warningAdvice(warning.kind),
+        occurrences: [occurrence],
+      });
+    }
+  }
+
+  return groups;
+}
+
 /**
  * Formats a score breakdown item (e.g. "Campus days: +40").
  */
@@ -154,6 +196,53 @@ export function solutionToSectionRefs(solution: Solution): SectionRef[] {
     courseId: s.courseId,
     sectionId: s.sectionId,
   }));
+}
+
+/**
+ * Turns a candidate solution into sections the week grid can draw (ticket 46).
+ *
+ * The solver previews on the real grid rather than a thumbnail, and the grid
+ * draws `PlanSection`s. A `SolutionSection` carries identity, pin state, and
+ * blocks; the rest is filled from the plan's own row for that course when it
+ * has one, so a previewed schedule is never anonymous.
+ *
+ * Modality is derived from the blocks and never read as a field (ADR-0007).
+ */
+export function solutionToPreviewSections(
+  solution: Solution,
+  planSections: PlanSection[]
+): PlanSection[] {
+  return solution.sections.map((s) => {
+    const known = planSections.find((p) => p.courseId === s.courseId);
+    return {
+      courseId: s.courseId,
+      courseCode: s.courseCode,
+      courseTitle: known?.courseTitle ?? s.courseCode,
+      sectionId: s.sectionId,
+      sectionCode: s.sectionCode,
+      pinned: s.pinned,
+      missing: false,
+      modality: deriveModality(s.blocks),
+      blocks: s.blocks,
+      latestSnapshot:
+        known && known.sectionId === s.sectionId
+          ? known.latestSnapshot
+          : { capturedAt: "", enrolled: 0, teacher: null, remark: null },
+    };
+  });
+}
+
+/** Per-block modality, folded into the section's own (ADR-0007). */
+function deriveModality(blocks: { modality: "F2F" | "ONLINE" }[]): SectionModality {
+  const hasF2F = blocks.some((b) => b.modality === "F2F");
+  const hasOnline = blocks.some((b) => b.modality === "ONLINE");
+  if (hasF2F && hasOnline) return "HYBRID";
+  return hasOnline ? "ONLINE" : "F2F";
+}
+
+/** What the grid says while it is showing a candidate rather than the plan. */
+export function formatSolutionPreviewLabel(rank: number): string {
+  return `Previewing Schedule #${rank}`;
 }
 
 export interface MovedSection {

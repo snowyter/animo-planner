@@ -79,6 +79,17 @@ export interface SectionPickerProps {
    * context wants.
    */
   render?: "all" | "chrome" | "list";
+  /**
+   * What actually scrolls around this picker (ticket 46).
+   *
+   * Two of the picker's decisions were made for a page that scrolled: the
+   * course selector pins below the app header, and the section list bounds
+   * itself so a 42-section course cannot push the week grid off screen. Both
+   * are wrong inside a bounded tool panel, which is its own scroll container
+   * — the header offset leaves the bar floating in a 64px gap, and the list's
+   * own bound nests a second scrollbar inside the first.
+   */
+  scrollContext?: "page" | "panel";
   className?: string;
 }
 
@@ -121,6 +132,7 @@ export function SectionPicker({
   notice = null,
   initialConfirmingRemove = false,
   render = "all",
+  scrollContext = "page",
   onSelectCourse,
   onAddSection,
   onRemoveSection,
@@ -557,7 +569,9 @@ export function SectionPicker({
             `aria-label` took its place. */}
         {courses.length > 0 && (
           <div
-            className={`sticky top-16 z-20 -mx-4 mb-4 border-b border-border bg-card px-4 pb-3 pt-4 sm:-mx-5 sm:px-5 sm:pt-5 ${
+            className={`sticky ${
+              scrollContext === "panel" ? "top-0" : "top-16"
+            } z-20 -mx-4 mb-4 border-b border-border bg-card px-4 pb-3 pt-4 sm:-mx-5 sm:px-5 sm:pt-5 ${
               // Only pull up to the card's own top edge when nothing is
               // rendered above it; with the chrome present that would ride
               // over the header's rule.
@@ -636,10 +650,12 @@ export function SectionPicker({
               No captured courses
             </h3>
             <p className="mt-2 max-w-md text-sm text-muted-foreground leading-relaxed">
-              Nothing has been captured for this campus and term yet. Open
-              Archer&#39;s Hub from the capture bar above, sign in, and search a
-              course in Course Finder — its sections are captured silently as
-              the results render, and they appear here.
+              Nothing has been captured for this campus and term yet. Tabs
+              hide state, so this one says where the hole is: go to the{" "}
+              <strong className="font-semibold text-foreground">Capture tab</strong>
+              , press Open Archer&#39;s Hub, sign in, and search a course in
+              Course Finder — its sections are captured silently as the
+              results render, and they appear here.
             </p>
           </div>
         ) : sections.length === 0 ? (
@@ -656,10 +672,13 @@ export function SectionPicker({
 
           /* Bounded and scrolled in two-column mode so a 42-section course
              cannot push the week grid off screen. Stacked, the grid sits
-             above the list, so the list is free to run on. */
+             above the list, so the list is free to run on — and inside a
+             tool panel the panel is already the bound (ticket 46). */
           <div
             data-testid="section-list"
-            className="space-y-2 lg:max-h-[700px] lg:overflow-y-auto lg:pr-1"
+            className={`space-y-2 ${
+              scrollContext === "panel" ? "" : "lg:max-h-[700px] lg:overflow-y-auto lg:pr-1"
+            }`}
           >
             {groupedSections.inPlan.map(renderSectionRow)}
             {groupedSections.inPlan.length > 0 && groupedSections.other.length > 0 && (

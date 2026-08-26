@@ -8,26 +8,15 @@ import {
   formatExclusionNotice,
   formatScoreBreakdown,
   formatUnsatisfiableCoursesMessage,
-  formatWarningLabel,
+  groupTransitionWarnings,
+  formatSolutionPreviewLabel,
+  solutionToPreviewSections,
   solutionToSectionRefs,
 } from "./solver";
 import type { PlanSection, Solution, TransitionWarning, UnsatisfiableCourse } from "../adapters/ipc/types";
 
 describe("core/solver", () => {
 
-  it("never renders an empty label, even for a kind it does not recognise", () => {
-    const label = formatWarningLabel({
-      kind: "something_new" as never,
-      day: "TUE",
-      startMin: 555,
-      endMin: 570,
-      from: { courseId: 1, sectionId: 1 },
-      to: { courseId: 2, sectionId: 2 },
-    });
-
-    expect(label).toBeTruthy();
-    expect(label.length).toBeGreaterThan(0);
-  });
   it("provides complete preset information for the three presets", () => {
     expect(PRESET_INFOS).toHaveLength(3);
     const presetKeys = PRESET_INFOS.map((p) => p.preset);
@@ -63,33 +52,32 @@ describe("core/solver", () => {
     expect(opts.preset).toBe("most_online");
   });
 
-  it("formats warning labels for advisory transitions", () => {
-    const f2fOnlineWarning: TransitionWarning = {
-      kind: "f2f_online_back_to_back",
-      day: "MON",
-      startMin: 540,
-      endMin: 555,
-      from: { courseId: 1, sectionId: 10 },
-      to: { courseId: 2, sectionId: 20 },
-    };
+  it("labels both advisory transition kinds, and says when each applies", () => {
+    const groups = groupTransitionWarnings([
+      {
+        kind: "f2f_online_back_to_back",
+        day: "MON",
+        startMin: 540,
+        endMin: 555,
+        from: { courseId: 1, sectionId: 10 },
+        to: { courseId: 2, sectionId: 20 },
+      },
+      {
+        kind: "f2f_f2f_different_buildings",
+        day: "THU",
+        startMin: 660,
+        endMin: 675,
+        from: { courseId: 1, sectionId: 10 },
+        to: { courseId: 2, sectionId: 20 },
+      },
+    ]);
 
-    const labelA = formatWarningLabel(f2fOnlineWarning);
-    expect(labelA).toContain("F2F");
-    expect(labelA).toContain("Online");
-    expect(labelA).toContain("MON");
+    expect(groups[0].label).toContain("F2F");
+    expect(groups[0].label).toContain("Online");
+    expect(groups[0].occurrences).toEqual(["MON 09:00–09:15"]);
 
-    const diffBuildingWarning: TransitionWarning = {
-      kind: "f2f_f2f_different_buildings",
-      day: "THU",
-      startMin: 660,
-      endMin: 675,
-      from: { courseId: 1, sectionId: 10 },
-      to: { courseId: 2, sectionId: 20 },
-    };
-
-    const labelB = formatWarningLabel(diffBuildingWarning);
-    expect(labelB).toContain("different buildings");
-    expect(labelB).toContain("THU");
+    expect(groups[1].label).toContain("different buildings");
+    expect(groups[1].occurrences).toEqual(["THU 11:00–11:15"]);
   });
 
   it("formats unsatisfiable course messages naming the unsatisfied courses", () => {
@@ -338,5 +326,164 @@ describe("core/solver", () => {
       expect(consequence).toContain("GEARTAP S09 → S11");
       expect(consequence).toContain("CSINTSY S11 → S12");
     });
+  });
+});
+
+/**
+ * Ticket 46 — the solver previews on the real week grid instead of a
+ * thumbnail, so a solution has to become something the grid can draw.
+ */
+describe("previewing a solution on the week grid", () => {
+  const previewSolution: Solution = {
+    id: "s-1",
+    score: 90,
+    breakdown: [],
+    warnings: [],
+    sections: [
+      {
+        courseId: 2923,
+        courseCode: "GEARTAP",
+        sectionId: 385,
+        sectionCode: "S12",
+        pinned: false,
+        blocks: [
+          { day: "THU", startMin: 450, endMin: 540, modality: "F2F", location: "L226" },
+          { day: "MON", startMin: 450, endMin: 540, modality: "ONLINE", location: null },
+        ],
+      },
+    ],
+  };
+
+  const planSection: PlanSection = {
+    courseId: 2923,
+    courseCode: "GEARTAP",
+    courseTitle: "Art Appreciation",
+    sectionId: 384,
+    sectionCode: "S11",
+    pinned: false,
+    missing: false,
+    modality: "F2F",
+    blocks: [],
+    latestSnapshot: {
+      capturedAt: "2026-08-22T00:00:00Z",
+      enrolled: 42,
+      teacher: "Prof X",
+      remark: null,
+    },
+  };
+
+  it("carries the identity and blocks the grid draws a block from", () => {
+    const [section] = solutionToPreviewSections(previewSolution, []);
+
+    expect(section.courseId).toBe(2923);
+    expect(section.courseCode).toBe("GEARTAP");
+    expect(section.sectionId).toBe(385);
+    expect(section.sectionCode).toBe("S12");
+    expect(section.blocks).toHaveLength(2);
+  });
+
+  it("derives modality per block rather than reading it as a field (ADR-0007)", () => {
+    const [section] = solutionToPreviewSections(previewSolution, []);
+    expect(section.modality).toBe("HYBRID");
+  });
+
+  it("borrows the course title the plan already knows, so the preview is not anonymous", () => {
+    const [section] = solutionToPreviewSections(previewSolution, [planSection]);
+    expect(section.courseTitle).toBe("Art Appreciation");
+  });
+
+  it("keeps the solver's own pin state, which is what makes a pin exempt", () => {
+    const pinned = solutionToPreviewSections(
+      {
+        ...previewSolution,
+        sections: [{ ...previewSolution.sections[0], pinned: true }],
+      },
+      []
+    );
+    expect(pinned[0].pinned).toBe(true);
+  });
+
+  it("names the schedule being previewed by its rank", () => {
+    expect(formatSolutionPreviewLabel(1)).toBe("Previewing Schedule #1");
+    expect(formatSolutionPreviewLabel(4)).toBe("Previewing Schedule #4");
+  });
+});
+
+/**
+ * Ticket 46, third pass — the advisory box repeated itself.
+ *
+ * Five warnings on a card read as five separate problems, but three of them
+ * were the same advice about the same walk on different days. Advisory
+ * warnings stay advisory and stay visible (ADR-0009); what changes is that
+ * the advice is said once and the occasions are listed after it.
+ */
+describe("grouping transition warnings", () => {
+  const warning = (
+    kind: TransitionWarning["kind"],
+    day: TransitionWarning["day"],
+    startMin: number,
+    endMin: number
+  ): TransitionWarning => ({
+    kind,
+    day,
+    startMin,
+    endMin,
+    from: { courseId: 1, sectionId: 1 },
+    to: { courseId: 2, sectionId: 2 },
+  });
+
+  it("says each piece of advice once, however many times it applies", () => {
+    const groups = groupTransitionWarnings([
+      warning("f2f_f2f_different_buildings", "MON", 750, 765),
+      warning("f2f_online_back_to_back", "MON", 960, 975),
+      warning("f2f_f2f_different_buildings", "THU", 750, 765),
+      warning("f2f_f2f_different_buildings", "THU", 855, 870),
+    ]);
+
+    expect(groups).toHaveLength(2);
+    expect(groups[0].label).toContain("different buildings");
+    expect(groups[0].occurrences).toEqual([
+      "MON 12:30–12:45",
+      "THU 12:30–12:45",
+      "THU 14:15–14:30",
+    ]);
+    expect(groups[1].label).toContain("back-to-back");
+    expect(groups[1].occurrences).toEqual(["MON 16:00–16:15"]);
+  });
+
+  it("keeps the advice free of the day it happened on", () => {
+    // The day belongs to the occurrence, not to the advice — repeating it in
+    // the sentence is what made five near-identical lines.
+    const [group] = groupTransitionWarnings([
+      warning("f2f_online_back_to_back", "TUE", 555, 570),
+    ]);
+
+    expect(group.label).not.toContain("TUE");
+    expect(group.label).not.toContain("(");
+  });
+
+  it("orders the kinds by where they first appear, not alphabetically", () => {
+    const groups = groupTransitionWarnings([
+      warning("f2f_online_back_to_back", "MON", 555, 570),
+      warning("f2f_f2f_different_buildings", "MON", 750, 765),
+    ]);
+
+    expect(groups.map((g) => g.kind)).toEqual([
+      "f2f_online_back_to_back",
+      "f2f_f2f_different_buildings",
+    ]);
+  });
+
+  it("says something for a kind it does not recognise, rather than nothing", () => {
+    const [group] = groupTransitionWarnings([
+      warning("something_new" as never, "SAT", 555, 570),
+    ]);
+
+    expect(group.label.length).toBeGreaterThan(0);
+    expect(group.occurrences).toEqual(["SAT 09:15–09:30"]);
+  });
+
+  it("has nothing to group when a solution is clean", () => {
+    expect(groupTransitionWarnings([])).toEqual([]);
   });
 });

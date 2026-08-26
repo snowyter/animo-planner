@@ -38,6 +38,13 @@ _Avoid_: meeting, timeslot, event
 Whether a schedule block meets in a room or online. **A property of a block, not of a section, and always derived** from the location rather than read as a field. A section is F2F, Online, or Hybrid based on the mix of its blocks.
 _Avoid_: delivery mode, format, type
 
+**Included course**:
+A captured course the student says they intend to enrol in. Searching a course and intending to take it are different acts: the catalog holds everything the student looked at, and this is the subset the solver has to fill and the picker offers. **Excluding is not forgetting** — an excluded course keeps its sections, its snapshots, its place in the catalog, and its share of the capture counter; it simply stops asking to be scheduled. A section already in a plan stays there when its course is excluded.
+_Avoid_: enabled, active, selected (selected is the picker's word for a section)
+
+**Captured vs refreshed**:
+Two acts write a course. A **capture** is the student searching it in Course Finder; a **refresh** is the student pressing Refresh to re-read enrolment counts. Both advance `lastSeenAt`, so the catalog records `lastRefreshedAt` separately and names whichever act was later. During enlistment week, which one produced the numbers on screen is what decides whether they are worth acting on.
+
 **Snapshot**:
 A point-in-time reading of a section's mutable values — enrolment count, teacher, remark. Appended on every capture, never overwritten, because the change over time is itself information.
 

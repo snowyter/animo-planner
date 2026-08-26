@@ -13,6 +13,8 @@ describe("SectionPicker", () => {
       sectionCount: 2,
       firstSeenAt: "2026-08-22T00:00:00Z",
       lastSeenAt: "2026-08-22T00:00:00Z",
+      included: true,
+      lastRefreshedAt: null,
     },
     {
       courseId: 564,
@@ -21,6 +23,8 @@ describe("SectionPicker", () => {
       sectionCount: 1,
       firstSeenAt: "2026-08-22T00:00:00Z",
       lastSeenAt: "2026-08-22T00:00:00Z",
+      included: true,
+      lastRefreshedAt: null,
     },
   ];
 
@@ -865,6 +869,56 @@ describe("SectionPicker", () => {
       const select = html.match(/<select[^>]*data-testid="course-select"[^>]*>/);
       expect(select).not.toBeNull();
       expect(select![0]).toMatch(/aria-label="[^"]+"/);
+    });
+  });
+
+  /**
+   * Ticket 46 — the picker is a tab inside a bounded tool panel now, and the
+   * panel is the scroll container. Both of the picker's own scrolling
+   * decisions were made for a page that scrolled instead.
+   */
+  describe("inside a bounded tool panel", () => {
+    const panelProps = {
+      render: "list" as const,
+      scrollContext: "panel" as const,
+      courses: mockCourses,
+      selectedCourseId: 2923,
+      sections: sampleSections,
+      planSections: [],
+      onSelectCourse: vi.fn(),
+      onAddSection: vi.fn(),
+      onRemoveSection: vi.fn(),
+      onTogglePin: vi.fn(),
+      onHoverSection: vi.fn(),
+    };
+
+    it("sticks the course selector to the panel's top, not to the app header's", () => {
+      const html = renderToStaticMarkup(React.createElement(SectionPicker, panelProps));
+      const bar = html.slice(0, html.indexOf('data-testid="course-select"'));
+
+      // `top-16` clears the app header, which is not what scrolls here — it
+      // would leave the bar floating in a 64px gap.
+      expect(bar).toMatch(/sticky[^"]*top-0/);
+      expect(bar).not.toMatch(/sticky[^"]*top-16/);
+    });
+
+    it("lets the panel bound the list rather than nesting a second scroller", () => {
+      const html = renderToStaticMarkup(React.createElement(SectionPicker, panelProps));
+      const list = /<div[^>]*data-testid="section-list"[^>]*>/.exec(html);
+
+      expect(list).not.toBeNull();
+      expect(list![0]).not.toMatch(/max-h-/);
+      expect(list![0]).not.toMatch(/overflow-y-auto/);
+    });
+
+    it("still bounds the list itself when the page is what scrolls", () => {
+      const html = renderToStaticMarkup(
+        React.createElement(SectionPicker, { ...panelProps, scrollContext: "page" as const })
+      );
+      const list = /<div[^>]*data-testid="section-list"[^>]*>/.exec(html);
+
+      expect(list![0]).toMatch(/max-h-/);
+      expect(list![0]).toMatch(/overflow-y-auto/);
     });
   });
 });

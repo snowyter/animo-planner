@@ -1,6 +1,4 @@
 import { useMemo } from "react";
-/** Pin stands alone in the mini-grid with no word beside it, so it stays. */
-import { Pin } from "lucide-react";
 import { Button } from "./ui/button";
 import { Badge } from "./ui/badge";
 import { staggerStyle } from "../core/motion";
@@ -12,10 +10,10 @@ import {
   formatApplyConsequence,
   formatDiffSummary,
   formatScoreBreakdown,
-  formatWarningLabel,
+  groupTransitionWarnings,
 } from "../core/solver";
 
-export interface SolutionThumbnailProps {
+export interface SolutionCardProps {
   solution: Solution;
   rank: number;
   /**
@@ -37,7 +35,7 @@ interface FlattenedSolutionBlock {
   block: ScheduleBlock;
 }
 
-export function SolutionThumbnail({
+export function SolutionCard({
   solution,
   rank,
   topScore,
@@ -47,7 +45,7 @@ export function SolutionThumbnail({
   onSelect,
   onApply,
   className = "",
-}: SolutionThumbnailProps) {
+}: SolutionCardProps) {
   const isTopResult = rank === 1;
   const best = topScore && topScore > 0 ? topScore : solution.score;
   const scorePercent =
@@ -75,6 +73,11 @@ export function SolutionThumbnail({
   const allBlocks = useMemo(() => {
     return solution.sections.flatMap((s) => s.blocks);
   }, [solution.sections]);
+
+  const warningGroups = useMemo(
+    () => groupTransitionWarnings(solution.warnings),
+    [solution.warnings]
+  );
 
   const timeBounds = useMemo(() => {
     return getGridTimeBounds(allBlocks);
@@ -108,17 +111,21 @@ export function SolutionThumbnail({
       data-testid={`solution-thumbnail-${solution.id}`}
       data-rank={rank}
       data-top-result={isTopResult ? "true" : undefined}
+      data-selected={isSelected ? "true" : undefined}
       /* The stagger is CSS `animation-delay` driven by a custom property —
          never a chain of setTimeouts, and never per-item JS state. */
       style={staggerStyle(rank - 1)}
       className={`stagger-rise flex flex-col rounded-panel border bg-card overflow-hidden ${
-        isTopResult
+        /* Selection is what is drawn on the week grid, so it outranks "best
+           match" for the border: the student needs to find the card matching
+           what they are looking at. Ring weight only — never a hue, which is
+           spent on course identity (ADR-0012). */
+        isSelected
+          ? "border-slate-900 ring-2 ring-slate-900/25"
+          : isTopResult
           ? "border-primary ring-1 ring-primary/25 shadow-lifted"
-          : isSelected
-          ? "border-primary ring-1 ring-primary/20"
           : "border-border hover:border-slate-300"
       } ${className}`}
-      onClick={() => onSelect?.(solution)}
     >
       {/* Header: rank, score, and the one action */}
       <div
@@ -126,9 +133,9 @@ export function SolutionThumbnail({
           isTopResult ? "bg-primary-soft" : "bg-muted/40"
         }`}
       >
-        <div className="flex items-start justify-between gap-3">
+        <div data-testid="solution-header" className="flex flex-col gap-3">
           <div className="min-w-0">
-            <div className="flex items-center gap-2">
+            <div className="flex flex-wrap items-center gap-x-2 gap-y-1">
               <span
                 className={`font-bold tabular-nums text-foreground ${
                   isTopResult ? "text-lg" : "text-sm"
@@ -141,6 +148,12 @@ export function SolutionThumbnail({
               {isTopResult && (
                 <Badge variant="default" className="uppercase tracking-wide">
                   Best match
+                </Badge>
+              )}
+              {/* Which card the week grid is currently drawing (ticket 46). */}
+              {isSelected && (
+                <Badge variant="outline" className="uppercase tracking-wide">
+                  Previewing
                 </Badge>
               )}
             </div>
@@ -165,17 +178,38 @@ export function SolutionThumbnail({
             </div>
           </div>
 
-          <Button
-            size="sm"
-            onClick={(e) => {
-              e.stopPropagation();
-              onApply(solution);
-            }}
-            disabled={isApplying}
-            className="h-8 text-xs shrink-0"
-          >
-            {isApplying ? "Applying..." : "Apply to plan"}
-          </Button>
+          {/* Two explicit actions, and nothing implicit.
+              Preview repaints the real week grid; Apply commits. Making the
+              whole card a preview target meant a stray click repainted the
+              week, which is the opposite of a mechanism you can trust. */}
+          <div className="flex flex-wrap items-center gap-2">
+            {onSelect && (
+              <Button
+                type="button"
+                variant={isSelected ? "default" : "outline"}
+                size="sm"
+                onClick={() => onSelect(solution)}
+                className="h-8 flex-1 text-xs"
+                data-testid="preview-solution"
+                title={
+                  isSelected
+                    ? "Stop previewing and show the plan again"
+                    : "Show this schedule on the week grid without applying it"
+                }
+              >
+                {isSelected ? "Previewing" : "Preview"}
+              </Button>
+            )}
+            <Button
+              size="sm"
+              variant={onSelect ? "secondary" : "default"}
+              onClick={() => onApply(solution)}
+              disabled={isApplying}
+              className="h-8 flex-1 text-xs"
+            >
+              {isApplying ? "Applying..." : "Apply to plan"}
+            </Button>
+          </div>
         </div>
 
         {/* Honest consequence sentence at point of clicking (ticket 43) */}
@@ -203,7 +237,8 @@ export function SolutionThumbnail({
                 {diff.moved.map((m) => (
                   <li
                     key={m.courseId}
-                    className="flex items-center gap-1.5 rounded-control bg-white/80 px-1.5 py-0.5 text-micro font-medium"
+                    data-testid="moved-section"
+                    className="flex flex-wrap items-center gap-x-1.5 gap-y-0.5 rounded-control bg-white/80 px-1.5 py-0.5 text-micro font-medium"
                   >
                     <span className="font-bold">{m.courseCode}</span>
                     <span className="text-muted-foreground">
@@ -232,16 +267,36 @@ export function SolutionThumbnail({
         )}
 
         {/* Advisory warnings. Amber, never red, and labelled as advice — they
-            never remove a result and must never read as an error. */}
-        {solution.warnings.length > 0 && (
-          <div className="mt-2.5 rounded-card border border-amber-200 bg-amber-50/70 px-2.5 py-2">
+            never remove a result and must never read as an error (ADR-0009).
+
+            One row per piece of advice, with the occasions as chips after it.
+            Five warnings used to read as five separate problems when three of
+            them were the same walk on different days, and the repeated
+            sentence left a ragged column of dead space down the right. */}
+        {warningGroups.length > 0 && (
+          <div
+            data-testid="solution-advisory"
+            className="mt-2.5 rounded-card border border-amber-200 bg-amber-50/70 px-2.5 py-2"
+          >
             <span className="text-nano font-semibold uppercase tracking-wider text-amber-800">
               Advisory
             </span>
-            <ul className="mt-1 space-y-0.5">
-              {solution.warnings.map((w, idx) => (
-                <li key={idx} className="text-micro font-medium text-amber-900">
-                  {formatWarningLabel(w)}
+            <ul className="mt-1 space-y-1.5">
+              {warningGroups.map((group) => (
+                <li key={group.kind}>
+                  <span className="text-micro font-semibold text-amber-900">
+                    {group.label}
+                  </span>
+                  <span className="mt-0.5 flex flex-wrap gap-1">
+                    {group.occurrences.map((occurrence) => (
+                      <span
+                        key={occurrence}
+                        className="rounded-control bg-amber-100/80 px-1.5 py-0.5 font-mono text-nano font-medium text-amber-900"
+                      >
+                        {occurrence}
+                      </span>
+                    ))}
+                  </span>
                 </li>
               ))}
             </ul>
@@ -249,77 +304,78 @@ export function SolutionThumbnail({
         )}
       </div>
 
-      {/* Mini Week Grid Thumbnail (Hand-rolled CSS Grid: Mon–Sat × time span) */}
-      <div className="p-3 bg-card border-b border-border overflow-hidden">
-        <div className="rounded-card border border-border overflow-hidden">
-          {/* Day Headers (Mon–Sat) */}
-          <div className="grid grid-cols-6 border-b border-border bg-muted/60 text-nano font-bold text-muted-foreground text-center">
+      {/* The week's shape (ticket 46).
+          Not a schedule: a schedule is what the real grid draws, at full size,
+          one press away. This carries the two things that survive at this
+          size — which days are loaded, and which subject sits where. Section
+          code, room, and modality are detail the real grid has room for and
+          this does not. Course hue still encodes course identity and nothing
+          else (ADR-0012); the left border still carries per-block modality
+          (ADR-0007). */}
+      <div className="border-b border-border bg-card p-3">
+        <div
+          data-testid="week-shape"
+          className="overflow-hidden rounded-card border border-border"
+        >
+          <div className="grid grid-cols-6 border-b border-border bg-muted/60 text-nano font-bold text-muted-foreground">
             {DAY_INFOS.map((d) => (
-              <div key={d.day} className="py-1 border-r last:border-r-0 border-border">
+              <div
+                key={d.day}
+                className="border-r py-1 text-center last:border-r-0 border-border"
+              >
                 {d.shortLabel}
               </div>
             ))}
           </div>
 
-          {/* Grid Canvas */}
-          <div className="relative grid grid-cols-6 min-h-[140px] bg-card">
-            {DAYS.map((day) => {
-              const dayBlocks = blocksByDay[day];
-              return (
-                <div
-                  key={day}
-                  className="relative border-r last:border-r-0 border-border/70 min-h-[140px] p-0.5"
-                >
-                  {dayBlocks.map(({ section, block }) => {
-                    const pos = computeBlockPosition(
-                      block.startMin,
-                      block.endMin,
-                      timeBounds.startMin,
-                      timeBounds.endMin
-                    );
+          <div className="relative grid grid-cols-6 bg-card">
+            {DAYS.map((day) => (
+              <div
+                key={day}
+                className="relative min-h-[140px] border-r p-0.5 last:border-r-0 border-border/70"
+              >
+                {blocksByDay[day].map(({ section, block }) => {
+                  const pos = computeBlockPosition(
+                    block.startMin,
+                    block.endMin,
+                    timeBounds.startMin,
+                    timeBounds.endMin
+                  );
+                  const theme = getCourseTheme(section.courseId, uniqueCourseIds);
+                  const isF2F = block.modality === "F2F";
 
-                    const theme = getCourseTheme(section.courseId, uniqueCourseIds);
-                    const isF2F = block.modality === "F2F";
-                    const isPinned = section.pinned;
-
-                    // Border style: solid for F2F, dashed for ONLINE (ADR-0007, ADR-0012)
-                    const borderStyle = isF2F ? "solid" : "dashed";
-
-                    return (
-                      <div
-                        key={`${section.courseId}-${section.sectionId}-${block.day}-${block.startMin}`}
-                        className={`absolute inset-x-0.5 rounded-control px-1 py-0.5 flex flex-col justify-between overflow-hidden text-nano leading-tight ${theme.bgClass} ${theme.textClass} border-l-[3px]`}
-                        style={{
-                          top: `${pos.topPercent}%`,
-                          height: `calc(${pos.heightPercent}% - 2px)`,
-                          minHeight: "26px",
-                          borderLeftColor: theme.borderHex,
-                          borderLeftStyle: borderStyle,
-                        }}
-                        title={`${section.courseCode} ${section.sectionCode} (${isF2F ? block.location ?? "Room" : "Online"})${isPinned ? " (pinned — exempt)" : ""}`}
-                      >
-                        <div className="flex items-center justify-between gap-0.5">
-                          <span className="font-bold truncate">{section.courseCode}</span>
-                          {isPinned && (
-                            <Pin className="h-2 w-2 text-slate-700 shrink-0" aria-label="Pinned (exempt)" />
-                          )}
-                        </div>
-                        <div className="flex items-center justify-between text-nano opacity-80">
-                          <span>{section.sectionCode}</span>
-                          <span>{isF2F ? "F2F" : "ONL"}</span>
-                        </div>
-                      </div>
-                    );
-                  })}
-                </div>
-              );
-            })}
+                  return (
+                    <div
+                      key={`${section.courseId}-${section.sectionId}-${block.day}-${block.startMin}`}
+                      data-testid="week-shape-bar"
+                      className={`absolute inset-x-0.5 flex items-center overflow-hidden rounded-control border-l-[3px] px-0.5 ${theme.bgClass} ${theme.textClass}`}
+                      style={{
+                        top: `${pos.topPercent}%`,
+                        height: `calc(${pos.heightPercent}% - 2px)`,
+                        minHeight: "18px",
+                        borderLeftColor: theme.borderHex,
+                        borderLeftStyle: isF2F ? "solid" : "dashed",
+                      }}
+                      /* The detail the old labels tried to fit lives here and
+                         on the real grid, where there is room for it. */
+                      title={`${section.courseCode} ${section.sectionCode} — ${
+                        isF2F ? block.location ?? "Room" : "Online"
+                      }${section.pinned ? " (pinned — exempt)" : ""}`}
+                    >
+                      <span className="truncate text-nano font-bold leading-none">
+                        {section.courseCode}
+                      </span>
+                    </div>
+                  );
+                })}
+              </div>
+            ))}
           </div>
         </div>
       </div>
 
       {/* Sections List in Solution */}
-      <div className="p-3 bg-muted/30 text-xs flex flex-wrap items-center gap-1.5 mt-auto">
+      <div data-testid="solution-sections" className="p-3 bg-muted/30 text-xs flex flex-wrap items-center gap-1.5 mt-auto">
         <span className="text-micro font-semibold text-muted-foreground uppercase tracking-wider">
           Sections:
         </span>

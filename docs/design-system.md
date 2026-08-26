@@ -62,7 +62,7 @@ The subtitle "Archer's Hub Enlistment Planner" survives, subordinate: `text-micr
 
 ## Icons
 
-Icon counts were `WeekGrid` 35, `SectionPicker` 33, `PlanWorkspace` 30, `AboutDialog` 26, `SolveDialog` 24. Most of them labelled something the adjacent text already said.
+Icon counts were `WeekGrid` 35, `SectionPicker` 33, `PlanWorkspace` 30, `AboutDialog` 26, and the solver's 24 (then a dialog, now `SolvePanel`). Most of them labelled something the adjacent text already said.
 
 **Drop** an icon that sits beside a word meaning the same thing. A button reading "About" does not need an ℹ; a heading reading "Capture Sections" does not need a glyph. Prefer the word.
 
@@ -83,10 +83,29 @@ The result is judged on the dense surfaces: the week grid and the section list s
 | `WeekGrid` | 35 | 6 | modality, conflict, pin |
 | `SectionPicker` | 33 | 3 | modality, conflict |
 | `PlanWorkspace` | 30 | 1 | conflict |
+| `SolvePanel` | — | 2 | disclosure chevrons |
 | `AboutDialog` | 26 | 1 | external link |
-| `SolveDialog` | 24 | 2 | disclosure chevrons |
 
 Every glyph left on the two dense surfaces is data. That is the test to apply to the next one.
+
+---
+
+## Tabs
+
+The plan workspace is one tabbed tool panel beside one permanent week grid (ticket 46). `src/components/ui/tabs.tsx` is the shadcn component over `@radix-ui/react-tabs`, copied into the repo like every other one. Radix owns roving arrow-key focus, the `tablist` / `tab` / `tabpanel` roles, and the `aria-labelledby` naming each panel by its trigger — none of which is worth hand-rolling.
+
+Two rules the next tabbed surface inherits:
+
+- **A selected tab is chrome, and reads as chrome.** It is drawn in the neutral palette — `bg-card`, `text-foreground`, `shadow-flat`. Never a course hue, which encodes course identity and nothing else (ADR-0012), and never a colour that could be mistaken for a data state.
+- **Tabs hide state, and that cost is paid explicitly.** Anything a student must see from *any* tab — a dead refresh, a capture that failed to parse, a section missing from the catalog — renders above the tab strip, not inside a panel. A tab whose content is empty carries the signal on its own trigger (`formatEmptyCatalogSignal` in `src/core/toolPanel.ts`), so the hole is visible without switching to find it.
+
+**A card is not the artifact.** `SolutionCard` used to draw a six-column week with course code, section code, and modality inside 26px blocks; in a 400px column the blocks overlapped their own labels. The card now carries a *week shape* — colour and position, no text — which answers the one question a card that size can answer: which days are loaded, which are free. Every detail comes from pressing **Preview**, which paints the candidate on the real grid at full size. That is what ticket 46 bought, and it is the rule for any future summary of something the grid can draw: say the shape, hand over the detail.
+
+**Previewing is something you press.** The whole card used to be the target, so a stray click repainted the week. Explicit `Preview` and `Apply to plan` buttons sit side by side, and the grid's own preview notice offers `Apply this schedule` — the decision gets made while looking at the week, not at the card that produced it.
+
+**The panel folds, and folding hides more than a tab does.** The tools act on the schedule; the schedule is the artifact, so it gets the window when the tools are not in use — and opening a plan is exactly that moment, so the panel starts folded. The cost is paid the same way the tab strip pays it: the control that unfolds it is a named button beside the schedule's own header, and it carries the empty-catalog signal the tab strip would have. A folded panel is never merely gone.
+
+**Tab switching does not animate.** It is allowed to, under the same rules as everything else here, but the inventory below is short on purpose and a tab change is already instant and legible. Whatever scrolls around a surface is a property of its container, not of the surface: `SectionPicker`'s `scrollContext` prop exists because the same picker pins its course selector below the app header on a scrolling page and at the top of a bounded tool panel.
 
 ---
 

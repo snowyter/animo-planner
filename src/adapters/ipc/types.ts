@@ -78,6 +78,17 @@ export interface CapturedCourse {
   sectionCount: number;
   firstSeenAt: string;
   lastSeenAt: string;
+  /**
+   * Whether the student intends to enrol in this course.
+   *
+   * Searching a course and intending to take it are different acts. An
+   * excluded course stays captured, stays counted, and stays in the Capture
+   * tab — it is simply not offered in the picker and not a course the solver
+   * has to satisfy.
+   */
+  included: boolean;
+  /** When a refresh last re-read this course, if one ever has. */
+  lastRefreshedAt: string | null;
 }
 
 export interface PlanSection {

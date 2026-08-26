@@ -2,6 +2,7 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 import React from "react";
 import { renderToStaticMarkup } from "react-dom/server";
 import App from "./App";
+import appSource from "./App.tsx?raw";
 import * as client from "./adapters/ipc/client";
 import { PlanWorkspace } from "./components/PlanWorkspace";
 import { AppHeader } from "./components/AppHeader";
@@ -207,5 +208,27 @@ describe("App shell and navigation", () => {
     );
 
     expect(html).not.toMatch(/A new version of Animo Plan/i);
+  });
+});
+
+/**
+ * Ticket 46 — the tool panel's selected tab lives in `PlanWorkspace` state,
+ * and every mutation reloads the plan through `refreshPlan`. That only
+ * survives if the reload does not remount the workspace: landing back on
+ * Capture after adding a section would be maddening.
+ *
+ * The suite renders to static markup and cannot re-render, so this is a
+ * source guard — the same shape as PlanWorkspace's reload-handler guard.
+ */
+describe("a plan reload does not remount the workspace", () => {
+  it("keys the screen on the plan's identity, never on its contents", () => {
+    const key = /<main\s+key=\{([^}]*)\}/.exec(appSource);
+
+    expect(key, "the screen wrapper must carry an explicit key").not.toBeNull();
+    // `activePlanSummary.id` is stable across a reload; the loaded plan detail
+    // is a fresh object every time and would remount on each mutation.
+    expect(key![1]).toContain("activePlanSummary");
+    expect(key![1]).not.toContain("activePlanDetail");
+    expect(key![1]).not.toContain("sections");
   });
 });
