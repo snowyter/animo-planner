@@ -22,7 +22,7 @@ New since drafting: **`UpdateNotice`** (ticket 39), the **week-grid context menu
 
 **1. Dark mode is half-on and broken today.** `src/core/palette.ts` and `WeekGrid.tsx` carry `dark:` variants. Tailwind v4's default dark strategy is `prefers-color-scheme`, and no config overrides it — so for a student running Windows in dark mode, **grid blocks render dark while the rest of the app stays hardcoded light** (`body` is `#f8fafc` in `App.css`). Nobody chose this; it is a leak.
 
-**Decided: the app commits to light, and the stray `dark:` variants come out.** A real dark mode means auditing every surface, both palettes for course hues under ADR-0012, and contrast for all of it — that is its own ticket, not a rider on this one. Removing the strays fixes a live bug and lets the eventual dark-mode ticket start from a known state.
+**Decided by a human, confirmed explicitly: the app commits to light mode only, and the stray `dark:` variants come out.** This is settled — do not reintroduce dark variants, and do not treat the removal as an oversight to be helpfully corrected. A real dark mode means auditing every surface, both palettes for course hues under ADR-0012, and contrast for all of it — that is its own ticket, not a rider on this one. Removing the strays fixes a live bug and lets the eventual dark-mode ticket start from a known state.
 
 **2. The design-token layer exists and is unused.** `App.css` declares a full shadcn variable set — `--background`, `--primary`, `--muted`, `--radius`, and the rest — and almost nothing references them. Components use raw utilities (`bg-white`, `text-slate-900`, `bg-emerald-50`). That is why spacing, radii, and type sizes drift per component. This is the ticket that fixes it.
 
