@@ -5,6 +5,7 @@ import {
   describeBlockConflict,
   describeMissingSection,
   getMenuPlacement,
+  computeMenuPosition,
 } from "./gridMenu";
 import type { Conflict, PlanSection, ScheduleBlock } from "../adapters/ipc/types";
 
@@ -249,16 +250,88 @@ describe("gridMenu core domain logic", () => {
       expect(placement.alignY).toBe("top");
     });
 
+    it("flips vertically on 2:30 PM (14:30) afternoon block to prevent clipping off bottom", () => {
+      const placement = getMenuPlacement("MON", 870);
+      expect(placement.alignX).toBe("left");
+      expect(placement.alignY).toBe("bottom");
+      expect(placement.className).toContain("bottom-full");
+    });
+
     it("flips vertically on evening block to prevent clipping off bottom", () => {
       const placement = getMenuPlacement("MON", 1080);
       expect(placement.alignX).toBe("left");
       expect(placement.alignY).toBe("bottom");
+      expect(placement.className).toContain("bottom-full");
+    });
+
+    it("flips both horizontally and vertically for Saturday 2:30 PM block", () => {
+      const placement = getMenuPlacement("SAT", 870);
+      expect(placement.alignX).toBe("right");
+      expect(placement.alignY).toBe("bottom");
+      expect(placement.className).toContain("right-0");
+      expect(placement.className).toContain("bottom-full");
     });
 
     it("flips both horizontally and vertically for Saturday evening block", () => {
       const placement = getMenuPlacement("SAT", 1080);
       expect(placement.alignX).toBe("right");
       expect(placement.alignY).toBe("bottom");
+    });
+  });
+
+  describe("computeMenuPosition", () => {
+    const defaultViewport = { width: 1024, height: 768 };
+    const defaultMenuSize = { width: 224, height: 250 };
+
+    it("positions below and left-aligned for morning block with ample space", () => {
+      const anchorRect = { top: 100, left: 150, right: 250, bottom: 160 };
+      const pos = computeMenuPosition(anchorRect, defaultViewport, defaultMenuSize);
+
+      expect(pos.alignX).toBe("left");
+      expect(pos.alignY).toBe("top");
+      expect(pos.top).toBe(164); // anchorRect.bottom + 4
+      expect(pos.left).toBe(150); // anchorRect.left
+    });
+
+    it("flips vertically when anchor is at 2:30 PM or later near bottom edge", () => {
+      // Anchor near bottom of viewport: bottom is at 600, 600 + 250 + 8 = 858 > 768
+      const anchorRect = { top: 540, left: 150, right: 250, bottom: 600 };
+      const pos = computeMenuPosition(anchorRect, defaultViewport, defaultMenuSize);
+
+      expect(pos.alignX).toBe("left");
+      expect(pos.alignY).toBe("bottom");
+      expect(pos.top).toBe(286); // 540 - 250 - 4
+      expect(pos.left).toBe(150);
+    });
+
+    it("flips horizontally when anchor is in Saturday column near right edge", () => {
+      // Anchor near right edge: left is at 900, 900 + 224 + 8 = 1132 > 1024
+      const anchorRect = { top: 100, left: 880, right: 980, bottom: 160 };
+      const pos = computeMenuPosition(anchorRect, defaultViewport, defaultMenuSize);
+
+      expect(pos.alignX).toBe("right");
+      expect(pos.alignY).toBe("top");
+      expect(pos.top).toBe(164);
+      expect(pos.left).toBe(756); // 980 - 224
+    });
+
+    it("flips both horizontally and vertically for Saturday afternoon block", () => {
+      const anchorRect = { top: 540, left: 880, right: 980, bottom: 600 };
+      const pos = computeMenuPosition(anchorRect, defaultViewport, defaultMenuSize);
+
+      expect(pos.alignX).toBe("right");
+      expect(pos.alignY).toBe("bottom");
+      expect(pos.top).toBe(286);
+      expect(pos.left).toBe(756);
+    });
+
+    it("clamps position to viewport padding when block is near screen boundaries", () => {
+      const tightViewport = { width: 300, height: 300 };
+      const anchorRect = { top: 5, left: 2, right: 50, bottom: 60 };
+      const pos = computeMenuPosition(anchorRect, tightViewport, defaultMenuSize);
+
+      expect(pos.left).toBeGreaterThanOrEqual(8);
+      expect(pos.top).toBeGreaterThanOrEqual(8);
     });
   });
 });
