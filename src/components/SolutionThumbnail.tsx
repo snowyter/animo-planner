@@ -6,14 +6,21 @@ import {
 } from "lucide-react";
 import { Button } from "./ui/button";
 import { Badge } from "./ui/badge";
-import type { Day, ScheduleBlock, Solution, SolutionSection } from "../adapters/ipc/types";
+import type { Day, PlanSection, ScheduleBlock, Solution, SolutionSection } from "../adapters/ipc/types";
 import { DAYS, DAY_INFOS, computeBlockPosition, getGridTimeBounds } from "../core/grid";
 import { getCourseTheme } from "../core/palette";
-import { formatScoreBreakdown, formatWarningLabel } from "../core/solver";
+import {
+  diffSolutionWithPlan,
+  formatApplyConsequence,
+  formatDiffSummary,
+  formatScoreBreakdown,
+  formatWarningLabel,
+} from "../core/solver";
 
 export interface SolutionThumbnailProps {
   solution: Solution;
   rank: number;
+  planSections?: PlanSection[];
   isSelected?: boolean;
   isApplying?: boolean;
   onSelect?: (solution: Solution) => void;
@@ -29,12 +36,21 @@ interface FlattenedSolutionBlock {
 export function SolutionThumbnail({
   solution,
   rank,
+  planSections,
   isSelected = false,
   isApplying = false,
   onSelect,
   onApply,
   className = "",
 }: SolutionThumbnailProps) {
+  // Compute what would move/stay against the current plan (ticket 43)
+  const diff = useMemo(() => {
+    if (!planSections || planSections.length === 0) {
+      return null;
+    }
+    return diffSolutionWithPlan(planSections, solution);
+  }, [planSections, solution]);
+
   // Extract unique course IDs for consistent hue distribution (ADR-0012)
   const uniqueCourseIds = useMemo(() => {
     const ids: number[] = [];
@@ -123,6 +139,43 @@ export function SolutionThumbnail({
           </Button>
         </div>
 
+        {/* Honest consequence sentence at point of clicking (ticket 43) */}
+        {diff && (
+          <p className="mt-1.5 text-[11px] text-slate-500 leading-snug">
+            {formatApplyConsequence(diff)}
+          </p>
+        )}
+
+        {/* Change summary: what stays, what moves (ticket 43) */}
+        {diff && diff.moveCount === 0 && diff.totalPlanSections > 0 && (
+          <div className="mt-2.5 flex items-center gap-1.5 text-xs text-emerald-800 bg-emerald-50 border border-emerald-200/80 rounded-md px-2.5 py-1.5 font-medium">
+            <Check className="h-3.5 w-3.5 text-emerald-600 shrink-0" />
+            <span>{formatDiffSummary(diff)}</span>
+          </div>
+        )}
+
+        {diff && diff.moveCount > 0 && (
+          <div className="mt-2.5 space-y-1.5 rounded-md bg-amber-50 border border-amber-200/80 p-2.5 text-xs text-amber-900">
+            <div className="flex items-center justify-between font-semibold">
+              <span>{formatDiffSummary(diff)}</span>
+            </div>
+            <div className="space-y-1">
+              {diff.moved.map((m) => (
+                <div
+                  key={m.courseId}
+                  className="flex items-center gap-1.5 text-[11px] text-amber-900 bg-white/80 rounded px-1.5 py-0.5 border border-amber-200/60 font-medium"
+                >
+                  <span className="font-bold">{m.courseCode}</span>
+                  <span>
+                    moves {m.fromSectionCode} →{" "}
+                    <strong className="font-bold text-amber-950">{m.toSectionCode}</strong>
+                  </span>
+                </div>
+              ))}
+            </div>
+          </div>
+        )}
+
         {/* Score Breakdown (Ticket 20 requirement: ranking is legible rather than magic) */}
         {solution.breakdown.length > 0 && (
           <div className="mt-2.5 flex flex-wrap items-center gap-1.5">
@@ -200,12 +253,12 @@ export function SolutionThumbnail({
                           borderLeftColor: theme.borderHex,
                           borderLeftStyle: borderStyle,
                         }}
-                        title={`${section.courseCode} ${section.sectionCode} (${isF2F ? block.location ?? "Room" : "Online"})`}
+                        title={`${section.courseCode} ${section.sectionCode} (${isF2F ? block.location ?? "Room" : "Online"})${isPinned ? " (pinned — exempt)" : ""}`}
                       >
                         <div className="flex items-center justify-between gap-0.5">
                           <span className="font-bold truncate">{section.courseCode}</span>
                           {isPinned && (
-                            <Pin className="h-2 w-2 text-slate-700 shrink-0" aria-label="Pinned" />
+                            <Pin className="h-2 w-2 text-slate-700 shrink-0" aria-label="Pinned (exempt)" />
                           )}
                         </div>
                         <div className="flex items-center justify-between text-[8px] opacity-80">
@@ -229,6 +282,8 @@ export function SolutionThumbnail({
         </span>
         {solution.sections.map((section) => {
           const theme = getCourseTheme(section.courseId, uniqueCourseIds);
+          const isPinned = section.pinned;
+          const movedFrom = diff?.moved.find((m) => m.courseId === section.courseId);
           return (
             <span
               key={`${section.courseId}-${section.sectionId}`}
@@ -236,7 +291,17 @@ export function SolutionThumbnail({
             >
               <span className="font-bold">{section.courseCode}</span>
               <span>{section.sectionCode}</span>
-              {section.pinned && <Pin className="h-2.5 w-2.5 text-slate-600" />}
+              {isPinned && (
+                <span className="inline-flex items-center gap-0.5 text-[10px] opacity-90 font-normal">
+                  <Pin className="h-2.5 w-2.5 shrink-0" aria-label="Pinned (exempt)" />
+                  <span>(exempt)</span>
+                </span>
+              )}
+              {movedFrom && (
+                <span className="text-[10px] opacity-80 font-normal">
+                  (was {movedFrom.fromSectionCode})
+                </span>
+              )}
             </span>
           );
         })}

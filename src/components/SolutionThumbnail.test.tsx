@@ -130,4 +130,142 @@ describe("SolutionThumbnail", () => {
 
     expect(html).toMatch(/apply|use this schedule/i);
   });
+
+  it("says when a solution changes nothing, providing reassurance", () => {
+    const planSections = [
+      {
+        courseId: 2923,
+        courseCode: "GEARTAP",
+        courseTitle: "Great Books",
+        sectionId: 384,
+        sectionCode: "S11",
+        pinned: true,
+        missing: false,
+        modality: "F2F" as const,
+        blocks: [],
+        latestSnapshot: {
+          capturedAt: "2026-08-22T00:00:00Z",
+          enrolled: 30,
+          teacher: null,
+          remark: null,
+        },
+      },
+      {
+        courseId: 564,
+        courseCode: "CSINTSY",
+        courseTitle: "Intro to AI",
+        sectionId: 737,
+        sectionCode: "Z01",
+        pinned: false,
+        missing: false,
+        modality: "ONLINE" as const,
+        blocks: [],
+        latestSnapshot: {
+          capturedAt: "2026-08-22T00:00:00Z",
+          enrolled: 30,
+          teacher: null,
+          remark: null,
+        },
+      },
+    ];
+
+    const html = renderToStaticMarkup(
+      React.createElement(SolutionThumbnail, {
+        solution: mockSolution,
+        rank: 1,
+        planSections,
+        onApply: vi.fn(),
+      })
+    );
+
+    expect(html).toContain("Changes nothing — keeps all 2 sections");
+    expect(html).toContain("Applying this keeps all 2 of your chosen sections unchanged.");
+  });
+
+  it("displays moved section details when a solution would move unpinned sections", () => {
+    const planSections = [
+      {
+        courseId: 2923,
+        courseCode: "GEARTAP",
+        courseTitle: "Great Books",
+        sectionId: 384,
+        sectionCode: "S11",
+        pinned: true,
+        missing: false,
+        modality: "F2F" as const,
+        blocks: [],
+        latestSnapshot: {
+          capturedAt: "2026-08-22T00:00:00Z",
+          enrolled: 30,
+          teacher: null,
+          remark: null,
+        },
+      },
+      {
+        courseId: 564,
+        courseCode: "CSINTSY",
+        courseTitle: "Intro to AI",
+        sectionId: 730,
+        sectionCode: "S10",
+        pinned: false,
+        missing: false,
+        modality: "ONLINE" as const,
+        blocks: [],
+        latestSnapshot: {
+          capturedAt: "2026-08-22T00:00:00Z",
+          enrolled: 30,
+          teacher: null,
+          remark: null,
+        },
+      },
+    ];
+
+    const html = renderToStaticMarkup(
+      React.createElement(SolutionThumbnail, {
+        solution: mockSolution,
+        rank: 1,
+        planSections,
+        onApply: vi.fn(),
+      })
+    );
+
+    expect(html).toContain("Moves 1 section, keeps 1");
+    expect(html).toContain("CSINTSY");
+    expect(html).toContain("moves S10 →");
+    expect(html).toContain("Z01");
+    expect(html).toContain("Applying this will move 1 of your 2 sections (CSINTSY S10 → Z01) and keep 1.");
+  });
+
+  it("visibly marks pinned sections as exempt", () => {
+    const planSections = [
+      {
+        courseId: 2923,
+        courseCode: "GEARTAP",
+        courseTitle: "Great Books",
+        sectionId: 384,
+        sectionCode: "S11",
+        pinned: true,
+        missing: false,
+        modality: "F2F" as const,
+        blocks: [],
+        latestSnapshot: {
+          capturedAt: "2026-08-22T00:00:00Z",
+          enrolled: 30,
+          teacher: null,
+          remark: null,
+        },
+      },
+    ];
+
+    const html = renderToStaticMarkup(
+      React.createElement(SolutionThumbnail, {
+        solution: mockSolution,
+        rank: 1,
+        planSections,
+        onApply: vi.fn(),
+      })
+    );
+
+    expect(html).toContain("exempt");
+  });
 });
