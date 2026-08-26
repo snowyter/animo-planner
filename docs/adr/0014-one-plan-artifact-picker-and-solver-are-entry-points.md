@@ -6,5 +6,9 @@ A student who picked by hand can hit "solve the rest" at any point and get the r
 
 ## Consequences
 
-- The solver is always seeded from the current plan: anything already chosen is treated as pinned, and the solve fills only unassigned courses.
+- The solver is always seeded from the current plan, and the solve fills only the courses that need filling.
+- **Amended in ticket 42:** "anything already chosen is treated as pinned" was narrowed to
+  *actually pinned* members. An unpinned plan section is its course's starting point: the solve
+  may swap it for another section of the same course and never drops a course. CONTEXT.md's
+  definition of **Pin** is the controlling one.
 - There is no "solve from scratch" that discards existing work. Starting empty is the degenerate case of the same operation.
