@@ -10,7 +10,6 @@ export interface PlansState {
   fetchPlans: () => Promise<void>;
   handleCreatePlan: (args: { name: string; campusId: number; sessionId: number }) => Promise<PlanSummary>;
   handleDeletePlan: (planId: string) => Promise<void>;
-  handleSeedSample: () => Promise<PlanSummary>;
   clearError: () => void;
 }
 
@@ -61,20 +60,6 @@ export function usePlansState(): PlansState {
       try {
         await client.deletePlan({ planId });
         await stateObj.fetchPlans();
-      } catch (err) {
-        error = formatErrorMessage(err);
-        throw err;
-      } finally {
-        isLoading = false;
-      }
-    },
-    handleSeedSample: async () => {
-      isLoading = true;
-      error = null;
-      try {
-        const sample = await client.seedSamplePlan();
-        await stateObj.fetchPlans();
-        return sample;
       } catch (err) {
         error = formatErrorMessage(err);
         throw err;
@@ -144,21 +129,6 @@ export function usePlans() {
     [fetchPlans]
   );
 
-  const handleSeedSample = useCallback(async (): Promise<PlanSummary> => {
-    setIsLoading(true);
-    setError(null);
-    try {
-      const sample = await client.seedSamplePlan();
-      await fetchPlans();
-      return sample;
-    } catch (err) {
-      setError(formatErrorMessage(err));
-      throw err;
-    } finally {
-      setIsLoading(false);
-    }
-  }, [fetchPlans]);
-
   const clearError = useCallback(() => {
     setError(null);
   }, []);
@@ -174,7 +144,6 @@ export function usePlans() {
     fetchPlans,
     handleCreatePlan,
     handleDeletePlan,
-    handleSeedSample,
     clearError,
   };
 }

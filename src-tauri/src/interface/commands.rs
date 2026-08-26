@@ -27,7 +27,6 @@ use crate::adapters::refresh_driver::{
     RefreshSink,
 };
 use crate::adapters::remote_config::{LoadedSelectorConfig, SelectorConfigHandle};
-use crate::adapters::sample_seed;
 use crate::adapters::store::{CaptureScope, PlanDetail, PlanSummaryRow, Store, StoreHandle};
 use crate::core::capture_report::{self, CaptureReportInput};
 use crate::core::ics;
@@ -229,7 +228,6 @@ fn plan_summary_from_row(row: PlanSummaryRow) -> Result<PlanSummary, String> {
         session_name,
         created_at: row.created_at,
         section_count: row.section_count,
-        is_sample: row.is_sample,
     })
 }
 
@@ -245,7 +243,6 @@ fn plan_from_detail(detail: PlanDetail) -> Result<Plan, String> {
         session_name,
         created_at: summary.created_at,
         section_count: summary.section_count,
-        is_sample: summary.is_sample,
         sections: detail.sections,
     })
 }
@@ -281,15 +278,16 @@ fn create_plan_impl(store: &mut Store, args: CreatePlanArgs) -> Result<PlanSumma
     if name.is_empty() {
         return Err("plan name must not be blank".to_string());
     }
-    // The sample scope is reserved for the bundled seed: a plan created in
-    // it would share the fabricated catalog while rendering "Sample Campus"
-    // as if it were a real choice (ticket 27).
+    // The negative ids ticket 27 reserved are still not real scopes, and
+    // `scope_names` will happily name them, so plan creation keeps refusing
+    // them explicitly. The sample seed that once used them is gone; the
+    // guard is not, because nothing else stops a crafted call.
     if args.campus_id == options::SAMPLE_CAMPUS_ID
         || args.session_id == options::SAMPLE_SESSION_ID
     {
         return Err(
-            "the sample campus and session are reserved for the bundled \
-             sample data; pick one of the offered options"
+            "that campus and session are reserved and not real scopes; \
+             pick one of the offered options"
                 .to_string(),
         );
     }
@@ -307,7 +305,6 @@ fn create_plan_impl(store: &mut Store, args: CreatePlanArgs) -> Result<PlanSumma
                 session_id: args.session_id,
             },
             &created_at,
-            false,
         )
         .map_err(|err| err.to_string())?;
     get_plan_impl(store, &id).map(|plan| PlanSummary {
@@ -319,7 +316,6 @@ fn create_plan_impl(store: &mut Store, args: CreatePlanArgs) -> Result<PlanSumma
         session_name: plan.session_name,
         created_at: plan.created_at,
         section_count: plan.section_count,
-        is_sample: plan.is_sample,
     })
 }
 
@@ -498,51 +494,6 @@ pub fn get_plan(args: PlanIdArgs, store: tauri::State<'_, StoreHandle>) -> Resul
     get_plan_impl(&store, &args.plan_id)
 }
 
-/// Seeds the sample-data plan (ticket 07): the bundled fixtures go through
-/// the real parser and storage layer into a plan marked `is_sample`. Runs
-/// entirely offline — the fixtures are embedded at compile time.
-/// Idempotent: a repeat call returns the existing sample plan untouched.
-///
-/// The seed writes through the shared store handle, never its own
-/// connection: the loopback capture listener holds the same handle, and a
-/// second connection to the same file would write outside that mutex.
-#[tauri::command]
-pub fn seed_sample_plan(
-    app: tauri::AppHandle,
-    store: tauri::State<'_, StoreHandle>,
-) -> Result<PlanSummary, String> {
-    let captured_at = chrono::Utc::now().to_rfc3339_opts(chrono::SecondsFormat::Secs, true);
-    seed_sample_and_announce(&store, &AppHandleEvents(app), &captured_at)
-}
-
-/// Seeds the bundled sample plan and announces the resulting capture counts.
-///
-/// Seeding lands sections and courses under the sample scope, so the ticket-12
-/// counter — which listens to `capture:updated` — reads stale unless the seed
-/// announces like any other capture. Ticket 24 made this visible by putting
-/// "explore with sample data" on the first-run path.
-fn seed_sample_and_announce<E: CaptureEvents>(
-    store: &StoreHandle,
-    events: &E,
-    captured_at: &str,
-) -> Result<PlanSummary, String> {
-    // Counts are read inside the same lock that seeded them, so the announced
-    // summary can never describe a store some other writer has moved on from.
-    let (summary, counts) = {
-        let mut store = store.lock().unwrap_or_else(|poisoned| poisoned.into_inner());
-        let summary = sample_seed::seed_sample_plan(&mut store, captured_at)
-            .map_err(|err| err.to_string())?;
-        let counts = store
-            .capture_summary(&CaptureScope {
-                campus_id: summary.campus_id,
-                session_id: summary.session_id,
-            })
-            .map_err(|err| err.to_string())?;
-        (summary, counts)
-    };
-    events.capture_updated(counts);
-    Ok(summary)
-}
 
 // ---------- commands: captured catalog ----------
 
@@ -1090,7 +1041,7 @@ mod tests {
             )
             .expect("seed captures");
         store
-            .create_plan("p1", "T1 load", &CaptureScope { campus_id: 7, session_id: 155 }, T1, false)
+            .create_plan("p1", "T1 load", &CaptureScope { campus_id: 7, session_id: 155 }, T1)
             .expect("seed plan");
         store
     }
@@ -1175,7 +1126,6 @@ mod tests {
         assert_eq!(summary.session_id, 156);
         assert_eq!(summary.session_name, "AY2026-27 T2");
         assert_eq!(summary.section_count, 0);
-        assert!(!summary.is_sample);
         assert!(!summary.id.is_empty(), "the command mints the plan id");
 
         let listed = list_plans_impl(&store).expect("list plans");
@@ -1198,45 +1148,6 @@ mod tests {
     }
 
     #[test]
-    fn a_real_manila_plan_created_after_seeding_sees_no_sample_data() {
-        // The exact observation that motivated ticket 27: on a freshly
-        // created Manila / AY2026-27 T1 plan the capture bar used to read
-        // "47 sections from 2 courses" and the picker offered S01–S40B.
-        let (_, handle) = sink_handle(store());
-        seed_sample_and_announce(&handle, &RecordingCaptureEvents::default(), T1)
-            .expect("seed");
-
-        let mut store = store();
-        let summary = create_plan_impl(
-            &mut store,
-            CreatePlanArgs { name: "Real T1 plan".into(), campus_id: 7, session_id: 155 },
-        )
-        .expect("a real plan");
-        assert_eq!(summary.section_count, 0, "the new plan holds no sections");
-        assert_eq!(
-            (summary.campus_id, summary.campus_name.as_str(), summary.session_name.as_str()),
-            (7, "Manila", "AY2026-27 T1"),
-            "the real plan renders its real scope"
-        );
-
-        let guard = handle.lock().unwrap_or_else(|poisoned| poisoned.into_inner());
-        let counter = guard
-            .capture_summary(&CaptureScope { campus_id: 7, session_id: 155 })
-            .expect("capture bar");
-        assert_eq!(
-            (counter.section_count, counter.course_count),
-            (0, 0),
-            "the running counter reads only what the student actually captured"
-        );
-        let offered = list_captured_courses_impl(
-            &guard,
-            CaptureScope { campus_id: 7, session_id: 155 },
-        )
-        .expect("picker");
-        assert!(offered.is_empty(), "the section picker must offer no sample courses");
-    }
-
-    #[test]
     fn create_plan_cannot_target_the_reserved_sample_scope() {
         // Ticket 27: the sample scope is reserved for the bundled seed. A
         // plan created in it would render "Sample Campus · Sample Term"
@@ -1250,9 +1161,9 @@ mod tests {
                 session_id: options::SAMPLE_SESSION_ID,
             },
         )
-        .expect_err("the reserved sample scope must be refused");
+        .expect_err("the reserved scope must be refused");
         assert!(
-            err.to_lowercase().contains("sample"),
+            err.to_lowercase().contains("reserved"),
             "the error must name the reservation, got: {err}"
         );
         assert_eq!(
@@ -1403,7 +1314,7 @@ mod tests {
             parsed_section(2923, 385, "S02", vec![block(Day::Mon, 480)]),
         ];
         store.record_capture(&scope, &overlapping, T1).expect("capture");
-        store.create_plan("p1", "T1 load", &scope, T1, false).expect("plan");
+        store.create_plan("p1", "T1 load", &scope, T1).expect("plan");
         store.add_section_to_plan("p1", 2923, 384).expect("add");
         store.add_section_to_plan("p1", 2923, 385).expect("add — conflict is legal (ADR-0009)");
 
@@ -1482,7 +1393,7 @@ mod tests {
         s01.enroll_cap = Some(45);
         let y11 = parsed_section(564, 737, "Y11", vec![block(Day::Tue, 570)]);
         store.record_capture(&scope, &[s01, y11], T1).expect("capture");
-        store.create_plan("p1", "T1 load", &scope, T1, false).expect("plan");
+        store.create_plan("p1", "T1 load", &scope, T1).expect("plan");
         store.add_section_to_plan("p1", 2923, 384).expect("choose");
         store.set_section_pinned("p1", 2923, 384, true).expect("pin");
 
@@ -1524,7 +1435,7 @@ mod tests {
         s01.enrolled = Some(50);
         s01.enroll_cap = Some(45);
         store.record_capture(&scope, &[s01], T1).expect("capture");
-        store.create_plan("p1", "T1 load", &scope, T1, false).expect("plan");
+        store.create_plan("p1", "T1 load", &scope, T1).expect("plan");
 
         let args = SolvePlanArgs { plan_id: "p1".into(), options: fresh_solve_options() };
         let (mut solver, stamp) = begin_solve(&store, &args).expect("begin solve");
@@ -1593,118 +1504,11 @@ mod tests {
         }
     }
 
-    // ---------- sample seed announces like any other capture ----------
-
-    /// Event sink recording every announced capture summary.
-    #[derive(Clone, Default)]
-    struct RecordingCaptureEvents(StdArc<StdMutex<Vec<CaptureSummary>>>);
-
-    impl CaptureEvents for RecordingCaptureEvents {
-        fn capture_updated(&self, summary: CaptureSummary) {
-            self.0.lock().unwrap().push(summary);
-        }
-        fn capture_failed(&self, _error: String) {}
-    }
-
-    #[test]
-    fn seeding_the_sample_plan_announces_the_new_capture_counts() {
-        let events = RecordingCaptureEvents::default();
-        let (_, handle) = sink_handle(store());
-
-        let summary = seed_sample_and_announce(&handle, &events, T1)
-            .expect("seed announces");
-
-        let announced = events.0.lock().unwrap().clone();
-        assert_eq!(announced.len(), 1, "seeding announces exactly once");
-        let counts = &announced[0];
-        assert_eq!(counts.campus_id, summary.campus_id);
-        assert_eq!(counts.session_id, summary.session_id);
-        // Ticket 27: the announced counter describes the reserved sample
-        // scope, never a real campus/term the student plans in.
-        assert_eq!(
-            (counts.campus_id, counts.session_id),
-            (options::SAMPLE_CAMPUS_ID, options::SAMPLE_SESSION_ID),
-        );
-        // The counter would read zero without this announcement, which is the
-        // stale reading ticket 24's first-run path made visible.
-        assert!(counts.section_count > 0, "sections seeded but announced as {}", counts.section_count);
-        assert!(counts.course_count > 0, "courses seeded but announced as {}", counts.course_count);
-
-        // And the real Manila / AY2026-27 T1 scope stays at zero: a genuine
-        // plan's capture bar must not count the fabricated rows.
-        let real = store_capture_summary(&handle, 7, 155);
-        assert_eq!(
-            (real.section_count, real.course_count),
-            (0, 0),
-            "a real scope must read an empty catalog while only the sample is seeded"
-        );
-    }
-
-    /// Reads one scope's capture summary through the shared handle.
-    fn store_capture_summary(handle: &StoreHandle, campus_id: i64, session_id: i64) -> CaptureSummary {
-        let store = handle.lock().unwrap_or_else(|poisoned| poisoned.into_inner());
-        store
-            .capture_summary(&CaptureScope { campus_id, session_id })
-            .expect("summary")
-    }
-
-    #[test]
-    fn the_seeded_sample_plan_renders_through_the_ordinary_plan_seam() {
-        // Ticket 27: options::campus_name/session_name resolve the reserved
-        // ids to explicitly sample-flavoured names, so the sample plan's
-        // scope renders without any UI special-casing.
-        let (_, handle) = sink_handle(store());
-        seed_sample_and_announce(&handle, &RecordingCaptureEvents::default(), T1)
-            .expect("seed");
-
-        let store = handle.lock().unwrap_or_else(|poisoned| poisoned.into_inner());
-        let listed = list_plans_impl(&store).expect("list plans");
-        let sample = listed.iter().find(|plan| plan.is_sample).expect("sample plan");
-        assert_eq!(
-            (sample.campus_id, sample.session_id),
-            (options::SAMPLE_CAMPUS_ID, options::SAMPLE_SESSION_ID),
-        );
-        assert_eq!(sample.campus_name, "Sample Campus");
-        assert_eq!(sample.session_name, "Sample Term");
-        assert_eq!(sample.section_count, 47);
-
-        let detail = get_plan_impl(&store, sample.id.as_str()).expect("get plan");
-        assert_eq!(detail.campus_name, "Sample Campus");
-        assert_eq!(detail.session_name, "Sample Term");
-        assert_eq!(detail.sections.len(), 47);
-    }
-
-    #[test]
-    fn a_failed_seed_announces_nothing() {
-        let events = RecordingCaptureEvents::default();
-        let mut store = store();
-        // The reserved sample id is already taken, so the seed's create step
-        // fails and nothing is stored. A counter must never be told about
-        // counts that did not change.
-        store
-            .create_plan(
-                crate::core::sample_data::SAMPLE_PLAN_ID,
-                "taken",
-                &CaptureScope { campus_id: 7, session_id: 155 },
-                T1,
-                false,
-            )
-            .expect("existing plan");
-        let (_, handle) = sink_handle(store);
-
-        seed_sample_and_announce(&handle, &events, T1).expect_err("a taken plan id must fail");
-
-        assert!(
-            events.0.lock().unwrap().is_empty(),
-            "a failed seed must not announce"
-        );
-    }
-
     #[test]
     fn a_trusted_step_lands_through_apply_refresh_never_the_undo_journal() {
         let mut store = store();
         let scope = CaptureScope { campus_id: 7, session_id: 155 };
-        store.create_plan("p1", "T1 load", &scope, T1, false).expect("plan");
+        store.create_plan("p1", "T1 load", &scope, T1).expect("plan");
         // Baseline catalog laid down through the refresh path itself —
         // deliberately not the journaling capture path.
         let initial = vec![parsed_section(2923, 384, "S01", vec![block(Day::Mon, 450)])];
@@ -1941,7 +1745,7 @@ mod tests {
                 T1,
             )
             .expect("capture");
-        store.create_plan("p1", "T1 load", &scope, T1, false).expect("plan");
+        store.create_plan("p1", "T1 load", &scope, T1).expect("plan");
         store.add_section_to_plan("p1", 2923, 384).expect("choose, deliberately unpinned");
 
         let args = SolvePlanArgs { plan_id: "p1".into(), options: solve_options() };
@@ -2000,7 +1804,7 @@ mod tests {
         let fixed = parsed_section(2923, 384, "S01", vec![room_block(450, "J112")]);
         let warned = parsed_section(564, 737, "Y11", vec![room_block(540, "V501")]);
         store.record_capture(&scope, &[fixed, warned], T1).expect("capture");
-        store.create_plan("p1", "T1 load", &scope, T1, false).expect("plan");
+        store.create_plan("p1", "T1 load", &scope, T1).expect("plan");
         store.add_section_to_plan("p1", 2923, 384).expect("choose");
 
         let args = SolvePlanArgs { plan_id: "p1".into(), options: solve_options() };

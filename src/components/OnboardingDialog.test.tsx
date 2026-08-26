@@ -24,33 +24,19 @@ describe("OnboardingDialog", () => {
     sessionName: "AY2026-27 T1",
     createdAt: "2026-08-24T00:00:00Z",
     sectionCount: 0,
-    isSample: false,
-  };
-
-  const mockSamplePlan: PlanSummary = {
-    id: "sample-plan",
-    name: "Sample Schedule (GEARTAP + CSINTSY)",
-    campusId: 7,
-    campusName: "Manila",
-    sessionId: 155,
-    sessionName: "AY2026-27 T1",
-    createdAt: "2026-08-24T00:00:00Z",
-    sectionCount: 47,
-    isSample: true,
   };
 
   beforeEach(() => {
     vi.clearAllMocks();
   });
 
-  it("renders the initial choice screen with equal visual weight for sample data and real plan", () => {
+  it("renders the initial screen offering the one path in, with the verbatim disclaimer", () => {
     const html = renderToStaticMarkup(
       React.createElement(OnboardingDialog, {
         open: true,
         onOpenChange: vi.fn(),
         campusOptions: mockCampusOptions,
         sessionOptions: mockSessionOptions,
-        onSeedSample: vi.fn().mockResolvedValue(mockSamplePlan),
         onCreatePlan: vi.fn().mockResolvedValue(mockCreatedPlan),
         onOpenCapture: vi.fn().mockResolvedValue(undefined),
         onSelectPlan: vi.fn(),
@@ -59,9 +45,9 @@ describe("OnboardingDialog", () => {
       })
     );
 
-    // Both options must be present with equal visual weight
-    expect(html).toMatch(/Explore with sample data/i);
     expect(html).toMatch(/Start a real plan|Create your plan/i);
+    // The sample-data path is gone; onboarding must not advertise one.
+    expect(html).not.toMatch(/sample/i);
 
     // Verbatim disclaimer must be visible during first run
     expect(html).toContain(DISCLAIMER_TEXT);
@@ -77,7 +63,6 @@ describe("OnboardingDialog", () => {
         onOpenChange: vi.fn(),
         campusOptions: mockCampusOptions,
         sessionOptions: mockSessionOptions,
-        onSeedSample: vi.fn(),
         onCreatePlan: vi.fn(),
         onOpenCapture: vi.fn(),
         onSelectPlan: vi.fn(),
@@ -101,7 +86,6 @@ describe("OnboardingDialog", () => {
         onOpenChange: vi.fn(),
         campusOptions: mockCampusOptions,
         sessionOptions: mockSessionOptions,
-        onSeedSample: vi.fn(),
         onCreatePlan: vi.fn(),
         onOpenCapture: vi.fn(),
         onSelectPlan: vi.fn(),
@@ -122,7 +106,6 @@ describe("OnboardingDialog", () => {
         onOpenChange: vi.fn(),
         campusOptions: mockCampusOptions,
         sessionOptions: mockSessionOptions,
-        onSeedSample: vi.fn(),
         onCreatePlan: vi.fn(),
         onOpenCapture: vi.fn(),
         onSelectPlan: vi.fn(),
@@ -143,7 +126,6 @@ describe("OnboardingDialog", () => {
         onOpenChange: vi.fn(),
         campusOptions: mockCampusOptions,
         sessionOptions: mockSessionOptions,
-        onSeedSample: vi.fn(),
         onCreatePlan: vi.fn(),
         onOpenCapture: vi.fn(),
         onSelectPlan: vi.fn(),

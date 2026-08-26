@@ -24,7 +24,6 @@ describe("ipc client", () => {
       [client.getSessionOptions, "get_session_options", []],
       [client.getAppInfo, "get_app_info", []],
       [client.listPlans, "list_plans", []],
-      [client.seedSamplePlan, "seed_sample_plan", []],
       [client.clearBrowserSession, "clear_browser_session", []],
       [client.cancelSolve, "cancel_solve", []],
       [

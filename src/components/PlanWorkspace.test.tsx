@@ -50,7 +50,6 @@ describe("PlanWorkspace", () => {
     sessionName: "AY2026-27 T1",
     createdAt: "2026-08-22T00:00:00Z",
     sectionCount: 0,
-    isSample: false,
   };
 
   const makeBlock = (
@@ -600,7 +599,6 @@ describe("PlanWorkspace refresh recovery states", () => {
     sessionName: "AY2026-27 T1",
     createdAt: "2026-08-22T00:00:00Z",
     sectionCount: 0,
-    isSample: false,
   };
 
   it("renders session expiry notice with exact phrase and Resume button", async () => {
@@ -755,7 +753,6 @@ describe("PlanWorkspace persistent week grid layout (ticket 28)", () => {
     sessionName: "AY2026-27 T1",
     createdAt: "2026-08-22T00:00:00Z",
     sectionCount: 0,
-    isSample: false,
   };
 
   it("renders section picker and sticky week grid container side by side while picking is open", () => {

@@ -126,7 +126,6 @@ pub struct PlanSummary {
     pub session_name: String,
     pub created_at: String,
     pub section_count: i64,
-    pub is_sample: bool,
 }
 
 /// A plan is hard-scoped to exactly one `(campus, session)`; the ids are
@@ -142,7 +141,6 @@ pub struct Plan {
     pub session_name: String,
     pub created_at: String,
     pub section_count: i64,
-    pub is_sample: bool,
     pub sections: Vec<PlanSection>,
 }
 
@@ -470,7 +468,6 @@ mod tests {
             session_name: "AY2026-27 T1".into(),
             created_at: "2026-08-22T00:00:00Z".into(),
             section_count: 0,
-            is_sample: false,
             sections: vec![],
         };
         let json = serde_json::to_value(&plan).unwrap();

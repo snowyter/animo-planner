@@ -289,9 +289,12 @@ emits conflict-free sets, so any conflict in a plan is user-authored and never a
 Skippable three-step first run: pick campus + term → sign in → search your first course.
 A persistent `?` replays the tour.
 
-**"Explore with sample data" is an equal-weight option on the first screen**, backed by the
-anonymized GEARTAP + CSINTSY captures. A student evaluating whether to install shouldn't have to
-hand over ERP credentials to find out what the app does.
+> **Removed after release 0.2.0:** the first screen used to offer "Explore with sample data" as an
+> equal-weight option, backed by the anonymized GEARTAP + CSINTSY captures, so a student evaluating
+> the app did not have to sign in to see what it does. In use it did the opposite — a seeded plan
+> sitting beside real ones, in a scope that was not a real campus or term, read as confusion rather
+> than a demo. The README's walkthrough now carries that job. The fixtures remain in the repo as
+> parser and solver test data.
 
 ### Export
 
@@ -349,7 +352,7 @@ encoding, modality borders, and hatched conflict display · backtracking solver 
 blacklist / time bounds / exclude-full / minimize-campus-days /
 no-lone-F2F-day · transition warnings · three ranking presets · named plans scoped to
 (campus, session) · manual refresh with partial-failure recovery · `.ics` + PNG export · skippable
-onboarding with bundled sample data · GitHub Releases + auto-updater + remote selector config ·
+onboarding · GitHub Releases + auto-updater + remote selector config ·
 report-broken-capture.
 
 ### v1.1+

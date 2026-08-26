@@ -102,7 +102,6 @@ export interface PlanSummary {
   sessionName: string;
   createdAt: string;
   sectionCount: number;
-  isSample: boolean;
 }
 
 /** A plan is hard-scoped to exactly one (campus, session) — non-optional by type. */

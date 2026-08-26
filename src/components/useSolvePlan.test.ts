@@ -177,7 +177,6 @@ describe("useSolvePlanState", () => {
       sessionName: "AY2026-27 T1",
       createdAt: "2026-08-22T00:00:00Z",
       sectionCount: 1,
-      isSample: false,
       sections: [],
     };
 

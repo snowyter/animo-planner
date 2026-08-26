@@ -37,11 +37,6 @@ export function AppHeader({
                   <span className="font-semibold text-slate-900 text-base">
                     {activePlan.name}
                   </span>
-                  {activePlan.isSample && (
-                    <Badge variant="secondary" className="text-[10px] px-1.5 py-0">
-                      Sample
-                    </Badge>
-                  )}
                 </div>
                 <div className="flex items-center gap-2 mt-0.5">
                   <Badge variant="campus" className="flex items-center gap-1 text-[11px]">

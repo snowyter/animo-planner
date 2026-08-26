@@ -94,7 +94,6 @@ pub fn run() {
             create_plan,
             delete_plan,
             get_plan,
-            seed_sample_plan,
             list_captured_courses,
             list_captured_sections,
             forget_captured_course,

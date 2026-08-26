@@ -249,11 +249,6 @@ export function PlanWorkspace({
               <h2 className="text-2xl font-bold tracking-tight text-slate-900">
                 {planSummary.name}
               </h2>
-              {planSummary.isSample && (
-                <Badge variant="secondary" className="text-xs">
-                  Sample Data
-                </Badge>
-              )}
             </div>
             <div className="flex flex-wrap items-center gap-2 mt-2">
               <span className="text-xs font-semibold text-slate-500 uppercase tracking-wider">

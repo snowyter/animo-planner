@@ -65,7 +65,6 @@ Guarded by `wraps every command payload in the args envelope` in
 | `create_plan` | `{ name, campusId, sessionId }` | `PlanSummary` |
 | `delete_plan` | `{ planId }` | `null` |
 | `get_plan` | `{ planId }` | `Plan` |
-| `seed_sample_plan` | — | `PlanSummary` |
 
 ### Captured catalog
 
@@ -175,7 +174,7 @@ version. A signature that does not verify is a failed install, never a prompt.
 ```json
 { "id": "uuid", "name": "T1 load", "campusId": 7, "campusName": "Manila",
   "sessionId": 155, "sessionName": "AY2026-27 T1", "createdAt": "ISO",
-  "sectionCount": 12, "isSample": false }
+  "sectionCount": 12 }
 ```
 
 A plan carries **exactly one** `campusId` and `sessionId`; mixing terms is rejected at write time.
@@ -187,7 +186,7 @@ A plan carries **exactly one** `campusId` and `sessionId`; mixing terms is rejec
 ```json
 { "id": "uuid", "name": "T1 load", "campusId": 7, "campusName": "Manila",
   "sessionId": 155, "sessionName": "AY2026-27 T1", "createdAt": "ISO",
-  "sectionCount": 12, "isSample": false, "sections": [] }
+  "sectionCount": 12, "sections": [] }
 ```
 
 ### `PlanSection`

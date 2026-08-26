@@ -11,7 +11,6 @@ import { Button } from "./ui/button";
 import { Input } from "./ui/input";
 import { Alert, AlertDescription, AlertTitle } from "./ui/alert";
 import {
-  Sparkles,
   ArrowRight,
   ShieldCheck,
   Building2,
@@ -36,7 +35,6 @@ export interface OnboardingDialogProps {
   onOpenChange: (open: boolean) => void;
   campusOptions: CampusOption[];
   sessionOptions: SessionOption[];
-  onSeedSample: () => Promise<PlanSummary>;
   onCreatePlan: (args: { name: string; campusId: number; sessionId: number }) => Promise<PlanSummary>;
   onOpenCapture: (args: { campusId: number; sessionId: number }) => Promise<void>;
   onSelectPlan: (plan: PlanSummary) => void;
@@ -49,7 +47,6 @@ export function OnboardingDialog({
   onOpenChange,
   campusOptions,
   sessionOptions,
-  onSeedSample,
   onCreatePlan,
   onOpenCapture,
   onSelectPlan,
@@ -108,27 +105,6 @@ export function OnboardingDialog({
 
   const handleSkip = () => {
     handleOpenChange(false);
-  };
-
-  const handleSelectSample = async () => {
-    setIsLoading(true);
-    setError(null);
-    try {
-      const sample = await onSeedSample();
-      onComplete();
-      onSelectPlan(sample);
-      onOpenChange(false);
-    } catch (err: unknown) {
-      if (typeof err === "string") {
-        setError(err);
-      } else if (err instanceof Error) {
-        setError(err.message);
-      } else {
-        setError("Failed to seed sample data");
-      }
-    } finally {
-      setIsLoading(false);
-    }
   };
 
   const handleCreateStepSubmit = async (e: React.FormEvent) => {
@@ -204,7 +180,7 @@ export function OnboardingDialog({
                 </DialogTitle>
               </div>
               <DialogDescription className="text-sm text-slate-600">
-                Choose how you would like to get started. You can explore the app immediately with sample data or set up a live plan with your campus and term.
+Set up a plan for your campus and term, then capture the courses you are looking at in Archer&#39;s Hub.
               </DialogDescription>
             </DialogHeader>
 
@@ -227,9 +203,8 @@ export function OnboardingDialog({
               </Alert>
             )}
 
-            {/* Two equal-weight paths (Ticket 24 & Spec §7) */}
-            <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-              {/* Option A: Start a Real Plan */}
+            {/* The one path in (Ticket 24 & Spec §7) */}
+            <div className="grid grid-cols-1 gap-4">
               <div className="flex flex-col justify-between rounded-xl border-2 border-emerald-600 bg-white p-5 shadow-xs transition-all hover:shadow-md">
                 <div className="space-y-2">
                   <div className="flex items-center gap-2 text-emerald-800 font-bold text-base">
@@ -254,33 +229,6 @@ export function OnboardingDialog({
                 </div>
               </div>
 
-              {/* Option B: Explore with Sample Data */}
-              <div className="flex flex-col justify-between rounded-xl border-2 border-amber-500 bg-white p-5 shadow-xs transition-all hover:shadow-md">
-                <div className="space-y-2">
-                  <div className="flex items-center gap-2 text-amber-900 font-bold text-base">
-                    <Sparkles className="h-5 w-5 text-amber-600" />
-                    <h3>Explore with sample data</h3>
-                  </div>
-                  <p className="text-xs text-slate-600 leading-relaxed">
-                    Instantly load 47 real sections (GEARTAP &amp; CSINTSY). Demo the week grid, section picker, and solver offline with no sign-in.
-                  </p>
-                </div>
-                <div className="mt-5 pt-3 border-t border-slate-100">
-                  <Button
-                    variant="outline"
-                    onClick={handleSelectSample}
-                    disabled={isLoading}
-                    className="w-full border-amber-400 text-amber-900 hover:bg-amber-50 font-semibold flex items-center justify-center gap-1.5"
-                  >
-                    {isLoading ? (
-                      <RefreshCw className="h-4 w-4 animate-spin" />
-                    ) : (
-                      <Sparkles className="h-4 w-4 text-amber-600" />
-                    )}
-                    <span>Explore with sample data</span>
-                  </Button>
-                </div>
-              </div>
             </div>
 
             <DialogFooter className="pt-2 sm:justify-between items-center">

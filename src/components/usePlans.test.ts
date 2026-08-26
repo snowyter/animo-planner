@@ -6,7 +6,6 @@ vi.mock("../adapters/ipc/client", () => ({
   listPlans: vi.fn(),
   createPlan: vi.fn(),
   deletePlan: vi.fn(),
-  seedSamplePlan: vi.fn(),
 }));
 
 describe("usePlansState logic", () => {
@@ -25,7 +24,6 @@ describe("usePlansState logic", () => {
         sessionName: "AY2026-27 T1",
         createdAt: "2026-08-22T00:00:00Z",
         sectionCount: 5,
-        isSample: false,
       },
     ];
 
@@ -63,7 +61,6 @@ describe("usePlansState logic", () => {
       sessionName: "AY2026-27 T1",
       createdAt: "2026-08-22T00:00:00Z",
       sectionCount: 0,
-      isSample: false,
     };
 
     vi.mocked(client.createPlan).mockResolvedValue(createdPlan);
@@ -111,26 +108,4 @@ describe("usePlansState logic", () => {
     expect(state.error).toBeNull();
   });
 
-  it("seeds sample plan and refreshes list", async () => {
-    const samplePlan = {
-      id: "sample-1",
-      name: "Sample Plan",
-      campusId: 7,
-      campusName: "Manila",
-      sessionId: 155,
-      sessionName: "AY2026-27 T1",
-      createdAt: "2026-08-22T00:00:00Z",
-      sectionCount: 2,
-      isSample: true,
-    };
-
-    vi.mocked(client.seedSamplePlan).mockResolvedValue(samplePlan);
-    vi.mocked(client.listPlans).mockResolvedValue([samplePlan]);
-
-    const state = usePlansState();
-    const result = await state.handleSeedSample();
-
-    expect(result).toEqual(samplePlan);
-    expect(client.seedSamplePlan).toHaveBeenCalled();
-  });
 });

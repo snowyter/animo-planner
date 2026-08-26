@@ -27,7 +27,6 @@ describe("AppHeader", () => {
       sessionName: "AY2026-27 T1",
       createdAt: "2026-08-22T00:00:00Z",
       sectionCount: 3,
-      isSample: false,
     };
 
     const html = renderToStaticMarkup(

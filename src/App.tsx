@@ -61,7 +61,6 @@ function AppContent({ initialUpdateCheck }: AppProps) {
     fetchPlans,
     handleCreatePlan,
     handleDeletePlan,
-    handleSeedSample,
   } = usePlans();
 
   const {
@@ -100,15 +99,6 @@ function AppContent({ initialUpdateCheck }: AppProps) {
       } else {
         setCreateError("Failed to create plan");
       }
-    }
-  };
-
-  const onHandleSeedSample = async () => {
-    try {
-      const sample = await handleSeedSample();
-      setActivePlanSummary(sample);
-    } catch {
-      // Error is captured in usePlans.error
     }
   };
 
@@ -164,7 +154,6 @@ function AppContent({ initialUpdateCheck }: AppProps) {
               setCreateError(null);
               setIsCreateOpen(true);
             }}
-            onSeedSample={onHandleSeedSample}
             onOpenPlan={onOpenPlan}
             onDeletePlan={onHandleDeletePlan}
             onRetry={fetchPlans}
@@ -177,7 +166,6 @@ function AppContent({ initialUpdateCheck }: AppProps) {
         onOpenChange={setIsOnboardingOpen}
         campusOptions={campusOptions}
         sessionOptions={sessionOptions}
-        onSeedSample={handleSeedSample}
         onCreatePlan={handleCreatePlan}
         onOpenCapture={openCaptureWindow}
         onSelectPlan={(plan) => setActivePlanSummary(plan)}

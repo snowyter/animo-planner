@@ -78,10 +78,6 @@ export function getPlan(args: { planId: string }): Promise<Plan> {
   return invoke("get_plan", { args });
 }
 
-export function seedSamplePlan(): Promise<PlanSummary> {
-  return invoke("seed_sample_plan");
-}
-
 // Captured catalog
 
 export function listCapturedCourses(args: {

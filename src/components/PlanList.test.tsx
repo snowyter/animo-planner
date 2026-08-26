@@ -5,14 +5,13 @@ import { PlanList } from "./PlanList";
 import type { PlanSummary } from "../adapters/ipc/types";
 
 describe("PlanList", () => {
-  it("renders empty state when there are no plans, with create and sample buttons", () => {
+  it("renders empty state when there are no plans, pointing at plan creation", () => {
     const html = renderToStaticMarkup(
       React.createElement(PlanList, {
         plans: [],
         isLoading: false,
         error: null,
         onOpenCreate: vi.fn(),
-        onSeedSample: vi.fn(),
         onOpenPlan: vi.fn(),
         onDeletePlan: vi.fn(),
         onRetry: vi.fn(),
@@ -21,7 +20,9 @@ describe("PlanList", () => {
 
     expect(html).toContain("No saved plans yet");
     expect(html).toContain("Create your first plan");
-    expect(html).toContain("Explore with sample data");
+    // The sample-plan path is gone: the empty state must not offer one.
+    expect(html).not.toContain("sample");
+    expect(html).not.toContain("Sample");
   });
 
   it("renders identifiable error state when error is provided", () => {
@@ -31,7 +32,6 @@ describe("PlanList", () => {
         isLoading: false,
         error: "unimplemented: list_plans",
         onOpenCreate: vi.fn(),
-        onSeedSample: vi.fn(),
         onOpenPlan: vi.fn(),
         onDeletePlan: vi.fn(),
         onRetry: vi.fn(),
@@ -53,7 +53,6 @@ describe("PlanList", () => {
         sessionName: "AY2026-27 T1",
         createdAt: "2026-08-22T00:00:00Z",
         sectionCount: 4,
-        isSample: false,
       },
       {
         id: "p2",
@@ -64,7 +63,6 @@ describe("PlanList", () => {
         sessionName: "AY2026-27 T2",
         createdAt: "2026-08-22T00:00:00Z",
         sectionCount: 0,
-        isSample: true,
       },
     ];
 
@@ -74,7 +72,6 @@ describe("PlanList", () => {
         isLoading: false,
         error: null,
         onOpenCreate: vi.fn(),
-        onSeedSample: vi.fn(),
         onOpenPlan: vi.fn(),
         onDeletePlan: vi.fn(),
         onRetry: vi.fn(),

@@ -64,7 +64,6 @@ pub struct PlanSummaryRow {
     pub campus_id: i64,
     pub session_id: i64,
     pub created_at: String,
-    pub is_sample: bool,
     pub section_count: i64,
 }
 
@@ -379,7 +378,62 @@ fn migrations() -> Vec<String> {
         MIGRATION_V3.to_string(),
         MIGRATION_V4.to_string(),
         migration_v5(),
+        migration_v6(),
     ]
+}
+
+/// Migration 6: the sample-data feature is gone, so its rows go with it.
+///
+/// The seed is no longer offered and can never be created again, but a
+/// database written before its removal still holds the seeded plan and the
+/// fabricated catalog behind it. Left in place they would sit in the plan
+/// list forever with no way to explain them — the confusion the feature was
+/// removed for.
+///
+/// This only ever touches the reserved sample scope
+/// ([`crate::core::options::SAMPLE_CAMPUS_ID`],
+/// [`crate::core::options::SAMPLE_SESSION_ID`]), which migration 5
+/// established as isolated from every real scope, plus plans flagged
+/// `is_sample`. **Nothing a student captured is in reach**: a real capture
+/// lives under an offered campus and session, and plan creation has always
+/// refused the reserved ids.
+///
+/// `is_sample` itself stays on the table. Migrations are history, and a
+/// column an older migration added is not removed because a later one
+/// stopped using it.
+fn migration_v6() -> String {
+    format!(
+        r#"
+DELETE FROM plan_sections
+ WHERE plan_id IN (SELECT id FROM plans WHERE is_sample = 1)
+    OR section_fk IN (
+        SELECT id FROM sections
+         WHERE campus_id = {sample_campus} AND session_id = {sample_session}
+    );
+
+DELETE FROM plans WHERE is_sample = 1;
+
+DELETE FROM snapshots
+ WHERE section_fk IN (
+     SELECT id FROM sections
+      WHERE campus_id = {sample_campus} AND session_id = {sample_session}
+ );
+
+DELETE FROM schedule_blocks
+ WHERE section_fk IN (
+     SELECT id FROM sections
+      WHERE campus_id = {sample_campus} AND session_id = {sample_session}
+ );
+
+DELETE FROM sections
+ WHERE campus_id = {sample_campus} AND session_id = {sample_session};
+
+DELETE FROM courses
+ WHERE campus_id = {sample_campus} AND session_id = {sample_session};
+"#,
+        sample_campus = crate::core::options::SAMPLE_CAMPUS_ID,
+        sample_session = crate::core::options::SAMPLE_SESSION_ID,
+    )
 }
 
 /// Runs every migration not yet applied, tracked by `PRAGMA user_version`.
@@ -657,10 +711,9 @@ impl Store {
         name: &str,
         scope: &CaptureScope,
         created_at: &str,
-        is_sample: bool,
     ) -> Result<(), StoreError> {
         let tx = self.conn.transaction()?;
-        insert_plan_tx(&tx, id, name, scope, created_at, is_sample)?;
+        insert_plan_tx(&tx, id, name, scope, created_at)?;
         tx.commit()?;
         Ok(())
     }
@@ -1223,39 +1276,6 @@ impl Store {
         })
         .collect()
     }
-    /// Seeds the sample-data plan (ticket 07) in one transaction: records
-    /// each capture, creates the plan flagged as sample data, and links
-    /// every section into it. Idempotent — if the sample plan already
-    /// exists, nothing is written and the existing plan is returned, so a
-    /// repeat run never doubles sections or appends snapshots.
-    ///
-    /// The sample plan is an ordinary plan row distinguished only by
-    /// `is_sample`, so it deletes like any other plan.
-    pub fn seed_sample_plan(
-        &mut self,
-        scope: &CaptureScope,
-        plan_id: &str,
-        plan_name: &str,
-        captures: &[&[ParsedSection]],
-        captured_at: &str,
-    ) -> Result<PlanSummaryRow, StoreError> {
-        if let Some(existing_id) = find_sample_plan_id(&self.conn)? {
-            return plan_summary_row(&self.conn, &existing_id);
-        }
-
-        let tx = self.conn.transaction()?;
-        for capture in captures {
-            record_capture_tx(&tx, scope, capture, captured_at)?;
-        }
-        insert_plan_tx(&tx, plan_id, plan_name, scope, captured_at, true)?;
-        for section in captures.iter().flat_map(|capture| capture.iter()) {
-            add_section_tx(&tx, plan_id, section.course_id, section.section_id)?;
-        }
-        tx.commit()?;
-
-        plan_summary_row(&self.conn, plan_id)
-    }
-
     /// The courses a refresh must re-run, in plan order: every course with
     /// at least one plan section, carrying the plan's section ids for that
     /// course so missing sections can be detected. Only courses in the plan
@@ -1439,7 +1459,6 @@ fn insert_plan_tx(
     name: &str,
     scope: &CaptureScope,
     created_at: &str,
-    is_sample: bool,
 ) -> Result<(), StoreError> {
     let exists: bool = tx.query_row(
         "SELECT EXISTS(SELECT 1 FROM plans WHERE id = ?1)",
@@ -1452,16 +1471,9 @@ fn insert_plan_tx(
         });
     }
     tx.execute(
-        "INSERT INTO plans (id, name, campus_id, session_id, created_at, is_sample)
-         VALUES (?1, ?2, ?3, ?4, ?5, ?6)",
-        rusqlite::params![
-            id,
-            name,
-            scope.campus_id,
-            scope.session_id,
-            created_at,
-            is_sample as i64,
-        ],
+        "INSERT INTO plans (id, name, campus_id, session_id, created_at)
+         VALUES (?1, ?2, ?3, ?4, ?5)",
+        rusqlite::params![id, name, scope.campus_id, scope.session_id, created_at],
     )?;
     Ok(())
 }
@@ -1519,22 +1531,10 @@ fn add_section_tx(
     Ok(())
 }
 
-/// The id of the existing sample plan, if any. At most one is ever seeded
-/// (the seed uses a reserved id), but the query stays deterministic anyway.
-fn find_sample_plan_id(conn: &Connection) -> Result<Option<String>, StoreError> {
-    conn.query_row(
-        "SELECT id FROM plans WHERE is_sample = 1 ORDER BY created_at LIMIT 1",
-        [],
-        |row| row.get(0),
-    )
-    .optional()
-    .map_err(StoreError::from)
-}
-
 /// Reads one plan row plus its section count.
 fn plan_summary_row(conn: &Connection, plan_id: &str) -> Result<PlanSummaryRow, StoreError> {
     conn.query_row(
-        "SELECT p.id, p.name, p.campus_id, p.session_id, p.created_at, p.is_sample,
+        "SELECT p.id, p.name, p.campus_id, p.session_id, p.created_at,
                 (SELECT COUNT(*) FROM plan_sections ps WHERE ps.plan_id = p.id)
          FROM plans p WHERE p.id = ?1",
         [plan_id],
@@ -1545,8 +1545,7 @@ fn plan_summary_row(conn: &Connection, plan_id: &str) -> Result<PlanSummaryRow, 
                 campus_id: row.get(2)?,
                 session_id: row.get(3)?,
                 created_at: row.get(4)?,
-                is_sample: row.get::<_, i64>(5)? != 0,
-                section_count: row.get(6)?,
+                section_count: row.get(5)?,
             })
         },
     )
@@ -2119,7 +2118,7 @@ mod tests {
             .conn
             .query_row("PRAGMA user_version", [], |row| row.get(0))
             .expect("user_version must be readable");
-        assert_eq!(version, 5, "all five migrations apply exactly once");
+        assert_eq!(version, 6, "every migration applies exactly once");
     }
 
     #[test]
@@ -2364,7 +2363,7 @@ mod tests {
     fn a_plan_cannot_link_a_section_outside_its_campus_and_session() {
         let mut store = store();
         store
-            .create_plan("p1", "T1 load", &SCOPE, T1, false)
+            .create_plan("p1", "T1 load", &SCOPE, T1)
             .expect("plan must be created");
         store
             .record_capture(
@@ -2425,7 +2424,7 @@ mod tests {
     fn linking_an_unknown_section_to_a_plan_is_a_section_error() {
         let mut store = store();
         store
-            .create_plan("p1", "T1 load", &SCOPE, T1, false)
+            .create_plan("p1", "T1 load", &SCOPE, T1)
             .expect("plan must be created");
         let err = store
             .add_section_to_plan("p1", 2923, 4242)
@@ -2477,7 +2476,7 @@ mod tests {
     fn mixed_scope_plan_rejection_happens_before_any_row_is_written() {
         let mut store = store();
         store
-            .create_plan("p1", "T1 load", &SCOPE, T1, false)
+            .create_plan("p1", "T1 load", &SCOPE, T1)
             .expect("plan must be created");
         let err = store
             .add_section_to_plan("p1", 2923, 4242)
@@ -2561,7 +2560,7 @@ mod tests {
         assert_eq!(online_block(Day::Mon, 450, 540).modality(), Some(BlockModality::Online));
     }
 
-    // ---------- sample-data seed (ticket 07) ----------
+    // ---------- schema migrations ----------
 
     #[test]
     fn migration_two_adds_the_is_sample_flag_to_plans() {
@@ -2570,7 +2569,7 @@ mod tests {
             .conn
             .query_row("PRAGMA user_version", [], |row| row.get(0))
             .expect("user_version must be readable");
-        assert_eq!(version, 5, "a fresh database runs all five migrations");
+        assert_eq!(version, 6, "a fresh database runs every migration");
         assert!(
             column_names(&store.conn, "plans").contains(&"is_sample".to_string()),
             "plans must carry the sample-data marker"
@@ -2584,10 +2583,79 @@ mod tests {
             .conn
             .query_row("PRAGMA user_version", [], |row| row.get(0))
             .expect("user_version must be readable");
-        assert_eq!(version, 5, "a fresh database runs all five migrations");
+        assert_eq!(version, 6, "a fresh database runs every migration");
         assert!(
             column_names(&store.conn, "plan_sections").contains(&"missing".to_string()),
             "plan_sections must carry the missing marker"
+        );
+    }
+
+    /// Migration 6 removes the sample-plan feature's leftovers. It deletes
+    /// rows from databases students already have, so what it must *not*
+    /// reach matters more than what it removes.
+    #[test]
+    fn migration_six_removes_sample_data_and_leaves_every_real_row_alone() {
+        let conn = Connection::open_in_memory().expect("in-memory connection");
+        for migration in migrations().iter().take(5) {
+            conn.execute_batch(migration).expect("migration must apply");
+        }
+        conn.pragma_update(None, "user_version", 5).expect("user_version");
+
+        let sample_campus = crate::core::options::SAMPLE_CAMPUS_ID;
+        let sample_session = crate::core::options::SAMPLE_SESSION_ID;
+        conn.execute_batch(&format!(
+            "INSERT INTO courses (campus_id, session_id, course_id, code, title) VALUES
+                 ({sample_campus}, {sample_session}, 2923, 'GEARTAP', 'Sample'),
+                 (7, 155, 564, 'CSINTSY', 'Real');
+             INSERT INTO sections (campus_id, session_id, course_id, section_id, section_code,
+                                   course_type, credits, enroll_cap, first_seen_at, last_seen_at)
+             VALUES ({sample_campus}, {sample_session}, 2923, 384, 'S11', NULL, NULL, 40, 't', 't'),
+                    (7, 155, 564, 737, 'Z01', NULL, NULL, 40, 't', 't');
+             INSERT INTO schedule_blocks (section_fk, day, start_min, end_min, location)
+             VALUES (1, 'MON', 450, 540, 'L226'), (2, 'TUE', 450, 540, 'L226');
+             INSERT INTO snapshots (section_fk, captured_at, enrolled, teacher, remark)
+             VALUES (1, 't', 5, NULL, NULL), (2, 't', 5, NULL, NULL);
+             INSERT INTO plans (id, name, campus_id, session_id, created_at, is_sample) VALUES
+                 ('sample-plan', 'Sample data', {sample_campus}, {sample_session}, 't', 1),
+                 ('real-plan', 'T1 load', 7, 155, 't', 0);
+             INSERT INTO plan_sections (plan_id, section_fk) VALUES
+                 ('sample-plan', 1), ('real-plan', 2);"
+        ))
+        .expect("seed a pre-removal database");
+
+        migrate(&conn).expect("migration six must apply");
+
+        let plans: Vec<String> = conn
+            .prepare("SELECT id FROM plans ORDER BY id")
+            .expect("prepare")
+            .query_map([], |row| row.get(0))
+            .expect("query")
+            .collect::<Result<_, _>>()
+            .expect("rows");
+        assert_eq!(plans, vec!["real-plan".to_string()], "only the sample plan goes");
+
+        let count = |sql: &str| -> i64 {
+            conn.query_row(sql, [], |row| row.get(0)).expect("count")
+        };
+        assert_eq!(
+            count(&format!(
+                "SELECT COUNT(*) FROM sections WHERE campus_id = {sample_campus}"
+            )),
+            0,
+            "the fabricated catalog goes with it"
+        );
+        assert_eq!(count("SELECT COUNT(*) FROM sections WHERE campus_id = 7"), 1);
+        assert_eq!(
+            count("SELECT COUNT(*) FROM schedule_blocks"),
+            1,
+            "only the sample section's blocks are removed"
+        );
+        assert_eq!(count("SELECT COUNT(*) FROM snapshots"), 1);
+        assert_eq!(count("SELECT COUNT(*) FROM courses WHERE campus_id = 7"), 1);
+        assert_eq!(
+            count("SELECT COUNT(*) FROM plan_sections"),
+            1,
+            "the real plan keeps its membership"
         );
     }
 
@@ -2608,7 +2676,7 @@ mod tests {
         let version: i64 = conn
             .query_row("PRAGMA user_version", [], |row| row.get(0))
             .expect("user_version");
-        assert_eq!(version, 5);
+        assert_eq!(version, 6);
         let is_sample: i64 = conn
             .query_row("SELECT is_sample FROM plans WHERE id = 'p1'", [], |row| row.get(0))
             .expect("is_sample must be readable");
@@ -2642,7 +2710,7 @@ mod tests {
         let version: i64 = conn
             .query_row("PRAGMA user_version", [], |row| row.get(0))
             .expect("user_version");
-        assert_eq!(version, 5);
+        assert_eq!(version, 6);
         let missing: i64 = conn
             .query_row("SELECT missing FROM plan_sections", [], |row| row.get(0))
             .expect("missing must be readable");
@@ -2690,7 +2758,21 @@ mod tests {
         )
         .expect("legacy rows");
 
-        migrate(&conn).expect("the v5 migration must run on the existing database");
+        // Migration 5 in isolation, deliberately not through `migrate`:
+        // migration 6 deletes the reserved-scope rows this one relocates, so
+        // running the whole chain here would assert nothing about the move.
+        // The end state after every migration is
+        // `migration_six_removes_sample_data_and_leaves_every_real_row_alone`.
+        // In a transaction, like `migrate` runs it: migration 5 opens with
+        // `PRAGMA defer_foreign_keys = ON`, which is a no-op outside one, and
+        // it relocates courses before the sections pointing at them.
+        {
+            let tx = conn.unchecked_transaction().expect("transaction");
+            tx.execute_batch(&migration_v5())
+                .expect("the v5 migration must run on the existing database");
+            tx.pragma_update(None, "user_version", 5).expect("user_version");
+            tx.commit().expect("commit");
+        }
 
         let version: i64 = conn
             .query_row("PRAGMA user_version", [], |row| row.get(0))
@@ -2779,125 +2861,6 @@ mod tests {
         assert_eq!(summary_sections, 2);
     }
 
-    #[test]
-    fn create_plan_marks_sample_plans_explicitly() {
-        let mut store = store();
-        store.create_plan("normal", "Normal", &SCOPE, T1, false).expect("normal plan");
-        store.create_plan("sample", "Sample", &SCOPE, T1, true).expect("sample plan");
-
-        let mut stmt = store
-            .conn
-            .prepare("SELECT id, is_sample FROM plans ORDER BY id")
-            .expect("prepare");
-        let flags: Vec<(String, i64)> = stmt
-            .query_map([], |row| Ok((row.get(0)?, row.get(1)?)))
-            .expect("query")
-            .map(|row| row.expect("row"))
-            .collect();
-        assert_eq!(
-            flags,
-            vec![("normal".to_string(), 0), ("sample".to_string(), 1)],
-            "only the seeded plan carries the sample marker"
-        );
-    }
-
-    #[test]
-    fn seeded_sample_rows_are_invisible_to_a_real_scope() {
-        // Ticket 27: the sample data must live under a reserved scope that
-        // no real plan reads, so the capture counter and the section picker
-        // of a genuine Manila / AY2026-27 T1 plan see an empty catalog.
-        let mut store = store();
-        let sections = [
-            parsed_section(2923, 384, "S01", None, Some(10), vec![online_block(Day::Mon, 450, 540)]),
-            parsed_section(564, 737, "Y11", None, Some(20), vec![room_block(Day::Tue, 870, 960, "L226")]),
-        ];
-        let sample_scope = CaptureScope {
-            campus_id: crate::core::sample_data::SAMPLE_CAMPUS_ID,
-            session_id: crate::core::sample_data::SAMPLE_SESSION_ID,
-        };
-        store
-            .seed_sample_plan(
-                &sample_scope,
-                crate::core::sample_data::SAMPLE_PLAN_ID,
-                "Sample data",
-                &[&sections[..]],
-                T1,
-            )
-            .expect("seed");
-
-        let summary = store.capture_summary(&SCOPE).expect("real-scope summary");
-        assert_eq!(
-            (summary.section_count, summary.course_count),
-            (0, 0),
-            "the capture counter must read only what the student actually captured"
-        );
-        assert!(
-            store.captured_courses(&SCOPE).expect("courses").is_empty(),
-            "the section picker must not offer sample courses to a real plan"
-        );
-        assert!(
-            store.captured_sections(&SCOPE, 2923).expect("sections").is_empty(),
-            "the section picker must not offer sample sections to a real plan"
-        );
-
-        let sample_summary = store.capture_summary(&sample_scope).expect("sample-scope summary");
-        assert_eq!(sample_summary.section_count, 2, "the seed lives in its own scope");
-        assert_eq!(store.captured_courses(&sample_scope).expect("sample courses").len(), 2);
-    }
-
-    #[test]
-    fn seeding_a_sample_plan_is_transactional_and_idempotent() {
-        let mut store = store();
-        let sections = [
-            parsed_section(2923, 384, "S01", None, Some(10), vec![online_block(Day::Mon, 450, 540)]),
-            parsed_section(564, 737, "Y11", None, Some(10), vec![
-                room_block(Day::Tue, 870, 960, "L226"),
-                online_block(Day::Fri, 870, 960),
-            ]),
-        ];
-
-        let first = store
-            .seed_sample_plan(&SCOPE, "sample-plan", "Sample data", &[&sections[..]], T1)
-            .expect("first seed");
-        assert!(first.is_sample, "the seeded plan is visibly marked as sample data");
-        assert_eq!(first.section_count, 2);
-
-        // Running the seed again must change nothing: no duplicate sections,
-        // no extra snapshots, no second plan.
-        let again = store
-            .seed_sample_plan(&SCOPE, "sample-plan", "Sample data", &[&sections[..]], T2)
-            .expect("second seed must not fail");
-        assert_eq!(again.id, first.id, "the second seed returns the existing plan");
-        assert_eq!(count(&store.conn, "SELECT COUNT(*) FROM plans"), 1);
-        assert_eq!(count(&store.conn, "SELECT COUNT(*) FROM sections"), 2);
-        assert_eq!(count(&store.conn, "SELECT COUNT(*) FROM plan_sections"), 2);
-        assert_eq!(
-            count(&store.conn, "SELECT COUNT(*) FROM snapshots"),
-            2,
-            "a repeat seed must not re-capture"
-        );
-    }
-
-    #[test]
-    fn a_failed_seed_leaves_no_partial_plan() {
-        let mut store = store();
-        let sections = [parsed_section(2923, 384, "S01", None, Some(10), vec![])];
-        // A plan with the reserved id already exists: the seed's create step
-        // fails, and nothing from the seed may remain behind.
-        store.create_plan("sample-plan", "taken", &SCOPE, T1, false).expect("existing plan");
-
-        let err = store
-            .seed_sample_plan(&SCOPE, "sample-plan", "Sample data", &[&sections[..]], T2)
-            .expect_err("a taken plan id must fail the seed");
-        assert!(!matches!(err, StoreError::Sql(_)), "got {err:?}");
-        assert_eq!(count(&store.conn, "SELECT COUNT(*) FROM sections"), 0);
-        assert_eq!(count(&store.conn, "SELECT COUNT(*) FROM snapshots"), 0);
-        assert_eq!(
-            count(&store.conn, "SELECT COUNT(*) FROM plans"),
-            1,
-            "the existing plan is the only plan"
-        );
-    }
     // ---------- plan membership and conflicts (ticket 08) ----------
 
     fn plan_membership_rows(conn: &Connection) -> Vec<(i64, i64, i64)> {
@@ -2955,7 +2918,7 @@ mod tests {
     #[test]
     fn adding_overlapping_sections_to_a_plan_is_legal() {
         let mut store = store();
-        store.create_plan("p1", "T1 load", &SCOPE, T1, false).expect("plan");
+        store.create_plan("p1", "T1 load", &SCOPE, T1).expect("plan");
         store
             .record_capture(&SCOPE, &overlap_fixture(), T1)
             .expect("capture");
@@ -2969,7 +2932,7 @@ mod tests {
     #[test]
     fn conflicts_in_plan_reports_the_overlapping_pair_day_and_range() {
         let mut store = store();
-        store.create_plan("p1", "T1 load", &SCOPE, T1, false).expect("plan");
+        store.create_plan("p1", "T1 load", &SCOPE, T1).expect("plan");
         store
             .record_capture(&SCOPE, &overlap_fixture(), T1)
             .expect("capture");
@@ -2992,7 +2955,7 @@ mod tests {
     #[test]
     fn conflicts_in_plan_is_clear_when_blocks_touch_without_overlapping() {
         let mut store = store();
-        store.create_plan("p1", "T1 load", &SCOPE, T1, false).expect("plan");
+        store.create_plan("p1", "T1 load", &SCOPE, T1).expect("plan");
         let touching = vec![
             parsed_section(2923, 384, "S01", None, Some(10), vec![
                 room_block(Day::Mon, 450, 540, "A1103"),
@@ -3013,7 +2976,7 @@ mod tests {
     #[test]
     fn conflicts_in_plan_never_reports_a_section_against_itself() {
         let mut store = store();
-        store.create_plan("p1", "T1 load", &SCOPE, T1, false).expect("plan");
+        store.create_plan("p1", "T1 load", &SCOPE, T1).expect("plan");
         let self_overlapping = vec![parsed_section(2923, 384, "S01", None, Some(10), vec![
             room_block(Day::Mon, 450, 540, "A1103"),
             room_block(Day::Mon, 480, 570, "A1103"),
@@ -3031,7 +2994,7 @@ mod tests {
     #[test]
     fn blocks_with_unrecognized_locations_still_participate_in_conflicts() {
         let mut store = store();
-        store.create_plan("p1", "T1 load", &SCOPE, T1, false).expect("plan");
+        store.create_plan("p1", "T1 load", &SCOPE, T1).expect("plan");
         let mixed = vec![
             parsed_section(2923, 384, "S01", None, Some(10), vec![
                 room_block(Day::Mon, 450, 540, "A1103"),
@@ -3056,7 +3019,7 @@ mod tests {
     #[test]
     fn remove_section_from_plan_removes_membership_and_keeps_the_section_row() {
         let mut store = store();
-        store.create_plan("p1", "T1 load", &SCOPE, T1, false).expect("plan");
+        store.create_plan("p1", "T1 load", &SCOPE, T1).expect("plan");
         store
             .record_capture(&SCOPE, &overlap_fixture(), T1)
             .expect("capture");
@@ -3086,7 +3049,7 @@ mod tests {
     #[test]
     fn removing_a_section_not_in_the_plan_is_a_no_op() {
         let mut store = store();
-        store.create_plan("p1", "T1 load", &SCOPE, T1, false).expect("plan");
+        store.create_plan("p1", "T1 load", &SCOPE, T1).expect("plan");
         store
             .record_capture(&SCOPE, &overlap_fixture(), T1)
             .expect("capture");
@@ -3106,7 +3069,7 @@ mod tests {
     #[test]
     fn pinned_state_can_be_set_and_unset() {
         let mut store = store();
-        store.create_plan("p1", "T1 load", &SCOPE, T1, false).expect("plan");
+        store.create_plan("p1", "T1 load", &SCOPE, T1).expect("plan");
         store
             .record_capture(&SCOPE, &overlap_fixture(), T1)
             .expect("capture");
@@ -3124,7 +3087,7 @@ mod tests {
     #[test]
     fn set_pinned_on_a_section_not_in_the_plan_is_an_error() {
         let mut store = store();
-        store.create_plan("p1", "T1 load", &SCOPE, T1, false).expect("plan");
+        store.create_plan("p1", "T1 load", &SCOPE, T1).expect("plan");
         store
             .record_capture(&SCOPE, &overlap_fixture(), T1)
             .expect("capture");
@@ -3163,7 +3126,7 @@ mod tests {
         let path = dir.path().join("store.db");
         {
             let mut store = Store::open(&path).expect("fresh file must open");
-            store.create_plan("p1", "T1 load", &SCOPE, T1, false).expect("plan");
+            store.create_plan("p1", "T1 load", &SCOPE, T1).expect("plan");
             store
                 .record_capture(&SCOPE, &overlap_fixture(), T1)
                 .expect("capture");
@@ -3253,7 +3216,7 @@ mod tests {
     #[test]
     fn loading_a_plan_export_returns_the_plan_name_and_every_member_in_full() {
         let mut store = store();
-        store.create_plan("p1", "T1 load", &SCOPE, T1, false).expect("plan");
+        store.create_plan("p1", "T1 load", &SCOPE, T1).expect("plan");
         let hybrid = dated_section(
             2923,
             384,
@@ -3335,7 +3298,7 @@ mod tests {
     #[test]
     fn the_export_carries_the_teacher_from_the_latest_snapshot_not_the_first() {
         let mut store = store();
-        store.create_plan("p1", "T1 load", &SCOPE, T1, false).expect("plan");
+        store.create_plan("p1", "T1 load", &SCOPE, T1).expect("plan");
         store
             .record_capture(
                 &SCOPE,
@@ -3366,7 +3329,7 @@ mod tests {
     #[test]
     fn a_member_without_captured_dates_is_a_loud_error_never_a_silent_skip() {
         let mut store = store();
-        store.create_plan("p1", "T1 load", &SCOPE, T1, false).expect("plan");
+        store.create_plan("p1", "T1 load", &SCOPE, T1).expect("plan");
         store
             .record_capture(
                 &SCOPE,
@@ -3467,8 +3430,8 @@ mod tests {
     #[test]
     fn forgetting_a_held_course_releases_its_sections_from_every_holding_plan_and_reports_what_each_lost() {
         let mut store = store();
-        store.create_plan("p1", "First", &SCOPE, T1, false).expect("plan p1");
-        store.create_plan("p2", "Second", &SCOPE, T1, false).expect("plan p2");
+        store.create_plan("p1", "First", &SCOPE, T1).expect("plan p1");
+        store.create_plan("p2", "Second", &SCOPE, T1).expect("plan p2");
         store
             .record_capture(
                 &SCOPE,
@@ -3545,7 +3508,7 @@ mod tests {
     #[test]
     fn a_failure_part_way_through_forgetting_rolls_everything_back() {
         let mut store = store();
-        store.create_plan("p1", "First", &SCOPE, T1, false).expect("plan p1");
+        store.create_plan("p1", "First", &SCOPE, T1).expect("plan p1");
         store
             .record_capture(
                 &SCOPE,
@@ -3622,7 +3585,7 @@ mod tests {
                 T1,
             )
             .expect("scope B capture of the same course id");
-        store.create_plan("pb", "Other term", &OTHER_SCOPE, T1, false).expect("other plan");
+        store.create_plan("pb", "Other term", &OTHER_SCOPE, T1).expect("other plan");
         store.add_section_to_plan("pb", 2923, 384).expect("the other plan holds its scope's section");
 
         store.forget_course(&SCOPE, 2923).expect("forget in scope A");
@@ -3649,7 +3612,7 @@ mod tests {
         store
             .record_capture(&SCOPE, &[parsed_section(2923, 384, "S01", None, Some(10), vec![])], T1)
             .expect("capture");
-        store.create_plan("pb", "Other term", &OTHER_SCOPE, T1, false).expect("other-scope plan");
+        store.create_plan("pb", "Other term", &OTHER_SCOPE, T1).expect("other-scope plan");
         let section_fk: i64 = store
             .conn
             .query_row("SELECT id FROM sections WHERE section_id = 384", [], |row| row.get(0))
@@ -3692,62 +3655,6 @@ mod tests {
         assert!(err.to_string().contains("2923"));
     }
 
-    #[test]
-    fn sample_data_is_subject_to_the_same_rules_and_removal_disturbs_no_real_scope() {
-        use crate::core::options::{SAMPLE_CAMPUS_ID, SAMPLE_SESSION_ID};
-        let sample_scope = CaptureScope {
-            campus_id: SAMPLE_CAMPUS_ID,
-            session_id: SAMPLE_SESSION_ID,
-        };
-        let mut store = store();
-        let sample_sections = [
-            parsed_section(2923, 384, "S01", None, Some(10), vec![online_block(Day::Mon, 450, 540)]),
-            parsed_section(564, 737, "Y11", None, Some(20), vec![]),
-        ];
-        store
-            .seed_sample_plan(&sample_scope, "sample-plan", "Sample data", &[&sample_sections[..]], T1)
-            .expect("seed");
-        store
-            .record_capture(
-                &SCOPE,
-                &[{
-                    let mut section = parsed_section(3000, 400, "S01", None, Some(5), vec![]);
-                    section.course_code = "REALC".into();
-                    section
-                }],
-                T1,
-            )
-            .expect("a real capture alongside the samples");
-
-        // The sample plan holds these sections; forgetting releases them
-        // from the plan instead of refusing, and the report names it.
-        let outcome = store
-            .forget_course(&sample_scope, 564)
-            .expect("a held sample course is released like any held course");
-        assert_eq!(
-            outcome.affected_plans,
-            vec![AffectedPlan { plan_id: "sample-plan".into(), removed_sections: 1 }]
-        );
-        let sample_plan = store.get_plan("sample-plan").expect("the sample plan survives");
-        assert_eq!(sample_plan.sections.len(), 1, "the sample plan keeps its other section");
-        assert_eq!(sample_plan.sections[0].section_id, 384);
-
-        store.forget_course(&sample_scope, 2923).expect("the rest of the seed too");
-
-        let real = store.capture_summary(&SCOPE).expect("real-scope summary");
-        assert_eq!(
-            (real.section_count, real.course_count),
-            (1, 1),
-            "emptying the sample scope never disturbs a real scope"
-        );
-        assert!(store.captured_courses(&sample_scope).expect("sample list").is_empty());
-        assert_eq!(
-            store.get_plan("sample-plan").expect("sample plan").sections.len(),
-            0,
-            "the emptied sample plan is still a plan"
-        );
-    }
-
     // ---------- refresh (ticket 16) ----------
 
     fn missing_flag(conn: &Connection, section_id: i64) -> i64 {
@@ -3764,7 +3671,7 @@ mod tests {
     #[test]
     fn refresh_courses_returns_only_plan_courses_with_their_section_ids_in_order() {
         let mut store = store();
-        store.create_plan("p1", "T1 load", &SCOPE, T1, false).expect("plan");
+        store.create_plan("p1", "T1 load", &SCOPE, T1).expect("plan");
         let mut geartap_y11 = parsed_section(564, 737, "Y11", None, Some(10), vec![]);
         geartap_y11.course_code = "GEARTAP".into();
         let mut geartap_y12 = parsed_section(564, 738, "Y12", None, Some(10), vec![]);
@@ -3796,7 +3703,7 @@ mod tests {
     #[test]
     fn plan_scope_of_exposes_the_scope_a_refresh_run_is_routed_by() {
         let mut store = store();
-        store.create_plan("p1", "T1 load", &SCOPE, T1, false).expect("plan");
+        store.create_plan("p1", "T1 load", &SCOPE, T1).expect("plan");
         assert_eq!(
             store.plan_scope_of("p1").expect("scope"),
             SCOPE,
@@ -3811,14 +3718,14 @@ mod tests {
     #[test]
     fn refresh_courses_is_empty_for_an_empty_plan() {
         let mut store = store();
-        store.create_plan("p1", "T1 load", &SCOPE, T1, false).expect("plan");
+        store.create_plan("p1", "T1 load", &SCOPE, T1).expect("plan");
         assert!(store.refresh_courses("p1").expect("refresh courses").is_empty());
     }
 
     #[test]
     fn apply_refresh_appends_snapshots_and_marks_a_vanished_section_missing() {
         let mut store = store();
-        store.create_plan("p1", "T1 load", &SCOPE, T1, false).expect("plan");
+        store.create_plan("p1", "T1 load", &SCOPE, T1).expect("plan");
         let initial = vec![
             parsed_section(2923, 384, "S01", None, Some(10), vec![online_block(Day::Mon, 450, 540)]),
             parsed_section(2923, 385, "S02", Some("Bryant Lee"), Some(20), vec![]),
@@ -3861,7 +3768,7 @@ mod tests {
     #[test]
     fn a_later_refresh_finding_the_section_again_clears_the_missing_flag() {
         let mut store = store();
-        store.create_plan("p1", "T1 load", &SCOPE, T1, false).expect("plan");
+        store.create_plan("p1", "T1 load", &SCOPE, T1).expect("plan");
         let initial = vec![
             parsed_section(2923, 384, "S01", None, Some(10), vec![]),
             parsed_section(2923, 385, "S02", None, Some(20), vec![]),
@@ -3883,7 +3790,7 @@ mod tests {
     #[test]
     fn missing_sections_returns_the_vanished_section_with_alternatives() {
         let mut store = store();
-        store.create_plan("p1", "T1 load", &SCOPE, T1, false).expect("plan");
+        store.create_plan("p1", "T1 load", &SCOPE, T1).expect("plan");
         let catalog = vec![
             parsed_section(2923, 384, "S01", None, Some(10), vec![
                 online_block(Day::Mon, 450, 540),
@@ -3937,7 +3844,7 @@ mod tests {
     #[test]
     fn missing_sections_is_empty_when_nothing_is_missing() {
         let mut store = store();
-        store.create_plan("p1", "T1 load", &SCOPE, T1, false).expect("plan");
+        store.create_plan("p1", "T1 load", &SCOPE, T1).expect("plan");
         let sections = vec![parsed_section(2923, 384, "S01", None, Some(10), vec![])];
         store.record_capture(&SCOPE, &sections, T1).expect("capture");
         store.add_section_to_plan("p1", 2923, 384).expect("add");
@@ -3958,7 +3865,7 @@ mod tests {
     #[test]
     fn unclassified_blocks_surface_in_alternatives_with_their_raw_location() {
         let mut store = store();
-        store.create_plan("p1", "T1 load", &SCOPE, T1, false).expect("plan");
+        store.create_plan("p1", "T1 load", &SCOPE, T1).expect("plan");
         let catalog = vec![
             parsed_section(2923, 384, "S01", None, Some(10), vec![]),
             parsed_section(2923, 385, "S02", None, Some(20), vec![ParsedBlock {
@@ -3990,8 +3897,8 @@ mod tests {
     #[test]
     fn list_plans_returns_every_saved_plan_with_its_section_count() {
         let mut store = store();
-        store.create_plan("p1", "First", &SCOPE, T1, false).expect("plan");
-        store.create_plan("p2", "Second", &OTHER_SCOPE, T2, false)
+        store.create_plan("p1", "First", &SCOPE, T1).expect("plan");
+        store.create_plan("p2", "Second", &OTHER_SCOPE, T2)
             .expect("second plan");
         store
             .record_capture(&SCOPE, &[parsed_section(2923, 384, "S01", None, Some(10), vec![])], T1)
@@ -4010,7 +3917,6 @@ mod tests {
         assert_eq!((second.campus_id, second.session_id), (8, 156));
         assert_eq!(second.created_at, T2);
         assert_eq!(first_of(&rows).section_count, 1, "membership is counted");
-        assert!(!first_of(&rows).is_sample, "student plans are not marked as samples");
     }
 
     fn first_of(rows: &[PlanSummaryRow]) -> &PlanSummaryRow {
@@ -4018,21 +3924,9 @@ mod tests {
     }
 
     #[test]
-    fn list_plans_includes_the_sample_plan_like_any_other() {
-        let mut store = store();
-        let sections = [parsed_section(2923, 384, "S01", None, Some(10), vec![])];
-        store
-            .seed_sample_plan(&SCOPE, "sample-plan", "Sample data", &[&sections[..]], T1)
-            .expect("seed");
-        let rows = store.list_plans().expect("list plans");
-        assert_eq!(rows.len(), 1);
-        assert!(rows[0].is_sample, "the seeded plan is listed with its marker");
-    }
-
-    #[test]
     fn get_plan_returns_every_member_with_flags_blocks_modality_and_latest_snapshot() {
         let mut store = store();
-        store.create_plan("p1", "T1 load", &SCOPE, T1, false).expect("plan");
+        store.create_plan("p1", "T1 load", &SCOPE, T1).expect("plan");
         let hybrid = parsed_section(
             564,
             737,
@@ -4093,7 +3987,7 @@ mod tests {
         let err = store.get_plan("missing").expect_err("unknown plan must error");
         assert!(matches!(err, StoreError::PlanNotFound { .. }), "got {err:?}");
 
-        store.create_plan("empty", "Empty", &SCOPE, T1, false).expect("plan");
+        store.create_plan("empty", "Empty", &SCOPE, T1).expect("plan");
         let plan = store.get_plan("empty").expect("an empty plan still loads");
         assert_eq!(plan.summary.section_count, 0);
         assert!(plan.sections.is_empty(), "no members means an empty list, never null");
@@ -4102,7 +3996,7 @@ mod tests {
     #[test]
     fn delete_plan_removes_the_plan_and_memberships_but_keeps_captured_sections() {
         let mut store = store();
-        store.create_plan("p1", "T1 load", &SCOPE, T1, false).expect("plan");
+        store.create_plan("p1", "T1 load", &SCOPE, T1).expect("plan");
         store
             .record_capture(&SCOPE, &overlap_fixture(), T1)
             .expect("capture");
@@ -4137,8 +4031,8 @@ mod tests {
     #[test]
     fn deleting_a_plan_leaves_other_plans_and_their_memberships_intact() {
         let mut store = store();
-        store.create_plan("p1", "Keep", &SCOPE, T1, false).expect("plan");
-        store.create_plan("p2", "Drop", &SCOPE, T2, false).expect("plan");
+        store.create_plan("p1", "Keep", &SCOPE, T1).expect("plan");
+        store.create_plan("p2", "Drop", &SCOPE, T2).expect("plan");
         store
             .record_capture(&SCOPE, &[parsed_section(2923, 384, "S01", None, Some(10), vec![])], T1)
             .expect("capture");
@@ -4161,28 +4055,6 @@ mod tests {
         let mut store = store();
         let err = store.delete_plan("missing").expect_err("unknown plan must error");
         assert!(matches!(err, StoreError::PlanNotFound { .. }), "got {err:?}");
-    }
-
-    #[test]
-    fn the_sample_plan_deletes_like_any_other_plan() {
-        let mut store = store();
-        let sections = [parsed_section(2923, 384, "S01", None, Some(10), vec![])];
-        store
-            .seed_sample_plan(&SCOPE, "sample-plan", "Sample data", &[&sections[..]], T1)
-            .expect("seed");
-
-        store.delete_plan("sample-plan").expect("sample deletes like any plan");
-
-        assert!(store.list_plans().expect("list plans").is_empty());
-        assert_eq!(
-            count(&store.conn, "SELECT COUNT(*) FROM sections"),
-            1,
-            "the captured sample sections survive the delete"
-        );
-        // A repeat seed after deletion re-seeds cleanly instead of erroring.
-        store
-            .seed_sample_plan(&SCOPE, "sample-plan", "Sample data", &[&sections[..]], T2)
-            .expect("re-seed after delete");
     }
 
     // ---------- captured catalog queries (ticket 25) ----------
@@ -4348,7 +4220,7 @@ mod tests {
     #[test]
     fn captured_sections_of_an_uncaptured_course_is_empty() {
         let mut store = store();
-        store.create_plan("p1", "T1", &SCOPE, T1, false).expect("plan");
+        store.create_plan("p1", "T1", &SCOPE, T1).expect("plan");
         let sections = store.captured_sections(&SCOPE, 9999).expect("no sections");
         assert!(sections.is_empty());
     }
@@ -4358,7 +4230,7 @@ mod tests {
     #[test]
     fn apply_solution_writes_the_chosen_sections_into_the_plan_as_ordinary_members() {
         let mut store = store();
-        store.create_plan("p1", "T1 load", &SCOPE, T1, false).expect("plan");
+        store.create_plan("p1", "T1 load", &SCOPE, T1).expect("plan");
         store
             .record_capture(
                 &SCOPE,
@@ -4387,7 +4259,7 @@ mod tests {
     #[test]
     fn applied_sections_stay_individually_removable_and_unpinnable_afterwards() {
         let mut store = store();
-        store.create_plan("p1", "T1 load", &SCOPE, T1, false).expect("plan");
+        store.create_plan("p1", "T1 load", &SCOPE, T1).expect("plan");
         store
             .record_capture(
                 &SCOPE,
@@ -4422,7 +4294,7 @@ mod tests {
         // of the solved course goes; the new one arrives; the pinned member
         // of an untouched course stays exactly as chosen.
         let mut store = store();
-        store.create_plan("p1", "T1 load", &SCOPE, T1, false).expect("plan");
+        store.create_plan("p1", "T1 load", &SCOPE, T1).expect("plan");
         store
             .record_capture(
                 &SCOPE,
@@ -4470,7 +4342,7 @@ mod tests {
         // Applying a solution never silently pins or unpins anything: a
         // section the student pinned is still pinned afterwards.
         let mut store = store();
-        store.create_plan("p1", "T1 load", &SCOPE, T1, false).expect("plan");
+        store.create_plan("p1", "T1 load", &SCOPE, T1).expect("plan");
         store
             .record_capture(&SCOPE, &[parsed_section(564, 737, "Y11", None, Some(10), vec![])], T1)
             .expect("capture");
@@ -4491,7 +4363,7 @@ mod tests {
         // naming a different section of a pinned course cannot come from
         // the solver — failing loudly beats silently duplicating membership.
         let mut store = store();
-        store.create_plan("p1", "T1 load", &SCOPE, T1, false).expect("plan");
+        store.create_plan("p1", "T1 load", &SCOPE, T1).expect("plan");
         store
             .record_capture(
                 &SCOPE,
@@ -4526,7 +4398,7 @@ mod tests {
         // Reconciliation speaks only about courses the solution names: an
         // unpinned member of any other course is not the solve's to remove.
         let mut store = store();
-        store.create_plan("p1", "T1 load", &SCOPE, T1, false).expect("plan");
+        store.create_plan("p1", "T1 load", &SCOPE, T1).expect("plan");
         store
             .record_capture(
                 &SCOPE,
@@ -4554,7 +4426,7 @@ mod tests {
         // sending two of the same course is malformed, and applying it must
         // never write duplicate course membership (ticket 42).
         let mut store = store();
-        store.create_plan("p1", "T1 load", &SCOPE, T1, false).expect("plan");
+        store.create_plan("p1", "T1 load", &SCOPE, T1).expect("plan");
         store
             .record_capture(
                 &SCOPE,
@@ -4589,7 +4461,7 @@ mod tests {
     #[test]
     fn apply_solution_rejects_out_of_scope_or_unknown_sections_and_writes_nothing() {
         let mut store = store();
-        store.create_plan("p1", "T1 load", &SCOPE, T1, false).expect("plan");
+        store.create_plan("p1", "T1 load", &SCOPE, T1).expect("plan");
         store
             .record_capture(&OTHER_SCOPE, &[parsed_section(2923, 999, "S99", None, Some(5), vec![])], T1)
             .expect("out-of-scope capture");
@@ -4626,7 +4498,7 @@ mod tests {
     #[test]
     fn solve_inputs_split_the_plan_into_fixed_sections_and_a_full_candidate_catalog() {
         let mut store = store();
-        store.create_plan("p1", "T1 load", &SCOPE, T1, false).expect("plan");
+        store.create_plan("p1", "T1 load", &SCOPE, T1).expect("plan");
         let chosen = parsed_section(
             2923,
             384,

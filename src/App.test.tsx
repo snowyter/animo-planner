@@ -64,7 +64,6 @@ describe("App shell and navigation", () => {
       sessionName: "AY2026-27 T1",
       createdAt: "2026-08-22T00:00:00Z",
       sectionCount: 2,
-      isSample: false,
     };
 
     const headerHtml = renderToStaticMarkup(
@@ -105,7 +104,6 @@ describe("App shell and navigation", () => {
       sessionName: "AY2026-27 T1",
       createdAt: "2026-08-22T00:00:00Z",
       sectionCount: 0,
-      isSample: false,
     };
 
     const workspaceHtml = renderToStaticMarkup(
@@ -122,7 +120,7 @@ describe("App shell and navigation", () => {
     expect(workspaceHtml).toContain("unimplemented: get_plan");
   });
 
-  it("shows onboarding tour on first run with equal-weight options and verbatim disclaimer", () => {
+  it("shows onboarding tour on first run with the verbatim disclaimer", () => {
     vi.mocked(client.listPlans).mockResolvedValue([]);
     vi.mocked(client.getCampusOptions).mockResolvedValue([{ id: 7, name: "Manila" }]);
     vi.mocked(client.getSessionOptions).mockResolvedValue([{ id: 155, name: "AY2026-27 T1" }]);
@@ -130,8 +128,9 @@ describe("App shell and navigation", () => {
     const html = renderToStaticMarkup(React.createElement(App));
 
     expect(html).toContain("Welcome to Animo Plan");
-    expect(html).toMatch(/Explore with sample data/i);
     expect(html).toMatch(/Start a real plan|Create your plan/i);
+    // The sample-data path is gone; first run must not offer one.
+    expect(html).not.toMatch(/sample/i);
     expect(html).toContain(
       "Animo Plan is a student-built tool with no affiliation to, endorsement by, or connection with De La Salle University. It never enlists, never modifies your records, and never stores your credentials."
     );

@@ -1,4 +1,4 @@
-import { Plus, Sparkles, Building2, Calendar, BookOpen, Trash2, ArrowRight, AlertCircle, RefreshCw } from "lucide-react";
+import { Plus, Building2, Calendar, BookOpen, Trash2, ArrowRight, AlertCircle, RefreshCw } from "lucide-react";
 import { Button } from "./ui/button";
 import { Card, CardHeader, CardTitle, CardDescription, CardContent, CardFooter } from "./ui/card";
 import { Badge } from "./ui/badge";
@@ -11,7 +11,6 @@ export interface PlanListProps {
   isLoading: boolean;
   error: string | null;
   onOpenCreate: () => void;
-  onSeedSample: () => void;
   onOpenPlan: (plan: PlanSummary) => void;
   onDeletePlan: (planId: string) => void;
   onRetry: () => void;
@@ -22,7 +21,6 @@ export function PlanList({
   isLoading,
   error,
   onOpenCreate,
-  onSeedSample,
   onOpenPlan,
   onDeletePlan,
   onRetry,
@@ -68,22 +66,14 @@ export function PlanList({
             No saved plans yet
           </h2>
           <p className="mt-2 max-w-md text-sm text-slate-500 leading-relaxed">
-            Create your first schedule plan scoped to your campus and academic
-            session, or explore the planner using sample course data.
+            Create your first schedule plan, scoped to your campus and academic
+            session.
           </p>
 
           <div className="mt-6 flex flex-col sm:flex-row items-center gap-3">
             <Button onClick={onOpenCreate} className="w-full sm:w-auto shadow-sm">
               <Plus className="h-4 w-4 mr-1.5" />
               Create your first plan
-            </Button>
-            <Button
-              variant="outline"
-              onClick={onSeedSample}
-              className="w-full sm:w-auto text-slate-700"
-            >
-              <Sparkles className="h-4 w-4 mr-1.5 text-amber-500" />
-              Explore with sample data
             </Button>
           </div>
         </div>
@@ -99,15 +89,6 @@ export function PlanList({
               </p>
             </div>
             <div className="flex items-center gap-2">
-              <Button
-                variant="outline"
-                size="sm"
-                onClick={onSeedSample}
-                className="text-xs text-slate-700"
-              >
-                <Sparkles className="h-3.5 w-3.5 mr-1 text-amber-500" />
-                Add Sample Plan
-              </Button>
               <Button size="sm" onClick={onOpenCreate} className="text-xs shadow-sm">
                 <Plus className="h-3.5 w-3.5 mr-1" />
                 New Plan
@@ -127,11 +108,6 @@ export function PlanList({
                     <CardTitle className="text-lg font-semibold text-slate-900 group-hover:text-emerald-700 transition-colors">
                       {plan.name}
                     </CardTitle>
-                    {plan.isSample && (
-                      <Badge variant="secondary" className="text-[10px]">
-                        Sample
-                      </Badge>
-                    )}
                   </div>
                   <CardDescription className="text-xs text-slate-400">
                     Created {new Date(plan.createdAt).toLocaleDateString()}

@@ -4,10 +4,14 @@
 //!
 //! SPEC §2 verified the dropdown values; every other surface that needs a
 //! campus or session *name* (`get_campus_options`, `get_session_options`,
-//! plan summaries, the sample-data seed) reads them from here, so no second
-//! copy can drift. Lookups are total over the offered options *and* the
-//! reserved sample ids; an id outside both is a loud error at the call
-//! site, never an invented name.
+//! plan summaries) reads them from here, so no second copy can drift.
+//! Lookups are total over the offered options *and* the reserved ids; an id
+//! outside both is a loud error at the call site, never an invented name.
+//!
+//! **The sample-data feature these ids were reserved for is gone.** The ids
+//! stay reserved and still resolve to names, because migration 5 relocates
+//! legacy rows into them before migration 6 deletes those rows, and because
+//! `create_plan` refuses them by name. Nothing writes here any more.
 
 /// The campus options exactly as SPEC §2 verified them:
 /// Manila=7, Laguna=8, Rufino=9.
@@ -23,7 +27,7 @@ pub const SESSION_OPTIONS: &[(i64, &str)] = &[
     (161, "SHS"),
 ];
 
-/// The reserved campus id of the bundled sample data (ticket 27).
+/// The reserved campus id, formerly the bundled sample data's (ticket 27).
 ///
 /// Deliberately negative: SPEC §2 verified the site's dropdown ids are
 /// positive integers, so nothing captured from Archer's Hub can ever land
@@ -32,7 +36,7 @@ pub const SESSION_OPTIONS: &[(i64, &str)] = &[
 /// with no filter to forget.
 pub const SAMPLE_CAMPUS_ID: i64 = -1;
 
-/// The reserved session id of the bundled sample data (ticket 27). See
+/// The reserved session id, formerly the bundled sample data's (ticket 27). See
 /// [`SAMPLE_CAMPUS_ID`] for why it must stay outside every real id space.
 pub const SAMPLE_SESSION_ID: i64 = -2;
 
