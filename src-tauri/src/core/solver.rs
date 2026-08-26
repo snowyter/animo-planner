@@ -1,18 +1,22 @@
-//! Headless solver core (tickets 14 and 15): backtracking search with
+//! Headless solver core (tickets 14, 15, and 42): backtracking search with
 //! constraint propagation that fills the unassigned courses of a plan with
 //! conflict-free sections, ranked under a preset, without hanging and
 //! without blocking the interface.
 //!
 //! The search is always seeded from the current plan (ADR-0014): every
-//! section already in the plan is fixed and appears in every emitted result;
-//! the solve only assigns sections to courses that have none. Starting empty
-//! is the degenerate case of the same operation.
+//! course already in the plan appears in every emitted result. Pinned
+//! members are fixed — never reassigned, never dropped; unpinned members
+//! (ticket 42) are their course's starting point: the solve keeps the
+//! student's choice when it can and otherwise swaps it for another section
+//! of the same course, preferring to keep existing choices wherever it
+//! costs nothing. Nothing is ever dropped at course granularity, and
+//! starting empty is the degenerate case of the same operation.
 //!
 //! Algorithm (ADR-0010):
 //! - Courses are ordered by fewest remaining valid sections first (MRV), with
 //!   ties broken by course id.
 //! - A partial assignment is pruned the moment a time conflict appears:
-//!   a candidate is never placed if it overlaps any fixed section or any
+//!   a candidate is never placed if it overlaps any pinned section or any
 //!   section already placed.
 //! - Complete assignments are ranked by the selected preset (ticket 15):
 //!   each is scored once — breakdown and advisory transition warnings in the
@@ -28,12 +32,15 @@
 //! student can turn it off, so the exclusion is never quiet: the outcome
 //! reports how many sections it removed, and a course left with only full
 //! sections is named `Unsatisfiable` with that reason. A missing or
-//! unreadable count is never treated as full. Fixed (plan) sections are
-//! never reassigned and never dropped — a pinned section that violates a
+//! unreadable count is never treated as full. Pinned sections are never
+//! reassigned and never dropped — a pinned section that violates a
 //! constraint is user-authored and passes through untouched, exactly like a
 //! user-authored conflict (ADR-0009); being at capacity does not change
-//! that. Section-code prefixes are never read, and a blank teacher is never
-//! a mismatch: no constraint branches on either.
+//! that. An *unpinned* member is a candidate like any other (ticket 42), so
+//! exclude-full may swap a full one for a sibling with seats — decided in
+//! favour of exclude-full, because a proposed schedule the student cannot
+//! enlist into helps no one. Section-code prefixes are never read, and a
+//! blank teacher is never a mismatch: no constraint branches on either.
 //!
 //! Every run consumes at most one node budget before returning, so the
 //! interface thread is never blocked: the Tauri command layer (ticket 20)
@@ -41,12 +48,15 @@
 //!
 //! Guarantees:
 //! - No emitted result has a conflict involving a solver-assigned section.
-//!   Overlaps among fixed (plan) sections are user-authored (ADR-0009) and
-//!   pass through untouched — the solver never reassigns them.
-//! - Solving a plan with no unassigned courses returns the plan itself,
+//!   Overlaps among pinned sections are user-authored (ADR-0009) and pass
+//!   through untouched — the solver never reassigns them.
+//! - Every course of the plan appears in every emitted result (ticket 42).
+//! - Solving a plan with no searchable courses returns the plan itself,
 //!   scored and warned under the requested preset.
-//! - An unassigned course with no valid section yields an explained
-//!   `Unsatisfiable` result naming that course, never a silent empty list.
+//! - A course with no valid section yields an explained `Unsatisfiable`
+//!   result naming that course, never a silent empty list. Validity is
+//!   judged against the pinned members only: an unpinned neighbour can
+//!   move, so it never starves another course.
 
 use crate::core::ipc_types::{
     Day, Preset, ScheduleBlock, ScoreComponent, SolutionSection, SolveOptions, SolveStatus,
@@ -65,8 +75,11 @@ use std::fmt;
 pub const DEFAULT_NODE_BUDGET: u64 = 100_000;
 
 /// Version stamped into serialized search state; bumping it invalidates
-/// resume tokens minted by older builds.
-const SOLVER_STATE_VERSION: u32 = 2;
+/// resume tokens minted by older builds. Version 3 carries ticket 42's
+/// semantics: `fixed` holds only truly pinned plan sections and seeded
+/// candidate order lives inside the courses — an older token would silently
+/// revert unpinned sections to immovable halfway through a solve.
+const SOLVER_STATE_VERSION: u32 = 3;
 
 /// One course the solve must fill, with every captured section as a
 /// candidate. Course identity is read from the capture dropdown (the results
@@ -96,9 +109,12 @@ pub struct SolverSection {
     pub teacher: Option<String>,
 }
 
-/// A section already chosen in the plan. Fixed for the whole solve: it is
-/// never reassigned, never dropped by a constraint, and it constrains every
-/// candidate placed afterwards.
+/// A section already chosen in the plan. When `pinned` is true the section
+/// is fixed for the whole solve: it is never reassigned, never dropped by a
+/// constraint, and it constrains every candidate placed afterwards. When
+/// false, the section is only its course's starting point (ticket 42): the
+/// course stays required, and the solve keeps this very section when it can
+/// but may swap it for another section of the same course.
 #[derive(Debug, Clone)]
 pub struct FixedSection {
     pub course_id: i64,
@@ -106,6 +122,7 @@ pub struct FixedSection {
     pub section_id: i64,
     pub section_code: String,
     pub blocks: Vec<ScheduleBlock>,
+    pub pinned: bool,
 }
 
 /// One conflict-free way to fill the plan, ranked by the requested preset:
@@ -183,7 +200,7 @@ impl SolveConstraints {
     }
 }
 
-/// Whether a candidate overlaps any fixed (plan) section.
+/// Whether a candidate overlaps any pinned (fixed) plan section.
 fn conflicts_with_fixed(fixed: &[SolutionSection], candidate: &SolverSection) -> bool {
     fixed
         .iter()
@@ -192,9 +209,9 @@ fn conflicts_with_fixed(fixed: &[SolutionSection], candidate: &SolverSection) ->
 
 /// How many candidate sections exclude-full removed (ticket 34): a
 /// candidate counts only when it is full *and* would otherwise have been
-/// placeable — conflict-free against the plan and within the other
-/// constraints. A full section that was unplaceable anyway was never the
-/// constraint's doing.
+/// placeable — conflict-free against the pinned members and within the
+/// other constraints. A full section that was unplaceable anyway was never
+/// the constraint's doing.
 fn count_excluded_as_full(
     fixed: &[SolutionSection],
     courses: &[CourseVar],
@@ -354,9 +371,11 @@ struct SearchState {
     /// The constraints the search was launched with; they survive a resume
     /// so every chunk scores under the same preset.
     constraints: SolveConstraints,
-    /// Unassigned courses in solve (MRV) order.
+    /// Unassigned courses in solve (MRV) order. A seeded course carries its
+    /// plan choice as candidate 0, so the seed priority survives a resume.
     courses: Vec<CourseVar>,
-    /// Plan sections, sorted by `(course_id, section_id)`; fixed forever.
+    /// Pinned plan sections, sorted by `(course_id, section_id)`; fixed
+    /// forever (ticket 42).
     fixed: Vec<SolutionSection>,
     /// `assignment[i]` is the chosen candidate index of `courses[i]`, and is
     /// `Some` exactly when `i < depth`.
@@ -387,8 +406,9 @@ pub struct Solver {
 }
 
 impl Solver {
-    /// Prepares a solve: sorts and deduplicates inputs, fixes the plan
-    /// sections, orders the unassigned courses by fewest valid sections
+    /// Prepares a solve: sorts and deduplicates inputs, fixes the pinned
+    /// plan sections, seeds every unpinned member's course with its own
+    /// choice first, orders the searchable courses by fewest valid sections
     /// first, and detects courses that can never be filled. No node is
     /// spent here.
     pub fn new(
@@ -396,33 +416,61 @@ impl Solver {
         plan_sections: Vec<FixedSection>,
         options: SolveOptions,
     ) -> Solver {
-        let fixed = fixed_sections(plan_sections);
+        // Pinned plan sections are fixed forever (ticket 42); unpinned ones
+        // only seed their course's search.
+        let fixed = fixed_sections(plan_sections.iter().filter(|p| p.pinned).cloned().collect());
+        let mut seeds: Vec<(i64, i64)> = plan_sections
+            .iter()
+            .filter(|section| !section.pinned)
+            .map(|section| (section.course_id, section.section_id))
+            .collect();
+        seeds.sort_by_key(|(course_id, section_id)| (*course_id, *section_id));
+        seeds.dedup_by_key(|(course_id, _)| *course_id);
         let constraints = SolveConstraints::from(&options);
 
         let mut catalog: Vec<CourseVar> = courses
             .into_iter()
-            .map(|course| CourseVar {
-                course_id: course.course_id,
-                code: course.code,
-                candidates: {
-                    let mut candidates = course.sections;
-                    candidates.sort_by_key(|candidate| candidate.section_id);
-                    candidates.dedup_by_key(|candidate| candidate.section_id);
-                    candidates
-                },
+            .map(|course| {
+                let seed = seeds
+                    .iter()
+                    .find(|(course_id, _)| *course_id == course.course_id)
+                    .map(|(_, section_id)| *section_id);
+                CourseVar {
+                    course_id: course.course_id,
+                    code: course.code,
+                    candidates: {
+                        let mut candidates = course.sections;
+                        candidates.sort_by_key(|candidate| candidate.section_id);
+                        candidates.dedup_by_key(|candidate| candidate.section_id);
+                        // The student's own choice is tried first, so the
+                        // all-choices-kept completion is discovered before
+                        // any equally scored reshuffle (ticket 42).
+                        if let Some(position) = candidates
+                            .iter()
+                            .position(|candidate| Some(candidate.section_id) == seed)
+                        {
+                            let seeded = candidates.remove(position);
+                            candidates.insert(0, seeded);
+                        }
+                        candidates
+                    },
+                }
             })
             .collect();
         catalog.sort_by_key(|course| course.course_id);
         catalog.dedup_by_key(|course| course.course_id);
 
+        // A course holding a pinned section is fully assigned; every other
+        // captured course — including one with an unpinned member — is
+        // searchable (ticket 42).
         let assigned = |course_id: i64| fixed.iter().any(|section| section.course_id == course_id);
         let unassigned = catalog
             .into_iter()
             .filter(|course| !assigned(course.course_id))
             .collect::<Vec<_>>();
 
-        // MRV: fewest valid sections — conflict-free against the fixed plan
-        // *and* allowed by the constraints — first.
+        // MRV: fewest valid sections — conflict-free against the pinned
+        // members *and* allowed by the constraints — first.
         let mut ordered: Vec<(CourseVar, usize)> = unassigned
             .into_iter()
             .map(|course| {
@@ -682,7 +730,9 @@ impl Solver {
     }
 }
 
-/// Plan sections, deduplicated and sorted by `(course_id, section_id)`.
+/// The plan's pinned members, deduplicated and sorted by
+/// `(course_id, section_id)`. Unpinned members never enter this list — they
+/// are seeds inside their course's candidate order (ticket 42).
 fn fixed_sections(plan_sections: Vec<FixedSection>) -> Vec<SolutionSection> {
     let mut sections: Vec<SolutionSection> = plan_sections
         .into_iter()
@@ -701,8 +751,8 @@ fn fixed_sections(plan_sections: Vec<FixedSection>) -> Vec<SolutionSection> {
 }
 
 /// How many of a course's candidates are valid — conflict-free against the
-/// fixed plan and allowed by the constraints — the MRV ordering key and the
-/// unsatisfiability check.
+/// pinned members and allowed by the constraints — the MRV ordering key and
+/// the unsatisfiability check.
 fn root_domain_size(
     fixed: &[SolutionSection],
     course: &CourseVar,
@@ -851,6 +901,20 @@ mod tests {
             section_id,
             section_code: format!("S{section_id}"),
             blocks,
+            pinned: true,
+        }
+    }
+
+    /// An unpinned plan member: the course's starting point, swappable by
+    /// the solve (ticket 42).
+    fn unpinned(course_id: i64, section_id: i64, blocks: Vec<ScheduleBlock>) -> FixedSection {
+        FixedSection {
+            course_id,
+            course_code: format!("C{course_id}"),
+            section_id,
+            section_code: format!("S{section_id}"),
+            blocks,
+            pinned: false,
         }
     }
 
@@ -989,6 +1053,7 @@ mod tests {
             section_id: chosen.section_id,
             section_code: chosen.section_code.clone(),
             blocks: chosen.blocks.clone(),
+            pinned: true,
         };
         let geartap = courses
             .iter()
@@ -1113,6 +1178,302 @@ mod tests {
                 .iter()
                 .all(|component| component.points == 0.0),
             "every component of an empty plan is zero: {solution:?}"
+        );
+    }
+
+    // ---------- unpinned plan sections (ticket 42) ----------
+
+    #[test]
+    fn an_unpinned_plan_section_is_swapped_when_it_leaves_no_room() {
+        // The reported case: pin nothing, choose C10/S1 which collides with
+        // the only section of required course C20, and the solve still has
+        // an answer — C10/S1 is replaceable within its own course.
+        let chosen = unpinned(10, 1, vec![block(Day::Mon, 450, 540)]);
+        let catalog = vec![
+            course(
+                10,
+                "C10",
+                vec![
+                    section(1, vec![block(Day::Mon, 450, 540)]),
+                    section(2, vec![block(Day::Tue, 450, 540)]),
+                ],
+            ),
+            course(20, "C20", vec![section(1, vec![block(Day::Mon, 450, 540)])]),
+        ];
+        let mut solver = Solver::new(catalog, vec![chosen], options(12));
+        let outcome = solver.run();
+
+        assert_eq!(
+            outcome.status,
+            SolveStatus::Complete,
+            "an unpinned choice must not starve the solve"
+        );
+        assert!(outcome.solutions.len() == 1);
+        let solution = &outcome.solutions[0];
+        assert_conflict_free(solution);
+        assert_eq!(
+            solution
+                .sections
+                .iter()
+                .map(|section| (section.course_id, section.section_id))
+                .collect::<Vec<_>>(),
+            vec![(10, 2), (20, 1)],
+            "the seed was swapped for the only conflict-free sibling; nothing dropped"
+        );
+        let kept_course = solution
+            .sections
+            .iter()
+            .find(|section| section.course_id == 10)
+            .expect("every plan course appears in every solution");
+        assert!(
+            !kept_course.pinned,
+            "a swapped-in or kept unpinned section is never reported pinned"
+        );
+    }
+
+    #[test]
+    fn keeping_the_existing_choice_wins_at_an_identical_score() {
+        // Every block is online and no two valid pairings overlap, so all
+        // pairings share one score. Both seeds sit behind another sibling
+        // in scan order (C10's seed is S2, not S1), so the enumeration
+        // reaches C10/S1 + C20/S1 — which moves C10's choice for nothing —
+        // before it reaches the seed-keeping pairing. The solve must rank
+        // the seed-keeper first anyway (ticket 42).
+        let plan = vec![
+            unpinned(10, 2, vec![online_block(Day::Mon, 450, 540)]),
+            unpinned(20, 1, vec![online_block(Day::Tue, 450, 540)]),
+        ];
+        let catalog = vec![
+            course(
+                10,
+                "C10",
+                vec![
+                    section(1, vec![online_block(Day::Wed, 450, 540)]),
+                    section(2, vec![online_block(Day::Mon, 450, 540)]),
+                ],
+            ),
+            course(
+                20,
+                "C20",
+                vec![
+                    section(1, vec![online_block(Day::Tue, 450, 540)]),
+                    section(2, vec![online_block(Day::Thu, 450, 540)]),
+                ],
+            ),
+        ];
+        let mut solver = Solver::new(catalog, plan, options(12));
+        let outcome = solver.run();
+
+        assert_eq!(outcome.status, SolveStatus::Complete);
+        let best = &outcome.solutions[0];
+        assert_eq!(
+            best.sections
+                .iter()
+                .map(|section| (section.course_id, section.section_id))
+                .collect::<Vec<_>>(),
+            vec![(10, 2), (20, 1)],
+            "both choices kept, ahead of equally scored reshuffles"
+        );
+        // The preference never outranks the score itself.
+        let scores = outcome.solutions.iter().map(|s| s.score).collect::<Vec<_>>();
+        let mut sorted = scores.clone();
+        sorted.sort_by(|a, b| b.total_cmp(a));
+        assert_eq!(scores, sorted);
+    }
+
+    #[test]
+    fn an_unpinned_full_plan_section_is_swapped_when_exclude_full_is_on() {
+        // Decided interaction (ticket 42 × ticket 34): once a plan section
+        // is unpinned it is a candidate like any other, so exclude-full may
+        // swap it for one with seats. Only *pinned* members are untouchable.
+        let chosen = unpinned(10, 1, vec![block(Day::Mon, 450, 540)]);
+        let mut solve_options = options(12);
+        solve_options.exclude_full = true;
+        let mut solver = Solver::new(
+            vec![course(
+                10,
+                "C10",
+                vec![
+                    candidate(1, vec![block(Day::Mon, 450, 540)], Some(45), Some(45), None),
+                    candidate(2, vec![block(Day::Tue, 450, 540)], Some(10), Some(45), None),
+                ],
+            )],
+            vec![chosen],
+            solve_options,
+        );
+        let outcome = solver.run();
+
+        assert_eq!(outcome.status, SolveStatus::Complete);
+        assert_eq!(
+            outcome.solutions[0].sections[0].section_id, 2,
+            "the full choice was swapped for the open sibling"
+        );
+        assert_eq!(
+            outcome.excluded_full_count, 1,
+            "the swap is reported as the exclusion it is"
+        );
+    }
+
+    #[test]
+    fn a_pinned_plan_section_at_capacity_survives_exclude_full() {
+        // Ticket 34 stands unchanged for pinned members: a full section the
+        // student pinned is theirs, and being at capacity changes nothing.
+        let chosen = fixed(10, 1, vec![block(Day::Mon, 450, 540)]);
+        let mut solve_options = options(12);
+        solve_options.exclude_full = true;
+        let mut solver = Solver::new(
+            vec![course(
+                10,
+                "C10",
+                vec![
+                    candidate(1, vec![block(Day::Mon, 450, 540)], Some(45), Some(45), None),
+                    candidate(2, vec![block(Day::Tue, 450, 540)], Some(10), Some(45), None),
+                ],
+            )],
+            vec![chosen],
+            solve_options,
+        );
+        let outcome = solver.run();
+
+        assert_eq!(outcome.status, SolveStatus::Complete);
+        let kept = &outcome.solutions[0].sections[0];
+        assert_eq!(kept.section_id, 1, "the pinned full section is never swapped");
+        assert!(kept.pinned);
+        assert_eq!(
+            outcome.excluded_full_count, 0,
+            "a fixed section is never a candidate to exclude"
+        );
+    }
+
+    #[test]
+    fn the_unsatisfiable_reason_stays_honest_under_the_new_semantics() {
+        // A course every section of which conflicts with a *pinned* member
+        // really has no valid section — named as such.
+        let pinned_blocker = fixed(10, 1, vec![block(Day::Mon, 450, 540)]);
+        let mut solver = Solver::new(
+            vec![course(20, "C20", vec![
+                section(1, vec![block(Day::Mon, 450, 540)]),
+                section(2, vec![block(Day::Mon, 480, 570)]),
+            ])],
+            vec![pinned_blocker],
+            options(12),
+        );
+        let outcome = solver.run();
+        assert_eq!(outcome.status, SolveStatus::Unsatisfiable);
+        assert_eq!(
+            outcome.unsatisfiable_courses,
+            vec![UnsatisfiableCourse {
+                course_id: 20,
+                code: "C20".to_string(),
+                reason: UnsatisfiableReason::NoValidSection,
+            }],
+        );
+
+        // But the same blockade by an *unpinned* member is no deadlock at
+        // all: the blocker can move, so nothing is unsatisfiable and no
+        // reason is invented.
+        let movable_blocker = unpinned(10, 1, vec![block(Day::Mon, 450, 540)]);
+        let mut solver = Solver::new(
+            vec![
+                course(
+                    10,
+                    "C10",
+                    vec![
+                        section(1, vec![block(Day::Mon, 450, 540)]),
+                        section(2, vec![block(Day::Fri, 450, 540)]),
+                    ],
+                ),
+                course(20, "C20", vec![
+                    section(1, vec![block(Day::Mon, 450, 540)]),
+                    section(2, vec![block(Day::Mon, 480, 570)]),
+                ]),
+            ],
+            vec![movable_blocker],
+            options(12),
+        );
+        let outcome = solver.run();
+        assert_eq!(outcome.status, SolveStatus::Complete);
+        assert!(
+            outcome.unsatisfiable_courses.is_empty(),
+            "a solvable plan must never name an unsatisfiable course"
+        );
+    }
+
+    #[test]
+    fn pin_semantics_survive_a_resume_token() {
+        // The search state crosses chunks as a serialized token; a resumed
+        // chunk must keep ticket 42's semantics — unpinned members still
+        // replaceable, pinned members still fixed — or a large plan would
+        // silently revert halfway through a solve.
+        let plan = vec![
+            unpinned(1, 1, vec![block(Day::Mon, 450, 540)]),
+            fixed(4, 6, vec![block(Day::Sat, 450, 540)]),
+        ];
+        let mut whole = Solver::new(synthetic_problem(), plan.clone(), options(3));
+        let expected = whole.run_with_budget(u64::MAX);
+        assert_eq!(expected.status, SolveStatus::Complete);
+        assert_eq!(
+            expected.solutions[0]
+                .sections
+                .iter()
+                .find(|section| section.course_id == 1)
+                .expect("every plan course appears in every solution")
+                .section_id,
+            1,
+            "the seed is kept ahead of equally scored siblings"
+        );
+        assert!(
+            expected.solutions[0]
+                .sections
+                .iter()
+                .all(|section| section.section_id != 6 || section.course_id == 4),
+            "fixture sanity: course 4's other sections are the seeded one"
+        );
+
+        let mut solver = Solver::new(synthetic_problem(), plan, options(3));
+        loop {
+            let outcome = solver.run_with_budget(7);
+            assert_eq!(
+                outcome.solutions,
+                expected.solutions[..outcome.solutions.len()],
+                "resumed chunks produce exactly what an uninterrupted solve does"
+            );
+            match outcome.status {
+                SolveStatus::Partial => {
+                    let token = outcome
+                        .resume_token
+                        .expect("a partial outcome must carry a resume token");
+                    solver = Solver::from_token(&token).expect("the token must resume");
+                }
+                SolveStatus::Complete => break,
+                other => panic!("unexpected status {other:?}"),
+            }
+        }
+    }
+
+    #[test]
+    fn two_pinned_sections_in_conflict_survive_the_solve_untouched() {
+        // ADR-0009 under the new semantics: the solver never resolves
+        // user-authored conflicts by force. Two pinned members overlapping
+        // stay in the result exactly as chosen.
+        let plan = vec![
+            fixed(10, 1, vec![f2f_block(Day::Mon, 450, 540, "L226")]),
+            fixed(20, 2, vec![f2f_block(Day::Mon, 450, 540, "G207")]),
+        ];
+        let mut solver = Solver::new(vec![], plan, options(12));
+        let outcome = solver.run();
+
+        assert_eq!(outcome.status, SolveStatus::Complete);
+        assert_eq!(outcome.solutions.len(), 1);
+        let solution = &outcome.solutions[0];
+        assert_eq!(
+            solution
+                .sections
+                .iter()
+                .map(|section| (section.course_id, section.section_id, section.pinned))
+                .collect::<Vec<_>>(),
+            vec![(10, 1, true), (20, 2, true)],
+            "both pinned members pass through untouched"
         );
     }
 

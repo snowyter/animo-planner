@@ -311,6 +311,7 @@ mod tests {
                 section_id: section.section_id,
                 section_code: section.section_code.clone(),
                 blocks: section.blocks.clone(),
+                pinned: true,
             })
             .collect();
         let catalog = store.solver_courses(&scope).expect("catalog");

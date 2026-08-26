@@ -39,7 +39,7 @@ use crate::core::refresh::RefreshCourse;
 use crate::core::solver::{FixedSection, SolverCourse, SolverSection};
 use chrono::NaiveDate;
 use rusqlite::{Connection, OptionalExtension, Transaction};
-use std::collections::HashSet;
+use std::collections::{BTreeMap, HashSet};
 use std::path::Path;
 use std::sync::{Arc, Mutex};
 
@@ -120,6 +120,21 @@ pub enum StoreError {
         session_id: i64,
         course_id: i64,
     },
+    /// A solution named one section for a course whose membership is pinned
+    /// to another (ticket 42). A real solve always carries every pinned
+    /// member, so this cannot come from the solver; failing loudly beats
+    /// silently duplicating the plan's membership for that course.
+    SolutionOverridesPinned {
+        plan_id: String,
+        course_id: i64,
+        pinned_section_id: i64,
+        solution_section_id: i64,
+    },
+    /// A solution named two different sections of the same course (ticket
+    /// 42). A solution holds one section per course by definition, so this
+    /// is malformed input; applying it would write duplicate course
+    /// membership into the plan.
+    SolutionSplitsCourse { plan_id: String, course_id: i64 },
 }
 
 impl std::fmt::Display for StoreError {
@@ -175,6 +190,21 @@ impl std::fmt::Display for StoreError {
                 f,
                 "no course {course_id} is captured under campus {campus_id} session \
                  {session_id}, so there is nothing to forget"
+            ),
+            StoreError::SolutionOverridesPinned {
+                plan_id,
+                course_id,
+                pinned_section_id,
+                solution_section_id,
+            } => write!(
+                f,
+                "cannot apply section (course {course_id}, section {solution_section_id}): \
+                 plan {plan_id:?} pins this course to section {pinned_section_id}; unpin it first"
+            ),
+            StoreError::SolutionSplitsCourse { plan_id, course_id } => write!(
+                f,
+                "cannot apply the solution: it names more than one section for course \
+                 {course_id}, but a solution holds one section per course; plan is {plan_id:?}"
             ),
         }
     }
@@ -750,11 +780,15 @@ impl Store {
             .collect()
     }
 
-    /// Writes the solver's chosen sections into the plan as ordinary
-    /// members — unpinned, individually removable, each validated against
-    /// the plan's `(campus, session)` exactly as `add_section_to_plan`
-    /// does. One transaction: either every chosen section lands or none
-    /// does. Conflict is never enforced here (ADR-0009).
+    /// Applies the solver's answer by **reconciling** the plan to it
+    /// (ticket 42): pinned members are untouched, an unpinned member whose
+    /// course the solution filled with a different section is removed, and
+    /// every solution section lands as an ordinary unpinned member. One
+    /// transaction — either the whole reconciliation lands or nothing does.
+    /// Membership is never duplicated for a solution course, and a solution
+    /// that would override a pinned member of another section is refused.
+    /// Courses the solution does not mention are not the solve's to touch.
+    /// Conflict is never enforced here (ADR-0009).
     pub fn apply_solution(
         &mut self,
         plan_id: &str,
@@ -764,20 +798,105 @@ impl Store {
         // Loud even for an empty list, so an unknown plan can never look
         // like a successful no-op apply.
         plan_scope(&tx, plan_id)?;
+
+        // Resolve every solution section against the plan's scope first:
+        // any rejection happens before a single membership row moves.
+        let mut resolved: Vec<(i64, i64, i64)> = Vec::new();
         for reference in sections {
-            add_section_tx(&tx, plan_id, reference.course_id, reference.section_id)?;
+            let section_fk =
+                resolve_scoped_section_tx(&tx, plan_id, reference.course_id, reference.section_id)?;
+            resolved.push((reference.course_id, section_fk, reference.section_id));
         }
+
+        // A solution holds one section per course by definition; a caller
+        // naming two for the same course is malformed, and applying it
+        // would write duplicate course membership.
+        let mut seen_courses: HashSet<i64> = HashSet::new();
+        for &(course_id, _, _) in &resolved {
+            if !seen_courses.insert(course_id) {
+                return Err(StoreError::SolutionSplitsCourse {
+                    plan_id: plan_id.to_string(),
+                    course_id,
+                });
+            }
+        }
+
+        // A real solve carries every pinned member as chosen; a solution
+        // naming a different section of a pinned course cannot be one.
+        for &(course_id, section_fk, section_id) in &resolved {
+            let pinned: Option<(i64, i64)> = tx
+                .query_row(
+                    "SELECT ps.section_fk, s.section_id
+                     FROM plan_sections ps
+                     JOIN sections s ON s.id = ps.section_fk
+                     WHERE ps.plan_id = ?1 AND ps.pinned != 0 AND s.course_id = ?2",
+                    rusqlite::params![plan_id, course_id],
+                    |row| Ok((row.get(0)?, row.get(1)?)),
+                )
+                .optional()?;
+            if let Some((pinned_fk, pinned_section_id)) = pinned {
+                if pinned_fk != section_fk {
+                    return Err(StoreError::SolutionOverridesPinned {
+                        plan_id: plan_id.to_string(),
+                        course_id,
+                        pinned_section_id,
+                        solution_section_id: section_id,
+                    });
+                }
+            }
+        }
+
+        // Reconcile each solution course's membership: unpinned members the
+        // solution replaced are gone; surviving rows keep their pin state.
+        // A BTreeMap keeps the per-course walk in a deterministic order.
+        let mut keeps: BTreeMap<i64, HashSet<i64>> = BTreeMap::new();
+        for &(course_id, section_fk, _) in &resolved {
+            keeps.entry(course_id).or_default().insert(section_fk);
+        }
+        for (course_id, keep) in &keeps {
+            let mut stmt = tx.prepare(
+                "SELECT ps.section_fk FROM plan_sections ps
+                 JOIN sections s ON s.id = ps.section_fk
+                 WHERE ps.plan_id = ?1 AND ps.pinned = 0 AND s.course_id = ?2",
+            )?;
+            let members = stmt
+                .query_map(rusqlite::params![plan_id, course_id], |row| row.get::<_, i64>(0))?
+                .collect::<Result<Vec<i64>, _>>()?;
+            drop(stmt);
+            for member_fk in members {
+                if !keep.contains(&member_fk) {
+                    // Plan-membership removal is never a hard delete (ADR-0008).
+                    tx.execute(
+                        "DELETE FROM plan_sections WHERE plan_id = ?1 AND section_fk = ?2",
+                        rusqlite::params![plan_id, member_fk],
+                    )?;
+                }
+            }
+        }
+
+        // Add what the solution brings that membership lacks. The insert is
+        // a no-op for rows that survived reconciliation, so their pin state
+        // is never rewritten.
+        for &(_, section_fk, _) in &resolved {
+            tx.execute(
+                "INSERT INTO plan_sections (plan_id, section_fk, pinned) VALUES (?1, ?2, 0)
+                 ON CONFLICT (plan_id, section_fk) DO NOTHING",
+                rusqlite::params![plan_id, section_fk],
+            )?;
+        }
+
         tx.commit()?;
         Ok(())
     }
 
-    /// The plan's members as the solver's fixed input (ticket 14): identity,
-    /// codes, and schedule blocks. Only members are returned; the solve
-    /// fills everything else around them.
+    /// The plan's members as solver input (ticket 14): identity, codes,
+    /// schedule blocks, and the pin state the solve obeys (ticket 42).
+    /// Only members are returned; the solve fills everything else around
+    /// them.
     pub fn plan_fixed_sections(&self, plan_id: &str) -> Result<Vec<FixedSection>, StoreError> {
         plan_scope(&self.conn, plan_id)?;
         let mut stmt = self.conn.prepare(
-            "SELECT s.id, s.course_id, c.code, s.section_id, s.section_code
+            "SELECT s.id, s.course_id, c.code, s.section_id, s.section_code, ps.pinned
              FROM plan_sections ps
              JOIN sections s ON s.id = ps.section_fk
              JOIN courses c ON c.campus_id = s.campus_id AND c.session_id = s.session_id
@@ -792,17 +911,19 @@ impl Store {
                 row.get::<_, String>(2)?,
                 row.get::<_, i64>(3)?,
                 row.get::<_, String>(4)?,
+                row.get::<_, i64>(5)? != 0,
             ))
         })?;
         let mut fixed = Vec::new();
         for row in rows {
-            let (section_fk, course_id, course_code, section_id, section_code) = row?;
+            let (section_fk, course_id, course_code, section_id, section_code, pinned) = row?;
             fixed.push(FixedSection {
                 course_id,
                 course_code,
                 section_id,
                 section_code,
                 blocks: read_wire_blocks(&self.conn, section_fk)?,
+                pinned,
             });
         }
         Ok(fixed)
@@ -1345,15 +1466,15 @@ fn insert_plan_tx(
     Ok(())
 }
 
-fn add_section_tx(
+fn resolve_scoped_section_tx(
     tx: &Transaction<'_>,
     plan_id: &str,
     course_id: i64,
     section_id: i64,
-) -> Result<(), StoreError> {
+) -> Result<i64, StoreError> {
     let (plan_campus, plan_session) = plan_scope(tx, plan_id)?;
-    let section_fk = match scoped_section_fk(tx, plan_campus, plan_session, course_id, section_id)? {
-        Some(section_fk) => section_fk,
+    match scoped_section_fk(tx, plan_campus, plan_session, course_id, section_id)? {
+        Some(section_fk) => Ok(section_fk),
         None => {
             // Distinguish "captured under another scope" from "never
             // captured": both fail, but the error names the real cause.
@@ -1365,7 +1486,7 @@ fn add_section_tx(
                     |row| Ok((row.get(0)?, row.get(1)?)),
                 )
                 .optional()?;
-            return match elsewhere {
+            match elsewhere {
                 Some((section_campus, section_session)) => Err(StoreError::ScopeMismatch {
                     plan_id: plan_id.to_string(),
                     plan_campus_id: plan_campus,
@@ -1377,9 +1498,18 @@ fn add_section_tx(
                     course_id,
                     section_id,
                 }),
-            };
+            }
         }
-    };
+    }
+}
+
+fn add_section_tx(
+    tx: &Transaction<'_>,
+    plan_id: &str,
+    course_id: i64,
+    section_id: i64,
+) -> Result<(), StoreError> {
+    let section_fk = resolve_scoped_section_tx(tx, plan_id, course_id, section_id)?;
 
     tx.execute(
         "INSERT INTO plan_sections (plan_id, section_fk, pinned) VALUES (?1, ?2, 0)
@@ -4284,6 +4414,176 @@ mod tests {
         let plan = store.get_plan("p1").expect("reload");
         assert_eq!(plan.sections.len(), 1);
         assert!(plan.sections[0].pinned);
+    }
+
+    #[test]
+    fn apply_solution_replaces_an_unpinned_member_without_duplication() {
+        // Ticket 42: applying must reconcile, not accumulate. The old S01
+        // of the solved course goes; the new one arrives; the pinned member
+        // of an untouched course stays exactly as chosen.
+        let mut store = store();
+        store.create_plan("p1", "T1 load", &SCOPE, T1, false).expect("plan");
+        store
+            .record_capture(
+                &SCOPE,
+                &[
+                    parsed_section(2923, 384, "S01", None, Some(10), vec![]),
+                    parsed_section(564, 737, "Y11", None, Some(10), vec![]),
+                    parsed_section(564, 738, "Y12", None, Some(10), vec![]),
+                ],
+                T1,
+            )
+            .expect("capture two courses with alternatives");
+        store.add_section_to_plan("p1", 2923, 384).expect("choose pinned");
+        store.set_section_pinned("p1", 2923, 384, true).expect("pin");
+        store.add_section_to_plan("p1", 564, 737).expect("choose replaceable");
+
+        store
+            .apply_solution(
+                "p1",
+                &[
+                    SectionRef { course_id: 2923, section_id: 384 },
+                    SectionRef { course_id: 564, section_id: 738 },
+                ],
+            )
+            .expect("apply reconciles");
+
+        let plan = store.get_plan("p1").expect("reload");
+        assert_eq!(
+            plan.sections
+                .iter()
+                .map(|section| (section.course_id, section.section_id, section.pinned))
+                .collect::<Vec<_>>(),
+            // Members come back ordered by course id, and 564 < 2923.
+            vec![(564, 738, false), (2923, 384, true)],
+            "pinned untouched, replaced gone, new added"
+        );
+        assert_eq!(
+            count(&store.conn, "SELECT COUNT(*) FROM plan_sections"),
+            2,
+            "no duplicate course membership was written"
+        );
+    }
+
+    #[test]
+    fn apply_solution_preserves_pin_state_of_surviving_members() {
+        // Applying a solution never silently pins or unpins anything: a
+        // section the student pinned is still pinned afterwards.
+        let mut store = store();
+        store.create_plan("p1", "T1 load", &SCOPE, T1, false).expect("plan");
+        store
+            .record_capture(&SCOPE, &[parsed_section(564, 737, "Y11", None, Some(10), vec![])], T1)
+            .expect("capture");
+        store.add_section_to_plan("p1", 564, 737).expect("choose");
+        store.set_section_pinned("p1", 564, 737, true).expect("pin");
+
+        store
+            .apply_solution("p1", &[SectionRef { course_id: 564, section_id: 737 }])
+            .expect("re-apply the very section that is pinned");
+
+        assert_eq!(pinned_flag(&store.conn, 737), 1, "pin state survived the apply");
+        assert_eq!(count(&store.conn, "SELECT COUNT(*) FROM plan_sections"), 1);
+    }
+
+    #[test]
+    fn apply_solution_refuses_to_override_a_pinned_member_and_writes_nothing() {
+        // A real solve always carries every pinned member, so a solution
+        // naming a different section of a pinned course cannot come from
+        // the solver — failing loudly beats silently duplicating membership.
+        let mut store = store();
+        store.create_plan("p1", "T1 load", &SCOPE, T1, false).expect("plan");
+        store
+            .record_capture(
+                &SCOPE,
+                &[
+                    parsed_section(2923, 384, "S01", None, Some(10), vec![]),
+                    parsed_section(2923, 385, "S02", None, Some(10), vec![]),
+                ],
+                T1,
+            )
+            .expect("capture alternatives");
+        store.add_section_to_plan("p1", 2923, 384).expect("choose");
+        store.set_section_pinned("p1", 2923, 384, true).expect("pin");
+
+        let err = store
+            .apply_solution("p1", &[SectionRef { course_id: 2923, section_id: 385 }])
+            .expect_err("a solution may not override a pinned member");
+        let message = err.to_string();
+        assert!(
+            message.contains("pins this course") && message.contains("384"),
+            "the error names the pin it would override, got: {message}"
+        );
+        assert_eq!(
+            count(&store.conn, "SELECT COUNT(*) FROM plan_sections"),
+            1,
+            "a refused apply writes nothing"
+        );
+        assert_eq!(pinned_flag(&store.conn, 384), 1);
+    }
+
+    #[test]
+    fn apply_solution_leaves_courses_outside_the_solution_alone() {
+        // Reconciliation speaks only about courses the solution names: an
+        // unpinned member of any other course is not the solve's to remove.
+        let mut store = store();
+        store.create_plan("p1", "T1 load", &SCOPE, T1, false).expect("plan");
+        store
+            .record_capture(
+                &SCOPE,
+                &[
+                    parsed_section(2923, 384, "S01", None, Some(10), vec![]),
+                    parsed_section(564, 737, "Y11", None, Some(10), vec![]),
+                ],
+                T1,
+            )
+            .expect("capture two courses");
+        store.add_section_to_plan("p1", 2923, 384).expect("manual pick");
+        store.add_section_to_plan("p1", 564, 737).expect("manual pick");
+
+        store
+            .apply_solution("p1", &[SectionRef { course_id: 564, section_id: 737 }])
+            .expect("apply covers one course only");
+
+        let plan = store.get_plan("p1").expect("reload");
+        assert_eq!(plan.sections.len(), 2, "nothing outside the solution was touched");
+    }
+
+    #[test]
+    fn apply_solution_rejects_a_solution_naming_two_sections_of_one_course() {
+        // A solution holds one section per course by definition; a caller
+        // sending two of the same course is malformed, and applying it must
+        // never write duplicate course membership (ticket 42).
+        let mut store = store();
+        store.create_plan("p1", "T1 load", &SCOPE, T1, false).expect("plan");
+        store
+            .record_capture(
+                &SCOPE,
+                &[
+                    parsed_section(2923, 384, "S01", None, Some(10), vec![]),
+                    parsed_section(2923, 385, "S02", None, Some(10), vec![]),
+                ],
+                T1,
+            )
+            .expect("capture two sections of one course");
+
+        let err = store
+            .apply_solution(
+                "p1",
+                &[
+                    SectionRef { course_id: 2923, section_id: 384 },
+                    SectionRef { course_id: 2923, section_id: 385 },
+                ],
+            )
+            .expect_err("a solution may not name two sections of one course");
+        assert!(
+            err.to_string().contains("one section per course"),
+            "the error names the violation, got: {err}"
+        );
+        assert_eq!(
+            count(&store.conn, "SELECT COUNT(*) FROM plan_sections"),
+            0,
+            "a refused apply writes nothing"
+        );
     }
 
     #[test]

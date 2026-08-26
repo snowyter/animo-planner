@@ -214,9 +214,15 @@ plan_sections(plan_id, section_fk, pinned)
 exclude-full · **minimize-campus-days** (exactly computable now that modality is per-day) ·
 **no-lone-F2F-day** (don't commute for a single 90-minute class)
 
-The solver is always **seeded from the current plan**: anything already chosen is treated as pinned,
-and the solve fills only the unassigned courses. There is no "solve from scratch" that discards
-your work — starting empty is just the degenerate case of the same operation.
+The solver is always **seeded from the current plan**: a **pinned** section is fixed; an
+**unpinned** one is its course's starting point, which the solve keeps when it can and otherwise
+swaps for another section of the same course — preferring existing choices wherever that costs
+nothing, and never dropping a course the plan holds. There is no "solve from scratch" that
+discards your work — starting empty is just the degenerate case of the same operation.
+
+> **Amended in ticket 42:** this paragraph used to say "anything already chosen is treated as
+> pinned", which made the pin flag decorative. CONTEXT.md's definition of **Pin** — fixed, with
+> the solve filling only around it — is the controlling one.
 
 ### Warnings (advisory, not filters)
 

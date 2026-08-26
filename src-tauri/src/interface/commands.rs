@@ -697,12 +697,12 @@ fn open_resume_token(token: &str, requested_plan_id: &str) -> Result<String, Str
     Ok(envelope.token)
 }
 
-/// Builds the seeded solver for a plan (ADR-0014): sections already chosen
-/// are fixed, and only unassigned courses — every other captured course of
-/// the plan's scope — are filled. Constraints and preset come from
-/// `args.options`. Also answers with the latest snapshot timestamp of the
-/// plan's scope (ticket 34), so the result can say how old the enrolment
-/// numbers behind any exclusion are.
+/// Builds the seeded solver for a plan (ADR-0014, ticket 42): pinned plan
+/// members are fixed, unpinned members seed their own course's search, and
+/// every other captured course of the plan's scope is filled. Constraints
+/// and preset come from `args.options`. Also answers with the latest
+/// snapshot timestamp of the plan's scope (ticket 34), so the result can
+/// say how old the enrolment numbers behind any exclusion are.
 fn begin_solve(store: &Store, args: &SolvePlanArgs) -> Result<(Solver, Option<String>), String> {
     let detail = store.get_plan(&args.plan_id).map_err(|err| err.to_string())?;
     let scope = CaptureScope {
@@ -718,13 +718,15 @@ fn begin_solve(store: &Store, args: &SolvePlanArgs) -> Result<(Solver, Option<St
             section_id: section.section_id,
             section_code: section.section_code.clone(),
             blocks: section.blocks.clone(),
+            pinned: section.pinned,
         })
         .collect();
     let catalog = store.solver_courses(&scope).map_err(|err| err.to_string())?;
-    // Plan sections are never candidates (ticket 14): a full section the
-    // student already chose is fixed, never excluded. The catalog still
-    // lists its course, but every assigned course is dropped before any
-    // constraint runs, so exclude-full cannot touch it.
+    // Pinned plan sections are never candidates (ticket 14): a full section
+    // the student pinned is fixed, never excluded. An *unpinned* member's
+    // course stays searchable (ticket 42) — its own choice leads the scan —
+    // so exclude-full may swap it for one with seats, decided in favour of
+    // exclude-full.
     let stamp = store.latest_snapshot_at(&scope).map_err(|err| err.to_string())?;
     Ok((Solver::new(catalog, fixed, args.options.clone()), stamp))
 }
@@ -1866,7 +1868,9 @@ mod tests {
     #[test]
     fn solve_seeds_from_the_current_plan_and_returns_scored_ranked_solutions() {
         let mut store = seeded_store();
-        // The plan already chose C2923/S01 (Mon); the solve fills C564.
+        // The plan already chose C2923/S01 (Mon), unpinned: the solve may
+        // keep it or swap it within C2923, but C2923 stays in every result
+        // (ticket 42). Here keeping it is the only valid completion.
         store.add_section_to_plan("p1", 2923, 384).expect("choose");
         let args = SolvePlanArgs { plan_id: "p1".into(), options: solve_options() };
 
@@ -1886,9 +1890,14 @@ mod tests {
         );
         let solution = &result.solutions[0];
         assert_eq!(solution.id, "solution-0", "every solution carries a stable id");
+        let seeded = solution
+            .sections
+            .iter()
+            .find(|section| section.section_id == 384)
+            .expect("the chosen plan section survives in the result");
         assert!(
-            solution.sections.iter().any(|s| s.pinned && s.section_id == 384),
-            "the chosen plan section is fixed in the result"
+            !seeded.pinned,
+            "pin state crosses the seam truthfully: this member was never pinned"
         );
         assert!(
             solution.sections.iter().any(|s| !s.pinned && s.course_id == 564),
@@ -1911,6 +1920,50 @@ mod tests {
             panic!("an unknown plan must fail loudly");
         };
         assert!(err.contains("not found"), "got: {err}");
+    }
+
+    #[test]
+    fn solving_a_plan_with_nothing_pinned_swaps_a_choice_that_leaves_no_room() {
+        // The reported case, through the real seam: pin nothing, choose
+        // C2923/S01 which collides with the only section of captured C564,
+        // and the solve still answers — by swapping the unpinned choice for
+        // its own course's alternative.
+        let mut store = store();
+        let scope = CaptureScope { campus_id: 7, session_id: 155 };
+        store
+            .record_capture(
+                &scope,
+                &[
+                    parsed_section(2923, 384, "S01", vec![block(Day::Mon, 450)]),
+                    parsed_section(2923, 385, "S02", vec![block(Day::Tue, 450)]),
+                    parsed_section(564, 737, "Y11", vec![block(Day::Mon, 450)]),
+                ],
+                T1,
+            )
+            .expect("capture");
+        store.create_plan("p1", "T1 load", &scope, T1, false).expect("plan");
+        store.add_section_to_plan("p1", 2923, 384).expect("choose, deliberately unpinned");
+
+        let args = SolvePlanArgs { plan_id: "p1".into(), options: solve_options() };
+        let (mut solver, stamp) = begin_solve(&store, &args).expect("the solver builds");
+        let result = finish_outcome(solver.run(), &args.plan_id, false, stamp);
+
+        assert_eq!(result.status, SolveStatus::Complete);
+        assert_eq!(result.solutions.len(), 1);
+        let picked: Vec<(i64, i64)> = result.solutions[0]
+            .sections
+            .iter()
+            .map(|section| (section.course_id, section.section_id))
+            .collect();
+        assert_eq!(
+            picked,
+            vec![(564, 737), (2923, 385)],
+            "S01 made way for Y11 within its own course; nothing was dropped"
+        );
+        assert!(
+            result.solutions[0].sections.iter().all(|section| !section.pinned),
+            "nothing in this plan is pinned and the result says so"
+        );
     }
 
     #[test]
