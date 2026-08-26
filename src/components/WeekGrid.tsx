@@ -14,6 +14,7 @@
  */
 
 import { useState, useEffect, useRef, useMemo } from "react";
+import { createPortal } from "react-dom";
 import {
   Building2,
   Globe,
@@ -48,6 +49,8 @@ import {
   describeBlockConflict,
   describeMissingSection,
   getMenuPlacement,
+  computeMenuPosition,
+  type AnchorRect,
 } from "../core/gridMenu";
 import { Button } from "./ui/button";
 import { Badge } from "./ui/badge";
@@ -63,6 +66,7 @@ import {
 export interface OpenMenuState {
   section: PlanSection;
   block: ScheduleBlock;
+  anchorRect?: AnchorRect;
 }
 
 export interface WeekGridProps {
@@ -146,7 +150,7 @@ export function WeekGrid({
 
   const menuRef = useRef<HTMLDivElement>(null);
 
-  // Close context menu on click-outside, scroll, or Escape
+  // Close context menu on click-outside, scroll, resize, or Escape
   useEffect(() => {
     if (!openMenu) return;
 
@@ -160,6 +164,10 @@ export function WeekGrid({
       setOpenMenu(null);
     }
 
+    function handleResize() {
+      setOpenMenu(null);
+    }
+
     function handleKeyDown(event: KeyboardEvent) {
       if (event.key === "Escape") {
         setOpenMenu(null);
@@ -168,11 +176,13 @@ export function WeekGrid({
 
     document.addEventListener("mousedown", handleMouseDown);
     window.addEventListener("scroll", handleScroll, true);
+    window.addEventListener("resize", handleResize);
     document.addEventListener("keydown", handleKeyDown);
 
     return () => {
       document.removeEventListener("mousedown", handleMouseDown);
       window.removeEventListener("scroll", handleScroll, true);
+      window.removeEventListener("resize", handleResize);
       document.removeEventListener("keydown", handleKeyDown);
     };
   }, [openMenu]);
@@ -420,8 +430,6 @@ export function WeekGrid({
                         }
                       : {};
 
-                    const menuPlacement = getMenuPlacement(block.day, block.startMin);
-
                     return (
                       <div
                         key={`${isGhost ? "ghost-" : ""}${section.courseId}-${section.sectionId}-${block.day}-${block.startMin}`}
@@ -444,9 +452,18 @@ export function WeekGrid({
                           if (!interactive || isGhost) return;
                           e.preventDefault();
                           e.stopPropagation();
+                          const rect = e.currentTarget.getBoundingClientRect();
                           setOpenMenu({
                             section: section as PlanSection,
                             block,
+                            anchorRect: {
+                              top: rect.top,
+                              left: rect.left,
+                              right: rect.right,
+                              bottom: rect.bottom,
+                              width: rect.width,
+                              height: rect.height,
+                            },
                           });
                         }}
                         onKeyDown={(e) => {
@@ -459,9 +476,18 @@ export function WeekGrid({
                           ) {
                             e.preventDefault();
                             e.stopPropagation();
+                            const rect = e.currentTarget.getBoundingClientRect();
                             setOpenMenu({
                               section: section as PlanSection,
                               block,
+                              anchorRect: {
+                                top: rect.top,
+                                left: rect.left,
+                                right: rect.right,
+                                bottom: rect.bottom,
+                                width: rect.width,
+                                height: rect.height,
+                              },
                             });
                           }
                         }}
@@ -480,11 +506,15 @@ export function WeekGrid({
                           borderLeftStyle: isF2F ? "solid" : "dashed",
                           ...hatchedBgStyle,
                         }}
-                        title={blockTooltip(section, block, {
-                          isF2F,
-                          isGhost,
-                          isMissing,
-                        })}
+                        title={
+                          isCurrentMenuOpen
+                            ? undefined
+                            : blockTooltip(section, block, {
+                                isF2F,
+                                isGhost,
+                                isMissing,
+                              })
+                        }
                       >
                         {/* Top row: Course Code, Section Code, Badges */}
                         <div className="flex items-start justify-between gap-1 leading-tight">
@@ -552,150 +582,6 @@ export function WeekGrid({
                         <div className="text-[9px] font-mono opacity-70 mt-0.5">
                           {formatMinutesToTime12(block.startMin)} – {formatMinutesToTime12(block.endMin)}
                         </div>
-
-                        {/* Context Menu (Ticket 41) */}
-                        {isCurrentMenuOpen && interactive && (
-                          <div
-                            ref={menuRef}
-                            data-testid="grid-context-menu"
-                            role="menu"
-                            aria-orientation="vertical"
-                            className={`absolute z-50 w-56 rounded-xl border border-slate-200 bg-white p-1.5 shadow-xl ring-1 ring-black/5 text-slate-900 text-xs font-sans ${menuPlacement.className}`}
-                            onClick={(e) => e.stopPropagation()}
-                          >
-                            <div className="px-2 py-1 border-b border-slate-100 text-[11px] font-semibold text-slate-500 truncate">
-                              {section.courseCode} {section.sectionCode}
-                            </div>
-
-                            <div className="py-1 space-y-0.5">
-                              {/* 1. View details */}
-                              <button
-                                type="button"
-                                role="menuitem"
-                                onClick={() => {
-                                  setOpenMenu(null);
-                                  setDetailsSection(section as PlanSection);
-                                }}
-                                className="flex w-full items-center gap-2 rounded-lg px-2 py-1.5 text-left text-xs text-slate-700 hover:bg-slate-50 hover:text-slate-900 cursor-pointer"
-                              >
-                                <Info className="h-3.5 w-3.5 text-slate-500" />
-                                <span>View details</span>
-                              </button>
-
-                              {/* 2. Pin / Unpin */}
-                              <button
-                                type="button"
-                                role="menuitem"
-                                onClick={() => {
-                                  setOpenMenu(null);
-                                  onTogglePin?.(section as PlanSection, !isPinned);
-                                }}
-                                className="flex w-full items-center gap-2 rounded-lg px-2 py-1.5 text-left text-xs text-slate-700 hover:bg-slate-50 hover:text-slate-900 cursor-pointer"
-                              >
-                                {isPinned ? (
-                                  <>
-                                    <PinOff className="h-3.5 w-3.5 text-slate-500" />
-                                    <span>Unpin section</span>
-                                  </>
-                                ) : (
-                                  <>
-                                    <Pin className="h-3.5 w-3.5 text-slate-500" />
-                                    <span>Pin section</span>
-                                  </>
-                                )}
-                              </button>
-
-                              {/* 3. Show other sections of this course */}
-                              <button
-                                type="button"
-                                role="menuitem"
-                                onClick={() => {
-                                  setOpenMenu(null);
-                                  onShowOtherSections?.(section.courseId);
-                                }}
-                                className="flex w-full items-center gap-2 rounded-lg px-2 py-1.5 text-left text-xs text-slate-700 hover:bg-slate-50 hover:text-slate-900 cursor-pointer"
-                              >
-                                <BookOpen className="h-3.5 w-3.5 text-slate-500" />
-                                <span>Show other sections of this course</span>
-                              </button>
-
-                              {/* 4. Copy details */}
-                              <button
-                                type="button"
-                                role="menuitem"
-                                onClick={() => {
-                                  handleCopySectionDetails(section);
-                                  setOpenMenu(null);
-                                }}
-                                className="flex w-full items-center gap-2 rounded-lg px-2 py-1.5 text-left text-xs text-slate-700 hover:bg-slate-50 hover:text-slate-900 cursor-pointer"
-                              >
-                                {copiedId === `${section.courseId}-${section.sectionId}` ? (
-                                  <>
-                                    <Check className="h-3.5 w-3.5 text-emerald-600" />
-                                    <span className="text-emerald-700 font-medium">Copied!</span>
-                                  </>
-                                ) : (
-                                  <>
-                                    <Copy className="h-3.5 w-3.5 text-slate-500" />
-                                    <span>Copy details</span>
-                                  </>
-                                )}
-                              </button>
-
-                              {/* 5. Why is this conflicting? (Conditional: conflicting blocks only) */}
-                              {isConflicting && (
-                                <button
-                                  type="button"
-                                  role="menuitem"
-                                  onClick={() => {
-                                    setOpenMenu(null);
-                                    setConflictExplanation({
-                                      section: section as PlanSection,
-                                      block,
-                                    });
-                                  }}
-                                  className="flex w-full items-center gap-2 rounded-lg px-2 py-1.5 text-left text-xs text-red-700 hover:bg-red-50 cursor-pointer font-medium"
-                                >
-                                  <AlertTriangle className="h-3.5 w-3.5 text-red-600" />
-                                  <span>Why is this conflicting?</span>
-                                </button>
-                              )}
-
-                              {/* 6. Why is this flagged? (Conditional: missing blocks only) */}
-                              {isMissing && (
-                                <button
-                                  type="button"
-                                  role="menuitem"
-                                  onClick={() => {
-                                    setOpenMenu(null);
-                                    setFlaggedExplanation(section as PlanSection);
-                                  }}
-                                  className="flex w-full items-center gap-2 rounded-lg px-2 py-1.5 text-left text-xs text-amber-800 hover:bg-amber-50 cursor-pointer font-medium"
-                                >
-                                  <AlertCircle className="h-3.5 w-3.5 text-amber-600" />
-                                  <span>Why is this flagged?</span>
-                                </button>
-                              )}
-
-                              {/* Separator before destructive action */}
-                              <div className="my-1 border-t border-slate-100" />
-
-                              {/* 7. Remove from schedule (Destructive, last) */}
-                              <button
-                                type="button"
-                                role="menuitem"
-                                onClick={() => {
-                                  setOpenMenu(null);
-                                  onRemoveSection?.(section as PlanSection);
-                                }}
-                                className="flex w-full items-center gap-2 rounded-lg px-2 py-1.5 text-left text-xs text-red-600 hover:bg-red-50 hover:text-red-700 cursor-pointer font-medium"
-                              >
-                                <Trash2 className="h-3.5 w-3.5" />
-                                <span>Remove from schedule</span>
-                              </button>
-                            </div>
-                          </div>
-                        )}
                       </div>
                     );
                   })}
@@ -705,6 +591,190 @@ export function WeekGrid({
           </div>
         </div>
       </div>
+
+      {/* Context Menu (Ticket 41, Ticket 45: rendered outside grid subtree and portaled to body in browser) */}
+      {(() => {
+        if (!openMenu || !interactive) return null;
+
+        const { section, block, anchorRect } = openMenu;
+        const isPinned = "pinned" in section ? section.pinned : false;
+        const isMissing = "missing" in section ? section.missing : false;
+        const isConflicting = isBlockConflicting(
+          block,
+          { courseId: section.courseId, sectionId: section.sectionId },
+          conflicts
+        );
+
+        let computedStyle: React.CSSProperties;
+        let placementClass: string;
+
+        if (anchorRect && typeof window !== "undefined") {
+          const viewport = {
+            width: window.innerWidth,
+            height: window.innerHeight,
+          };
+          const pos = computeMenuPosition(anchorRect, viewport);
+          computedStyle = {
+            position: "fixed",
+            top: `${pos.top}px`,
+            left: `${pos.left}px`,
+          };
+          placementClass = pos.alignY === "bottom" ? "origin-bottom" : "origin-top";
+        } else {
+          // Fallback for SSR / static markup tests
+          computedStyle = {};
+          placementClass = getMenuPlacement(block.day, block.startMin).className;
+        }
+
+        const menuJsx = (
+          <div
+            ref={menuRef}
+            data-testid="grid-context-menu"
+            role="menu"
+            aria-orientation="vertical"
+            className={`z-50 w-56 rounded-xl border border-slate-200 bg-white p-1.5 shadow-xl ring-1 ring-black/5 text-slate-900 text-xs font-sans ${placementClass}`}
+            style={computedStyle}
+            onClick={(e) => e.stopPropagation()}
+          >
+            <div className="px-2 py-1 border-b border-slate-100 text-[11px] font-semibold text-slate-500 truncate">
+              {section.courseCode} {section.sectionCode}
+            </div>
+
+            <div className="py-1 space-y-0.5">
+              {/* 1. View details */}
+              <button
+                type="button"
+                role="menuitem"
+                onClick={() => {
+                  setOpenMenu(null);
+                  setDetailsSection(section as PlanSection);
+                }}
+                className="flex w-full items-center gap-2 rounded-lg px-2 py-1.5 text-left text-xs text-slate-700 hover:bg-slate-50 hover:text-slate-900 cursor-pointer"
+              >
+                <Info className="h-3.5 w-3.5 text-slate-500" />
+                <span>View details</span>
+              </button>
+
+              {/* 2. Pin / Unpin */}
+              <button
+                type="button"
+                role="menuitem"
+                onClick={() => {
+                  setOpenMenu(null);
+                  onTogglePin?.(section as PlanSection, !isPinned);
+                }}
+                className="flex w-full items-center gap-2 rounded-lg px-2 py-1.5 text-left text-xs text-slate-700 hover:bg-slate-50 hover:text-slate-900 cursor-pointer"
+              >
+                {isPinned ? (
+                  <>
+                    <PinOff className="h-3.5 w-3.5 text-slate-500" />
+                    <span>Unpin section</span>
+                  </>
+                ) : (
+                  <>
+                    <Pin className="h-3.5 w-3.5 text-slate-500" />
+                    <span>Pin section</span>
+                  </>
+                )}
+              </button>
+
+              {/* 3. Show other sections of this course */}
+              <button
+                type="button"
+                role="menuitem"
+                onClick={() => {
+                  setOpenMenu(null);
+                  onShowOtherSections?.(section.courseId);
+                }}
+                className="flex w-full items-center gap-2 rounded-lg px-2 py-1.5 text-left text-xs text-slate-700 hover:bg-slate-50 hover:text-slate-900 cursor-pointer"
+              >
+                <BookOpen className="h-3.5 w-3.5 text-slate-500" />
+                <span>Show other sections of this course</span>
+              </button>
+
+              {/* 4. Copy details */}
+              <button
+                type="button"
+                role="menuitem"
+                onClick={() => {
+                  handleCopySectionDetails(section);
+                  setOpenMenu(null);
+                }}
+                className="flex w-full items-center gap-2 rounded-lg px-2 py-1.5 text-left text-xs text-slate-700 hover:bg-slate-50 hover:text-slate-900 cursor-pointer"
+              >
+                {copiedId === `${section.courseId}-${section.sectionId}` ? (
+                  <>
+                    <Check className="h-3.5 w-3.5 text-emerald-600" />
+                    <span className="text-emerald-700 font-medium">Copied!</span>
+                  </>
+                ) : (
+                  <>
+                    <Copy className="h-3.5 w-3.5 text-slate-500" />
+                    <span>Copy details</span>
+                  </>
+                )}
+              </button>
+
+              {/* 5. Why is this conflicting? (Conditional: conflicting blocks only) */}
+              {isConflicting && (
+                <button
+                  type="button"
+                  role="menuitem"
+                  onClick={() => {
+                    setOpenMenu(null);
+                    setConflictExplanation({
+                      section: section as PlanSection,
+                      block,
+                    });
+                  }}
+                  className="flex w-full items-center gap-2 rounded-lg px-2 py-1.5 text-left text-xs text-red-700 hover:bg-red-50 cursor-pointer font-medium"
+                >
+                  <AlertTriangle className="h-3.5 w-3.5 text-red-600" />
+                  <span>Why is this conflicting?</span>
+                </button>
+              )}
+
+              {/* 6. Why is this flagged? (Conditional: missing blocks only) */}
+              {isMissing && (
+                <button
+                  type="button"
+                  role="menuitem"
+                  onClick={() => {
+                    setOpenMenu(null);
+                    setFlaggedExplanation(section as PlanSection);
+                  }}
+                  className="flex w-full items-center gap-2 rounded-lg px-2 py-1.5 text-left text-xs text-amber-800 hover:bg-amber-50 cursor-pointer font-medium"
+                >
+                  <AlertCircle className="h-3.5 w-3.5 text-amber-600" />
+                  <span>Why is this flagged?</span>
+                </button>
+              )}
+
+              {/* Separator before destructive action */}
+              <div className="my-1 border-t border-slate-100" />
+
+              {/* 7. Remove from schedule (Destructive, last) */}
+              <button
+                type="button"
+                role="menuitem"
+                onClick={() => {
+                  setOpenMenu(null);
+                  onRemoveSection?.(section as PlanSection);
+                }}
+                className="flex w-full items-center gap-2 rounded-lg px-2 py-1.5 text-left text-xs text-red-600 hover:bg-red-50 hover:text-red-700 cursor-pointer font-medium"
+              >
+                <Trash2 className="h-3.5 w-3.5" />
+                <span>Remove from schedule</span>
+              </button>
+            </div>
+          </div>
+        );
+
+        if (typeof document !== "undefined" && document.body) {
+          return createPortal(menuJsx, document.body);
+        }
+        return menuJsx;
+      })()}
 
       {/* Section Details Modal */}
       {detailsSection && (

@@ -706,7 +706,113 @@ describe("WeekGrid component", () => {
       expect(html).toContain("ADR-0008");
       expect(html).toContain("never automatically deleted");
     });
+
+    it("renders context menu outside the grid's overflow scroll container (ticket 45)", () => {
+      const section = makeSection(
+        2923,
+        384,
+        "GEARTAP",
+        "S11",
+        [makeBlock("MON", 450, 540, "F2F", "L226")]
+      );
+
+      const html = renderToStaticMarkup(
+        React.createElement(WeekGrid, {
+          sections: [section],
+          initialMenu: { section, block: section.blocks[0] },
+        })
+      );
+
+      expect(html).toContain('data-testid="grid-context-menu"');
+
+      // The menu must render after the grid canvas and day columns, outside the clipping subtree
+      const overflowStartIndex = html.indexOf('class="overflow-x-auto"');
+      const menuIndex = html.indexOf('data-testid="grid-context-menu"');
+      expect(overflowStartIndex).toBeGreaterThan(-1);
+      expect(menuIndex).toBeGreaterThan(-1);
+
+      // The grid canvas and all schedule blocks precede the context menu
+      const canvasStartIndex = html.indexOf('class="relative grid grid-cols-[70px_repeat(6,1fr)]');
+      expect(canvasStartIndex).toBeGreaterThan(-1);
+      expect(canvasStartIndex).toBeLessThan(menuIndex);
+
+      // The canvasSection containing all day columns and blocks must not contain the menu
+      const canvasSection = html.slice(canvasStartIndex, menuIndex);
+      expect(canvasSection).not.toContain('data-testid="grid-context-menu"');
+    });
+
+    it("suppresses native hover tooltip on the block when context menu is open for that block (ticket 45)", () => {
+      const sectionA = makeSection(
+        2923,
+        384,
+        "GEARTAP",
+        "S11",
+        [makeBlock("MON", 450, 540, "F2F", "L226")]
+      );
+      const sectionB = makeSection(
+        564,
+        737,
+        "CSINTSY",
+        "Z01",
+        [makeBlock("WED", 450, 540, "ONLINE")]
+      );
+
+      const html = renderToStaticMarkup(
+        React.createElement(WeekGrid, {
+          sections: [sectionA, sectionB],
+          initialMenu: { section: sectionA, block: sectionA.blocks[0] },
+        })
+      );
+
+      // Section B (menu not open) has its normal tooltip
+      expect(html).toContain("CSINTSY Z01");
+      expect(html).toContain("title=\"CSINTSY Z01");
+
+      // Section A (menu is open) does NOT have title="GEARTAP S11..." on its block
+      expect(html).not.toContain("title=\"GEARTAP S11");
+    });
+
+    it("flips context menu vertically on a 2:30 PM (14:30) block (ticket 45)", () => {
+      const section = makeSection(
+        2923,
+        384,
+        "GEARTAP",
+        "S11",
+        [makeBlock("MON", 870, 960, "F2F", "L226")]
+      );
+
+      const html = renderToStaticMarkup(
+        React.createElement(WeekGrid, {
+          sections: [section],
+          initialMenu: { section, block: section.blocks[0] },
+        })
+      );
+
+      expect(html).toContain('data-testid="grid-context-menu"');
+      expect(html).toContain("bottom-full");
+    });
+
+    it("flips context menu horizontally on a Saturday column block (ticket 45)", () => {
+      const section = makeSection(
+        2923,
+        384,
+        "GEARTAP",
+        "S11",
+        [makeBlock("SAT", 450, 540, "F2F", "L226")]
+      );
+
+      const html = renderToStaticMarkup(
+        React.createElement(WeekGrid, {
+          sections: [section],
+          initialMenu: { section, block: section.blocks[0] },
+        })
+      );
+
+      expect(html).toContain('data-testid="grid-context-menu"');
+      expect(html).toContain("right-0");
+    });
   });
 });
+
 
 

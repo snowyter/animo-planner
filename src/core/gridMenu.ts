@@ -159,11 +159,11 @@ export interface MenuPlacement {
 
 /**
  * Calculates context menu placement based on column day and start time
- * to prevent clipping off right edge (Sat) or bottom edge (evening).
+ * to prevent clipping off right edge (Sat) or bottom edge (evening / 2:30 PM+).
  */
 export function getMenuPlacement(day: Day, startMin: number): MenuPlacement {
   const isRightEdge = day === "FRI" || day === "SAT";
-  const isBottomEdge = startMin >= 960; // 4:00 PM or later (lattice slots: 16:15, 18:00)
+  const isBottomEdge = startMin >= 870; // 2:30 PM (14:30) or later (lattice slots: 14:30, 16:15, 18:00)
 
   const alignX = isRightEdge ? "right" : "left";
   const alignY = isBottomEdge ? "bottom" : "top";
@@ -177,3 +177,73 @@ export function getMenuPlacement(day: Day, startMin: number): MenuPlacement {
     className: `${xClass} ${yClass}`,
   };
 }
+
+export interface AnchorRect {
+  top: number;
+  left: number;
+  right: number;
+  bottom: number;
+  width?: number;
+  height?: number;
+}
+
+export interface ViewportBounds {
+  width: number;
+  height: number;
+}
+
+export interface MenuDimensions {
+  width: number;
+  height: number;
+}
+
+export interface ComputedMenuPosition {
+  top: number;
+  left: number;
+  alignX: "left" | "right";
+  alignY: "top" | "bottom";
+}
+
+/**
+ * Computes absolute/fixed viewport position for context menu with flipping
+ * when opening near the viewport boundaries (Ticket 45).
+ */
+export function computeMenuPosition(
+  anchorRect: AnchorRect,
+  viewport: ViewportBounds,
+  menuSize: MenuDimensions = { width: 224, height: 250 },
+  margin = 8,
+  offset = 4
+): ComputedMenuPosition {
+  const isRightOverflow = anchorRect.left + menuSize.width + margin > viewport.width;
+  const isBottomOverflow = anchorRect.bottom + offset + menuSize.height + margin > viewport.height;
+
+  const alignX: "left" | "right" = isRightOverflow ? "right" : "left";
+  const alignY: "top" | "bottom" = isBottomOverflow ? "bottom" : "top";
+
+  let left: number;
+  if (alignX === "left") {
+    left = anchorRect.left;
+  } else {
+    left = anchorRect.right - menuSize.width;
+  }
+
+  let top: number;
+  if (alignY === "top") {
+    top = anchorRect.bottom + offset;
+  } else {
+    top = anchorRect.top - menuSize.height - offset;
+  }
+
+  // Clamp within viewport margins
+  left = Math.max(margin, Math.min(left, viewport.width - menuSize.width - margin));
+  top = Math.max(margin, Math.min(top, viewport.height - menuSize.height - margin));
+
+  return {
+    top,
+    left,
+    alignX,
+    alignY,
+  };
+}
+
