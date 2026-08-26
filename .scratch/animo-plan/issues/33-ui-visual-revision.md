@@ -4,7 +4,7 @@
 
 The app is functionally complete and looks like a functional prototype. This ticket is about how it feels to use, under two hard rules: **the week grid and the section list are working surfaces**, and **nothing added here may cost frame rate or battery.**
 
-**Blocked by:** 44, 45 — both change surfaces this ticket restyles, and 45 moves where the context menu mounts
+**Blocked by:** None — 44 and 45 are merged. This is the last open ticket, and it wants a clear field: it touches almost every component, so nothing else should be in flight while it runs
 
 **Status:** ready-for-agent
 
@@ -15,6 +15,8 @@ Six tickets landed after this was drafted. The surface inventory is now:
 `AboutDialog` · `AppHeader` · `CaptureBar` · `CreatePlanDialog` · `ExportMenu` · `MissingSectionBanner` · `OnboardingDialog` · `PlanList` · `PlanWorkspace` · `ReportBrokenCaptureDialog` · `SectionPicker` · `SolutionThumbnail` · `SolveDialog` · `UpdateNotice` · `WeekGrid`
 
 New since drafting: **`UpdateNotice`** (ticket 39), the **week-grid context menu and details modal** (41, 45), the **solve dialog's "what would move" report and pin controls** (43), and the **export container's title** (44). All of them are part of this pass rather than the one un-designed corner.
+
+**The sample-plan feature was also removed**, which reshaped two surfaces this ticket restyles. `PlanList`'s empty state now offers a single action instead of two, and `OnboardingDialog`'s first screen is a one-column path rather than the two equal-weight options it was built as — its grid is `grid-cols-1` holding one card. Do not design against a choice screen that no longer exists; the empty state and that first screen are now the clearest places where a considered layout is worth the effort, because both lost half their content and neither was redesigned around the loss.
 
 ## Three findings from the current code
 
@@ -44,7 +46,7 @@ This runs in WebView2 on student laptops, during enlistment, often on battery, w
 Four recent tickets fixed defects whose causes are exactly the CSS this ticket wants to add. **Every one can be re-broken by a well-meaning visual change.**
 
 - [ ] **`opacity`, `transform`, `filter`, `backdrop-filter`, and `will-change` all create stacking contexts** — precisely what trapped the context menu behind neighbouring blocks (ticket 45). Adding any of them to a grid block, a day column, or a grid ancestor can re-break it. Verify the menu still paints above every block afterwards
-- [ ] **`transform`, `filter`, and `backdrop-filter` on an ancestor make it the containing block for `position: fixed` descendants.** Ticket 45's menu is positioned against the viewport; a transform on a grid ancestor will silently mis-place it
+- [ ] **`transform`, `filter`, and `backdrop-filter` on an ancestor make it the containing block for `position: fixed` descendants.** This is now concrete, not hypothetical: ticket 45 portals the menu to `document.body` and positions it with `position: fixed`. Any of those properties on an ancestor of wherever the menu ends up mounted silently mis-places it, and it will look like ticket 45 was never fixed
 - [ ] **The PNG export container keeps ticket 40's shape**: off-screen positioning on the wrapper, captured node statically positioned. Its guard test must keep passing, and the exported image must still contain the schedule — export one and look at it
 - [ ] **The exported image keeps ticket 44's restraint.** This ticket's ambient surfaces do not belong in the PNG
 - [ ] **Nothing interactive or animated leaks into the export.** `ExportMenu` renders its own `WeekGrid`
