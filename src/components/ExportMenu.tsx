@@ -1,13 +1,9 @@
 import { useState, useRef, useEffect, useCallback } from "react";
-import {
-  Download,
-  Calendar,
-  Image as ImageIcon,
-  Loader2,
-  ChevronDown,
-  AlertTriangle,
-  AlertCircle,
-} from "lucide-react";
+/**
+ * Two glyphs: disclosure, which no word here supplies, and the conflict mark
+ * inside the exported image, which is the indicator ADR-0009 protects.
+ */
+import { ChevronDown, AlertTriangle } from "lucide-react";
 import { toBlob } from "html-to-image";
 import { Button } from "./ui/button";
 import { Alert, AlertDescription } from "./ui/alert";
@@ -226,25 +222,20 @@ export function ExportMenu({
         size="sm"
         disabled={isExporting}
         onClick={() => setIsOpen((prev) => !prev)}
-        className="h-9 gap-1.5 bg-white hover:bg-slate-50 text-slate-800 border-slate-200 shadow-2xs font-medium text-xs cursor-pointer"
+        className="h-9 gap-1.5 font-medium text-xs cursor-pointer"
         aria-haspopup="true"
         aria-expanded={isOpen}
       >
-        {isExporting ? (
-          <Loader2 className="h-3.5 w-3.5 animate-spin text-slate-600" />
-        ) : (
-          <Download className="h-3.5 w-3.5 text-slate-600" />
-        )}
-        <span>Export</span>
-        <ChevronDown className="h-3 w-3 text-slate-400 ml-0.5" />
+        <span>{isExporting ? "Exporting..." : "Export"}</span>
+        <ChevronDown className="h-3 w-3 text-muted-foreground" aria-hidden="true" />
       </Button>
 
       {/* Dropdown Menu */}
       {isOpen && (
-        <div className="absolute right-0 z-30 mt-2 w-72 origin-top-right rounded-xl border border-slate-200 bg-white p-1.5 shadow-lg ring-1 ring-black/5 focus:outline-none animate-in fade-in-0 zoom-in-95">
-          <div className="px-2.5 py-2 border-b border-slate-100">
-            <p className="text-xs font-semibold text-slate-900">Export Plan</p>
-            <p className="text-[11px] text-slate-500">
+        <div className="menu-enter absolute right-0 z-30 mt-2 w-72 origin-top-right rounded-panel border border-border bg-popover p-1.5 shadow-overlay">
+          <div className="px-2.5 py-2 border-b border-border">
+            <p className="text-xs font-semibold text-foreground">Export Plan</p>
+            <p className="text-micro text-muted-foreground">
               Save your schedule to calendar or image
             </p>
           </div>
@@ -253,37 +244,27 @@ export function ExportMenu({
             <button
               type="button"
               onClick={handleExportIcs}
-              className="flex w-full items-start gap-2.5 rounded-lg px-2.5 py-2 text-left text-xs transition-colors hover:bg-slate-50 active:bg-slate-100 cursor-pointer"
+              className="flex w-full flex-col rounded-control px-2.5 py-2 text-left text-xs hover:bg-muted cursor-pointer"
             >
-              <div className="flex h-7 w-7 shrink-0 items-center justify-center rounded-md bg-emerald-50 text-emerald-700 mt-0.5">
-                <Calendar className="h-3.5 w-3.5" />
-              </div>
-              <div className="flex-1">
-                <div className="font-semibold text-slate-800">
-                  Calendar file (.ics)
-                </div>
-                <div className="text-[11px] text-slate-500 leading-tight">
-                  Import into Google Calendar or Apple Calendar
-                </div>
-              </div>
+              <span className="font-semibold text-foreground">
+                Calendar file (.ics)
+              </span>
+              <span className="text-micro text-muted-foreground leading-tight">
+                Import into Google Calendar or Apple Calendar
+              </span>
             </button>
 
             <button
               type="button"
               onClick={handleExportPng}
-              className="flex w-full items-start gap-2.5 rounded-lg px-2.5 py-2 text-left text-xs transition-colors hover:bg-slate-50 active:bg-slate-100 cursor-pointer"
+              className="flex w-full flex-col rounded-control px-2.5 py-2 text-left text-xs hover:bg-muted cursor-pointer"
             >
-              <div className="flex h-7 w-7 shrink-0 items-center justify-center rounded-md bg-blue-50 text-blue-700 mt-0.5">
-                <ImageIcon className="h-3.5 w-3.5" />
-              </div>
-              <div className="flex-1">
-                <div className="font-semibold text-slate-800">
-                  Schedule image (.png)
-                </div>
-                <div className="text-[11px] text-slate-500 leading-tight">
-                  High-res image of the week grid to share in chat
-                </div>
-              </div>
+              <span className="font-semibold text-foreground">
+                Schedule image (.png)
+              </span>
+              <span className="text-micro text-muted-foreground leading-tight">
+                High-res image of the week grid to share in chat
+              </span>
             </button>
           </div>
         </div>
@@ -292,8 +273,7 @@ export function ExportMenu({
       {/* Export Error Alert */}
       {errorMessage && (
         <div className="absolute right-0 top-full mt-2 w-80 z-40">
-          <Alert variant="destructive" className="py-2 px-3 shadow-md bg-red-50 text-red-900 border-red-200">
-            <AlertCircle className="h-4 w-4 text-red-600" />
+          <Alert variant="destructive" className="py-2 px-3 shadow-lifted">
             <AlertDescription className="text-xs flex items-center justify-between">
               <span>{errorMessage}</span>
               <button
@@ -339,7 +319,16 @@ export function ExportMenu({
           }}
           className="p-8 space-y-5 bg-white text-slate-900 font-sans"
         >
-          {/* Header for Exported Screenshot: Academic year and term as title, brief conflict indicator if any (Ticket 44) */}
+          {/*
+            Header for the exported screenshot: academic year and term as the
+            title, plus the conflict indicator when there is one (ticket 44).
+
+            Deliberately still styled in literal colours rather than design
+            tokens, and deliberately free of this ticket's ambient surfaces:
+            the PNG is captured out of the document, so it keeps its own
+            self-describing light palette and nothing interactive or animated
+            reaches it.
+          */}
           <div className="flex items-center justify-between">
             <h1 className="text-2xl font-bold tracking-tight text-slate-900">
               {planSummary.sessionName}

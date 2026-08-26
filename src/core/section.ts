@@ -88,6 +88,66 @@ export function findCandidateConflicts(
   );
 }
 
+/**
+ * What a candidate section collides with, named.
+ *
+ * The picker used to report a quantity — "Conflict (2 days)" — which tells the
+ * student how bad it is but nothing about what to do. The actionable fact is
+ * *which* section is in the way, because that is the thing they would swap,
+ * unpin, or accept.
+ *
+ * When the collision is another section of the same course, the course code is
+ * already the one the picker is showing, so only the section code is said.
+ *
+ * Conflicts are still displayed and never prevented (ADR-0009); this only
+ * changes the wording of the display.
+ */
+export function formatCandidateConflictLabel(
+  candidate: Pick<Section | PlanSection, "courseId" | "sectionId">,
+  conflicts: readonly Conflict[],
+  planSections: readonly PlanSection[]
+): string | null {
+  if (conflicts.length === 0) {
+    return null;
+  }
+
+  // One section can collide on several days. The student swaps the section,
+  // not the day, so each one is named once, in the order first met.
+  const seen = new Set<string>();
+  const others: { courseId: number; sectionId: number }[] = [];
+  for (const conflict of conflicts) {
+    const other =
+      conflict.a.courseId === candidate.courseId &&
+      conflict.a.sectionId === candidate.sectionId
+        ? conflict.b
+        : conflict.a;
+    const key = `${other.courseId}-${other.sectionId}`;
+    if (!seen.has(key)) {
+      seen.add(key);
+      others.push(other);
+    }
+  }
+
+  const first = others[0];
+  const match = planSections.find(
+    (s) => s.courseId === first.courseId && s.sectionId === first.sectionId
+  );
+
+  // A conflict whose other side is not in the plan handed in is a bug
+  // upstream, not a reason to render a sentence with a hole in it.
+  const name = !match
+    ? "another section"
+    : match.courseId === candidate.courseId
+    ? match.sectionCode
+    : `${match.courseCode} ${match.sectionCode}`;
+
+  const remaining = others.length - 1;
+  if (remaining === 0) {
+    return `Conflicts with ${name}`;
+  }
+  return `Conflicts with ${name} and ${remaining} more`;
+}
+
 export interface GroupedPickerSections {
   inPlan: Section[];
   other: Section[];

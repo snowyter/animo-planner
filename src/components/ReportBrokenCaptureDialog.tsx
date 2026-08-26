@@ -1,12 +1,6 @@
 import { useState, useEffect, useMemo, useRef } from "react";
-import {
-  ShieldCheck,
-  ShieldAlert,
-  ExternalLink,
-  Flag,
-  Copy,
-  Check,
-} from "lucide-react";
+/** "Opens outside the app" is not something the label says. */
+import { ExternalLink } from "lucide-react";
 import {
   Dialog,
   DialogContent,
@@ -187,15 +181,10 @@ export function ReportBrokenCaptureDialog({
     <Dialog open={open} onOpenChange={onOpenChange}>
       <DialogContent className="max-w-2xl max-h-[90vh] flex flex-col p-6 overflow-hidden">
         <DialogHeader className="space-y-1.5 shrink-0">
-          <div className="flex items-center gap-2">
-            <div className="flex h-8 w-8 items-center justify-center rounded-lg bg-amber-100 text-amber-800">
-              <Flag className="h-4 w-4" />
-            </div>
-            <DialogTitle className="text-xl font-bold text-slate-900">
-              Report broken capture
-            </DialogTitle>
-          </div>
-          <DialogDescription className="text-xs text-slate-600">
+          <DialogTitle className="text-xl font-bold text-foreground">
+            Report broken capture
+          </DialogTitle>
+          <DialogDescription className="text-xs text-muted-foreground">
             Review the scrubbed diagnostic details below before opening an issue on GitHub.
           </DialogDescription>
         </DialogHeader>
@@ -203,21 +192,17 @@ export function ReportBrokenCaptureDialog({
         <div className="flex-1 overflow-y-auto space-y-4 py-2 pr-1">
           {/* Privacy & Scrubbing verification banner */}
           <Alert variant="default" className="border-emerald-200 bg-emerald-50/60 text-emerald-950">
-            <ShieldCheck className="h-4 w-4 text-emerald-700 shrink-0 mt-0.5" />
-            <div>
-              <AlertTitle className="text-xs font-semibold text-emerald-900">
-                Privacy protected
-              </AlertTitle>
-              <AlertDescription className="text-xs text-emerald-800 mt-0.5 leading-relaxed">
-                {SCRUBBED_FIELDS_NOTICE} No passwords, student IDs, or university credentials are ever included.
-              </AlertDescription>
-            </div>
+            <AlertTitle className="text-xs font-semibold text-emerald-900">
+              Privacy protected
+            </AlertTitle>
+            <AlertDescription className="text-xs text-emerald-900 mt-0.5 leading-relaxed">
+              {SCRUBBED_FIELDS_NOTICE} No passwords, student IDs, or university credentials are ever included.
+            </AlertDescription>
           </Alert>
 
           {/* Warning if user inadvertently typed a private field */}
           {privacyViolations.length > 0 && (
             <Alert variant="destructive">
-              <ShieldAlert className="h-4 w-4" />
               <AlertTitle className="text-xs font-semibold">
                 Potential sensitive value detected in text
               </AlertTitle>
@@ -236,7 +221,7 @@ export function ReportBrokenCaptureDialog({
 
           {/* Issue Title */}
           <div className="space-y-1.5">
-            <label className="text-xs font-semibold text-slate-700">
+            <label className="text-xs font-semibold text-foreground">
               Issue Title
             </label>
             <Input
@@ -250,24 +235,18 @@ export function ReportBrokenCaptureDialog({
           {/* Editable Scrubbed Report Text */}
           <div className="space-y-1.5">
             <div className="flex items-center justify-between">
-              <label className="text-xs font-semibold text-slate-700">
+              <label className="text-xs font-semibold text-foreground">
                 Scrubbed Report Body (Editable)
               </label>
               <button
                 type="button"
                 onClick={handleCopyReport}
-                className="text-xs text-slate-500 hover:text-slate-800 flex items-center gap-1 cursor-pointer"
+                className="text-xs text-muted-foreground hover:text-foreground cursor-pointer"
               >
                 {copied ? (
-                  <>
-                    <Check className="h-3 w-3 text-emerald-600" />
-                    <span className="text-emerald-700 font-medium">Copied</span>
-                  </>
+                  <span className="text-primary font-medium">Copied</span>
                 ) : (
-                  <>
-                    <Copy className="h-3 w-3" />
-                    <span>Copy text</span>
-                  </>
+                  <span>Copy text</span>
                 )}
               </button>
             </div>
@@ -276,18 +255,18 @@ export function ReportBrokenCaptureDialog({
               onChange={(e) => setBody(e.target.value)}
               rows={10}
               disabled={isLoadingReport}
-              className="w-full rounded-md border border-slate-200 bg-slate-50/50 p-3 font-mono text-xs text-slate-800 leading-relaxed focus:bg-white focus:border-slate-400 focus:outline-none focus:ring-1 focus:ring-slate-400 resize-y"
+              className="w-full rounded-control border border-input bg-muted/50 p-3 font-mono text-xs text-foreground leading-relaxed focus:bg-card resize-y"
               placeholder="Loading scrubbed report..."
             />
           </div>
 
           {/* Notice that app never posts on their behalf */}
-          <p className="text-xs text-slate-500 italic bg-slate-100/60 p-2.5 rounded-md border border-slate-200">
+          <p className="text-xs text-muted-foreground italic bg-muted/60 p-2.5 rounded-card border border-border">
             The app never posts on your behalf. Submitting opens a pre-filled issue in your browser on GitHub so you can review and submit yourself.
           </p>
         </div>
 
-        <DialogFooter className="shrink-0 gap-2 sm:gap-0 pt-3 border-t border-slate-200">
+        <DialogFooter className="shrink-0 gap-2 sm:gap-0 pt-3 border-t border-border">
           <Button
             type="button"
             variant="outline"
@@ -302,9 +281,9 @@ export function ReportBrokenCaptureDialog({
             size="sm"
             onClick={handleOpenIssue}
             disabled={!title.trim() || !body.trim() || privacyViolations.length > 0}
-            className="bg-emerald-700 hover:bg-emerald-800 text-white text-xs flex items-center gap-1.5 shadow-2xs"
+            className="text-xs flex items-center gap-1.5"
           >
-            <ExternalLink className="h-3.5 w-3.5" />
+            <ExternalLink className="h-3.5 w-3.5" aria-hidden="true" />
             <span>Open issue on GitHub</span>
           </Button>
         </DialogFooter>

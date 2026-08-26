@@ -1,7 +1,7 @@
-import { Plus, Building2, Calendar, BookOpen, Trash2, ArrowRight, AlertCircle, RefreshCw } from "lucide-react";
 import { Button } from "./ui/button";
 import { Card, CardHeader, CardTitle, CardDescription, CardContent, CardFooter } from "./ui/card";
 import { Badge } from "./ui/badge";
+import { Skeleton } from "./ui/skeleton";
 import { Alert, AlertTitle, AlertDescription } from "./ui/alert";
 import type { PlanSummary } from "../adapters/ipc/types";
 import { formatSectionCount } from "../core/plan";
@@ -16,6 +16,34 @@ export interface PlanListProps {
   onRetry: () => void;
 }
 
+/**
+ * Placeholder cards in the shape of the plan cards that are coming, rather
+ * than a spinner that describes nothing.
+ */
+function PlanCardSkeleton() {
+  return (
+    <div
+      data-testid="plan-list-skeleton"
+      className="grid grid-cols-1 gap-5 sm:grid-cols-2 lg:grid-cols-3"
+    >
+      {[0, 1, 2].map((i) => (
+        <div
+          key={i}
+          className="rounded-panel border border-border bg-card p-panel space-y-4"
+        >
+          <Skeleton className="h-5 w-2/3" />
+          <Skeleton className="h-3 w-1/3" />
+          <div className="flex gap-2">
+            <Skeleton className="h-5 w-20" />
+            <Skeleton className="h-5 w-28" />
+          </div>
+          <Skeleton className="h-3 w-24" />
+        </div>
+      ))}
+    </div>
+  );
+}
+
 export function PlanList({
   plans,
   isLoading,
@@ -25,143 +53,143 @@ export function PlanList({
   onDeletePlan,
   onRetry,
 }: PlanListProps) {
-  if (isLoading && plans.length === 0) {
-    return (
-      <div className="flex min-h-[400px] flex-col items-center justify-center space-y-3">
-        <RefreshCw className="h-8 w-8 animate-spin text-emerald-600" />
-        <p className="text-sm text-slate-500 font-medium">Loading saved plans...</p>
-      </div>
-    );
-  }
+  const isEmpty = plans.length === 0 && !error && !isLoading;
 
   return (
-    <div className="mx-auto max-w-7xl px-4 py-8 sm:px-6 lg:px-8">
-      {error && (
-        <Alert variant="destructive" className="mb-6">
-          <AlertCircle className="h-4 w-4" />
-          <AlertTitle className="flex items-center justify-between">
-            <span>Unable to load plans</span>
-            <Button
-              variant="outline"
-              size="sm"
-              onClick={onRetry}
-              className="h-7 text-xs bg-white hover:bg-slate-50 text-slate-900 border-red-200"
-            >
-              <RefreshCw className="h-3 w-3 mr-1" />
-              Retry
-            </Button>
-          </AlertTitle>
-          <AlertDescription className="font-mono text-xs break-all mt-1">
-            {error}
-          </AlertDescription>
-        </Alert>
-      )}
+    /* A rich surface: the plan list is where the student arrives, and it is
+       not a working surface. `ambient-host` stays `position: relative` with
+       `z-index: auto` so it creates no stacking context. */
+    <div className="ambient-host min-h-[70vh]">
+      <div data-testid="ambient-wash" aria-hidden="true" className="ambient-wash" />
 
-      {plans.length === 0 && !error ? (
-        <div className="flex min-h-[440px] flex-col items-center justify-center rounded-2xl border-2 border-dashed border-slate-200 bg-white p-8 text-center shadow-xs">
-          <div className="mx-auto flex h-14 w-14 items-center justify-center rounded-full bg-emerald-50 text-emerald-700 mb-4">
-            <BookOpen className="h-7 w-7" />
+      <div className="ambient-content mx-auto max-w-7xl px-4 py-8 sm:px-6 lg:px-8">
+        {error && (
+          <Alert variant="destructive" className="mb-6">
+            <AlertTitle className="flex items-center justify-between">
+              <span>Unable to load plans</span>
+              <Button
+                variant="outline"
+                size="sm"
+                onClick={onRetry}
+                className="h-7 text-micro"
+              >
+                Retry
+              </Button>
+            </AlertTitle>
+            <AlertDescription className="font-mono text-micro break-all mt-1">
+              {error}
+            </AlertDescription>
+          </Alert>
+        )}
+
+        {isLoading && plans.length === 0 && !error ? (
+          <div className="space-y-6">
+            <div className="space-y-2">
+              <Skeleton className="h-8 w-48" />
+              <Skeleton className="h-4 w-96 max-w-full" />
+            </div>
+            <PlanCardSkeleton />
           </div>
-          <h2 className="text-xl font-bold tracking-tight text-slate-900">
-            No saved plans yet
-          </h2>
-          <p className="mt-2 max-w-md text-sm text-slate-500 leading-relaxed">
-            Create your first schedule plan, scoped to your campus and academic
-            session.
-          </p>
+        ) : isEmpty ? (
+          /* The empty state earns its space: it names what a plan is, what it
+             is scoped to, and the one action that starts one. It lost half its
+             content when the sample-data path was removed, so it is set as a
+             centred column rather than a card with a hole where the second
+             option used to be. */
+          <div className="mx-auto flex min-h-[440px] max-w-xl flex-col items-center justify-center rounded-panel border border-border bg-card px-8 py-14 text-center shadow-raised">
+            <h2 className="text-3xl font-bold tracking-tight text-foreground">
+              No saved plans yet
+            </h2>
+            <p className="mt-3 text-sm text-muted-foreground leading-relaxed">
+              A plan is the artifact — a named set of sections, hard-scoped to
+              one campus and academic session. Start one, then capture the
+              courses you are looking at in Archer&#39;s Hub and the sections
+              land here to pick from.
+            </p>
 
-          <div className="mt-6 flex flex-col sm:flex-row items-center gap-3">
-            <Button onClick={onOpenCreate} className="w-full sm:w-auto shadow-sm">
-              <Plus className="h-4 w-4 mr-1.5" />
+            <Button onClick={onOpenCreate} className="mt-8 px-6">
               Create your first plan
             </Button>
+
+            <p className="mt-4 text-micro text-muted-foreground">
+              Nothing leaves your machine, and no credentials are stored.
+            </p>
           </div>
-        </div>
-      ) : (
-        <div>
-          <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4 mb-6">
-            <div>
-              <h2 className="text-2xl font-bold tracking-tight text-slate-900">
-                Saved Plans
-              </h2>
-              <p className="text-sm text-slate-500">
-                Select a plan to manage sections, check conflicts, and solve schedules.
-              </p>
-            </div>
-            <div className="flex items-center gap-2">
-              <Button size="sm" onClick={onOpenCreate} className="text-xs shadow-sm">
-                <Plus className="h-3.5 w-3.5 mr-1" />
+        ) : (
+          <div>
+            <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4 mb-6">
+              <div>
+                <h2 className="text-2xl font-bold tracking-tight text-foreground">
+                  Saved Plans
+                </h2>
+                <p className="text-sm text-muted-foreground">
+                  Select a plan to manage sections, check conflicts, and solve schedules.
+                </p>
+              </div>
+              <Button size="sm" onClick={onOpenCreate} className="text-xs">
                 New Plan
               </Button>
             </div>
-          </div>
 
-          <div className="grid grid-cols-1 gap-5 sm:grid-cols-2 lg:grid-cols-3">
-            {plans.map((plan) => (
-              <Card
-                key={plan.id}
-                className="flex flex-col justify-between transition-all hover:border-slate-300 hover:shadow-md cursor-pointer group"
-                onClick={() => onOpenPlan(plan)}
-              >
-                <CardHeader className="pb-3">
-                  <div className="flex items-start justify-between gap-2">
-                    <CardTitle className="text-lg font-semibold text-slate-900 group-hover:text-emerald-700 transition-colors">
+            {/* Repeated elements stay cheap: border colour on hover, no
+                per-card shadow and no `transition-all`. */}
+            <div className="grid grid-cols-1 gap-5 sm:grid-cols-2 lg:grid-cols-3">
+              {plans.map((plan) => (
+                <Card
+                  key={plan.id}
+                  className="flex flex-col justify-between hover:border-slate-300 cursor-pointer group"
+                  onClick={() => onOpenPlan(plan)}
+                >
+                  <CardHeader className="pb-3">
+                    <CardTitle className="text-lg font-semibold text-foreground">
                       {plan.name}
                     </CardTitle>
-                  </div>
-                  <CardDescription className="text-xs text-slate-400">
-                    Created {new Date(plan.createdAt).toLocaleDateString()}
-                  </CardDescription>
-                </CardHeader>
+                    <CardDescription className="text-micro">
+                      Created {new Date(plan.createdAt).toLocaleDateString()}
+                    </CardDescription>
+                  </CardHeader>
 
-                <CardContent className="space-y-3 pb-3">
-                  <div className="flex flex-wrap items-center gap-1.5">
-                    <Badge variant="campus" className="flex items-center gap-1 text-xs">
-                      <Building2 className="h-3 w-3" />
-                      <span>{plan.campusName}</span>
-                    </Badge>
-                    <Badge variant="session" className="flex items-center gap-1 text-xs">
-                      <Calendar className="h-3 w-3" />
-                      <span>{plan.sessionName}</span>
-                    </Badge>
-                  </div>
-                  <div className="text-sm font-medium text-slate-600">
-                    {formatSectionCount(plan.sectionCount)}
-                  </div>
-                </CardContent>
+                  <CardContent className="space-y-3 pb-3">
+                    <div className="flex flex-wrap items-center gap-1.5">
+                      <Badge variant="campus">{plan.campusName}</Badge>
+                      <Badge variant="session">{plan.sessionName}</Badge>
+                    </div>
+                    <div className="text-sm font-medium text-muted-foreground">
+                      {formatSectionCount(plan.sectionCount)}
+                    </div>
+                  </CardContent>
 
-                <CardFooter className="pt-3 border-t border-slate-100 flex items-center justify-between text-xs">
-                  <Button
-                    variant="ghost"
-                    size="sm"
-                    className="h-8 px-2 text-red-600 hover:bg-red-50 hover:text-red-700"
-                    onClick={(e) => {
-                      e.stopPropagation();
-                      onDeletePlan(plan.id);
-                    }}
-                  >
-                    <Trash2 className="h-3.5 w-3.5 mr-1" />
-                    Delete
-                  </Button>
+                  <CardFooter className="pt-3 border-t border-border flex items-center justify-between">
+                    <Button
+                      variant="ghost"
+                      size="sm"
+                      className="h-8 px-2 text-micro text-red-600 hover:bg-red-50 hover:text-red-700"
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        onDeletePlan(plan.id);
+                      }}
+                    >
+                      Delete
+                    </Button>
 
-                  <Button
-                    variant="ghost"
-                    size="sm"
-                    className="h-8 px-2 text-emerald-700 group-hover:translate-x-0.5 transition-transform"
-                    onClick={(e) => {
-                      e.stopPropagation();
-                      onOpenPlan(plan);
-                    }}
-                  >
-                    <span>Open Plan</span>
-                    <ArrowRight className="h-3.5 w-3.5 ml-1" />
-                  </Button>
-                </CardFooter>
-              </Card>
-            ))}
+                    <Button
+                      variant="ghost"
+                      size="sm"
+                      className="h-8 px-2 text-micro text-primary"
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        onOpenPlan(plan);
+                      }}
+                    >
+                      Open Plan
+                    </Button>
+                  </CardFooter>
+                </Card>
+              ))}
+            </div>
           </div>
-        </div>
-      )}
+        )}
+      </div>
     </div>
   );
 }

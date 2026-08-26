@@ -1,18 +1,7 @@
 import { useState, useEffect, useCallback } from "react";
-import {
-  Sparkles,
-  RefreshCw,
-  AlertTriangle,
-  AlertCircle,
-  Clock,
-  SlidersHorizontal,
-  ChevronDown,
-  ChevronUp,
-  XCircle,
-  RotateCcw,
-  Info,
-  Pin,
-} from "lucide-react";
+/** Disclosure is an affordance no adjacent word supplies. Everything else on
+ *  this surface labelled something the text already said. */
+import { ChevronDown, ChevronUp } from "lucide-react";
 import {
   Dialog,
   DialogContent,
@@ -222,14 +211,11 @@ export function SolveDialog({
     <Dialog open={open} onOpenChange={onOpenChange}>
       <DialogContent className="max-w-4xl max-h-[90vh] flex flex-col p-0 gap-0 overflow-hidden sm:rounded-2xl">
         {/* Header */}
-        <DialogHeader className="p-6 pb-4 border-b border-slate-200 bg-white">
-          <div className="flex items-center gap-2 text-emerald-700">
-            <Sparkles className="h-5 w-5" />
-            <DialogTitle className="text-xl font-bold text-slate-900">
-              Solve the rest
-            </DialogTitle>
-          </div>
-          <DialogDescription className="text-xs text-slate-500 mt-1">
+        <DialogHeader className="p-6 pb-4 border-b border-border bg-card">
+          <DialogTitle className="text-xl font-bold text-foreground">
+            Solve the rest
+          </DialogTitle>
+          <DialogDescription className="text-xs text-muted-foreground mt-1">
             Find ranked, conflict-free combinations to fill unassigned courses
             around your choices. Pinned sections are fixed and never moved;
             unpinned sections may be moved to find valid combinations.
@@ -237,20 +223,19 @@ export function SolveDialog({
         </DialogHeader>
 
         {/* Scrollable Main Area */}
-        <div className="flex-1 overflow-y-auto p-6 space-y-6 bg-slate-50/50">
+        <div className="flex-1 overflow-y-auto p-6 space-y-6 bg-background">
           {/* Your Plan Sections & Pinning Panel (Ticket 43) */}
           {currentPlanSections.length > 0 && (
-            <div className="rounded-xl border border-slate-200 bg-white p-4 shadow-2xs space-y-3">
+            <div className="rounded-panel border border-border bg-card p-4 space-y-3">
               <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-1">
-                <div className="flex items-center gap-2 text-slate-900 font-bold text-xs uppercase tracking-wider">
-                  <Pin className="h-4 w-4 text-emerald-700" />
-                  <span>Your Plan Sections ({currentPlanSections.length})</span>
-                </div>
-                <span className="text-xs text-slate-500 font-normal">
+                <span className="text-foreground font-bold text-micro uppercase tracking-wider">
+                  Your Plan Sections ({currentPlanSections.length})
+                </span>
+                <span className="text-xs text-muted-foreground font-normal">
                   Pinned sections are exempt from moving
                 </span>
               </div>
-              <p className="text-xs text-slate-500 leading-relaxed">
+              <p className="text-xs text-muted-foreground leading-relaxed">
                 Pinned sections are fixed and never moved. Unpinned sections can be swapped if needed to find conflict-free combinations.
               </p>
 
@@ -258,25 +243,24 @@ export function SolveDialog({
                 {currentPlanSections.map((sec) => (
                   <div
                     key={`${sec.courseId}-${sec.sectionId}`}
-                    className={`flex items-center justify-between p-2.5 rounded-lg border text-xs transition-colors ${
+                    className={`flex items-center justify-between p-2.5 rounded-card border text-xs ${
                       sec.pinned
-                        ? "border-emerald-200 bg-emerald-50/50"
-                        : "border-slate-200 bg-slate-50/40"
+                        ? "border-emerald-300 bg-emerald-50/60"
+                        : "border-border bg-muted/40"
                     }`}
                   >
                     <div className="flex flex-col min-w-0 pr-2">
-                      <div className="flex items-center gap-1.5 font-bold text-slate-900 truncate">
+                      <div className="flex items-center gap-1.5 font-bold text-foreground truncate">
                         <span>{sec.courseCode}</span>
-                        <span className="text-slate-600 font-medium">{sec.sectionCode}</span>
+                        <span className="text-muted-foreground font-medium">{sec.sectionCode}</span>
                       </div>
                       <div className="mt-0.5">
                         {sec.pinned ? (
-                          <span className="inline-flex items-center gap-1 text-[10px] font-semibold text-emerald-800">
-                            <Pin className="h-2.5 w-2.5 fill-emerald-600 text-emerald-600" />
+                          <span className="text-nano font-semibold text-emerald-800">
                             Pinned (Exempt)
                           </span>
                         ) : (
-                          <span className="text-[10px] text-slate-500 font-medium">
+                          <span className="text-nano text-muted-foreground font-medium">
                             Unpinned
                           </span>
                         )}
@@ -289,16 +273,9 @@ export function SolveDialog({
                       size="sm"
                       disabled={isSolving}
                       onClick={() => handleTogglePinSection(sec, !sec.pinned)}
-                      className="h-6 text-[11px] px-2 shrink-0 cursor-pointer"
+                      className="h-6 text-micro px-2 shrink-0 cursor-pointer"
                     >
-                      {sec.pinned ? (
-                        <span>Unpin</span>
-                      ) : (
-                        <span className="flex items-center gap-1">
-                          <Pin className="h-2.5 w-2.5" />
-                          Pin
-                        </span>
-                      )}
+                      {sec.pinned ? "Unpin" : "Pin"}
                     </Button>
                   </div>
                 ))}
@@ -309,22 +286,22 @@ export function SolveDialog({
           {/* Primary Controls: Presets (SPEC §6, Ticket 20) */}
           <div className="space-y-2">
             <div className="flex items-center justify-between">
-              <label className="text-xs font-bold uppercase tracking-wider text-slate-600">
+              <label className="text-micro font-bold uppercase tracking-wider text-muted-foreground">
                 Ranking Preset (Primary Control)
               </label>
+              {/* No spinner. A solve is exactly the moment the machine is
+                  busiest, and the app must not be animating through it. */}
               {isSolving && (
                 <div className="flex items-center gap-2">
-                  <span className="text-xs text-emerald-700 font-medium flex items-center gap-1.5">
-                    <RefreshCw className="h-3.5 w-3.5 animate-spin" />
+                  <span className="text-xs text-primary font-medium">
                     Searching combinations...
                   </span>
                   <Button
                     variant="outline"
                     size="sm"
                     onClick={handleCancelSolve}
-                    className="h-6 text-[11px] px-2 text-slate-600"
+                    className="h-6 text-micro px-2"
                   >
-                    <XCircle className="h-3 w-3 mr-1 text-slate-500" />
                     Cancel
                   </Button>
                 </div>
@@ -340,25 +317,25 @@ export function SolveDialog({
                     type="button"
                     disabled={isSolving}
                     onClick={() => handlePresetSelect(info.preset)}
-                    className={`flex flex-col text-left p-3.5 rounded-xl border transition-all cursor-pointer ${
+                    className={`flex flex-col text-left p-3.5 rounded-panel border bg-card cursor-pointer ${
                       isSelected
-                        ? "border-emerald-600 bg-white ring-2 ring-emerald-600/20 shadow-xs"
-                        : "border-slate-200 bg-white hover:border-slate-300 hover:bg-slate-50/50 text-slate-700"
+                        ? "border-primary ring-1 ring-primary/25"
+                        : "border-border hover:border-slate-300"
                     }`}
                   >
                     <div className="flex items-center justify-between w-full">
                       <span
                         className={`text-sm font-bold ${
-                          isSelected ? "text-emerald-900" : "text-slate-900"
+                          isSelected ? "text-emerald-900" : "text-foreground"
                         }`}
                       >
                         {info.label}
                       </span>
                       {isSelected && (
-                        <span className="h-2 w-2 rounded-full bg-emerald-600" />
+                        <span className="h-2 w-2 rounded-pill bg-primary" />
                       )}
                     </div>
-                    <p className="text-xs text-slate-500 mt-1 leading-relaxed">
+                    <p className="text-xs text-muted-foreground mt-1 leading-relaxed">
                       {info.description}
                     </p>
                   </button>
@@ -368,23 +345,22 @@ export function SolveDialog({
           </div>
 
           {/* Secondary Controls: Constraints (Ticket 20) */}
-          <div className="rounded-xl border border-slate-200 bg-white shadow-2xs overflow-hidden">
+          <div className="rounded-panel border border-border bg-card overflow-hidden">
             <div
               onClick={() => setShowConstraints(!showConstraints)}
-              className="flex items-center justify-between p-4 cursor-pointer hover:bg-slate-50 transition-colors select-none"
+              className="flex items-center justify-between p-4 cursor-pointer hover:bg-muted select-none"
             >
               <div className="flex items-center gap-2">
-                <SlidersHorizontal className="h-4 w-4 text-slate-500" />
-                <span className="text-xs font-bold text-slate-800 uppercase tracking-wider">
+                <span className="text-micro font-bold text-foreground uppercase tracking-wider">
                   Secondary Constraints
                 </span>
                 {hasNonDefaultConstraints && (
-                  <span className="ml-1.5 rounded-full bg-emerald-100 text-emerald-800 text-[10px] font-bold px-2 py-0.5">
+                  <span className="ml-1.5 rounded-pill bg-emerald-100 text-emerald-900 text-nano font-bold px-2 py-0.5">
                     Active
                   </span>
                 )}
               </div>
-              <div className="flex items-center gap-2 text-slate-500 text-xs">
+              <div className="flex items-center gap-2 text-muted-foreground text-xs">
                 <span>{showConstraints ? "Hide constraints" : "Show constraints"}</span>
                 {showConstraints ? (
                   <ChevronUp className="h-4 w-4" />
@@ -395,10 +371,10 @@ export function SolveDialog({
             </div>
 
             {showConstraints && (
-              <div className="p-4 pt-0 border-t border-slate-100 space-y-4">
+              <div className="p-4 pt-0 border-t border-border space-y-4">
                 {/* Day Blacklist */}
                 <div className="space-y-1.5">
-                  <label className="text-xs font-semibold text-slate-700">
+                  <label className="text-xs font-semibold text-foreground">
                     Day Blacklist (exclude classes on selected days):
                   </label>
                   <div className="flex flex-wrap gap-2">
@@ -410,10 +386,10 @@ export function SolveDialog({
                           type="button"
                           disabled={isSolving}
                           onClick={() => handleToggleDay(d.day)}
-                          className={`px-3 py-1.5 rounded-lg text-xs font-semibold border transition-all cursor-pointer ${
+                          className={`px-3 py-1.5 rounded-control text-xs font-semibold border cursor-pointer ${
                             isBlacklisted
-                              ? "bg-red-50 text-red-700 border-red-200 ring-1 ring-red-400/40"
-                              : "bg-white text-slate-700 border-slate-200 hover:bg-slate-50"
+                              ? "bg-red-50 text-red-700 border-red-300"
+                              : "bg-card text-foreground border-border hover:bg-muted"
                           }`}
                         >
                           {d.label}
@@ -428,10 +404,9 @@ export function SolveDialog({
                   <div className="space-y-1.5">
                     <label
                       htmlFor="earliest-start"
-                      className="text-xs font-semibold text-slate-700 flex items-center gap-1"
+                      className="text-xs font-semibold text-foreground block"
                     >
-                      <Clock className="h-3.5 w-3.5 text-slate-400" />
-                      <span>Earliest start</span>
+                      Earliest start
                     </label>
                     <select
                       id="earliest-start"
@@ -441,7 +416,7 @@ export function SolveDialog({
                         const val = e.target.value ? Number(e.target.value) : null;
                         setOptions({ ...options, earliestStartMin: val });
                       }}
-                      className="flex h-9 w-full rounded-md border border-slate-200 bg-white px-3 py-1 text-xs shadow-xs focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-emerald-600"
+                      className="flex h-9 w-full rounded-control border border-input bg-card px-3 py-1 text-xs"
                     >
                       {EARLIEST_START_OPTIONS.map((opt, i) => (
                         <option key={i} value={opt.min ?? ""}>
@@ -454,10 +429,9 @@ export function SolveDialog({
                   <div className="space-y-1.5">
                     <label
                       htmlFor="latest-end"
-                      className="text-xs font-semibold text-slate-700 flex items-center gap-1"
+                      className="text-xs font-semibold text-foreground block"
                     >
-                      <Clock className="h-3.5 w-3.5 text-slate-400" />
-                      <span>Latest end</span>
+                      Latest end
                     </label>
                     <select
                       id="latest-end"
@@ -467,7 +441,7 @@ export function SolveDialog({
                         const val = e.target.value ? Number(e.target.value) : null;
                         setOptions({ ...options, latestEndMin: val });
                       }}
-                      className="flex h-9 w-full rounded-md border border-slate-200 bg-white px-3 py-1 text-xs shadow-xs focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-emerald-600"
+                      className="flex h-9 w-full rounded-control border border-input bg-card px-3 py-1 text-xs"
                     >
                       {LATEST_END_OPTIONS.map((opt, i) => (
                         <option key={i} value={opt.min ?? ""}>
@@ -480,7 +454,7 @@ export function SolveDialog({
 
                 {/* Exclude full & Actions */}
                 <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3 pt-2">
-                  <label className="flex items-center gap-2 text-xs font-medium text-slate-700 cursor-pointer select-none">
+                  <label className="flex items-center gap-2 text-xs font-medium text-foreground cursor-pointer select-none">
                     <input
                       type="checkbox"
                       checked={options.excludeFull}
@@ -488,7 +462,7 @@ export function SolveDialog({
                       onChange={(e) =>
                         setOptions({ ...options, excludeFull: e.target.checked })
                       }
-                      className="h-4 w-4 rounded border-slate-300 text-emerald-600 focus:ring-emerald-500"
+                      className="h-4 w-4 rounded-control border-slate-300 text-primary"
                     />
                     <span>Exclude full sections (enrolled ≥ capacity)</span>
                   </label>
@@ -501,9 +475,8 @@ export function SolveDialog({
                         size="sm"
                         disabled={isSolving}
                         onClick={handleResetConstraints}
-                        className="h-7 text-xs text-slate-500 hover:text-slate-900"
+                        className="h-7 text-xs text-muted-foreground hover:text-foreground"
                       >
-                        <RotateCcw className="h-3 w-3 mr-1" />
                         Reset
                       </Button>
                     )}
@@ -512,10 +485,9 @@ export function SolveDialog({
                       size="sm"
                       disabled={isSolving}
                       onClick={() => runSolve(options)}
-                      className="h-8 text-xs shadow-xs"
+                      className="h-8 text-xs"
                     >
-                      <Sparkles className="h-3.5 w-3.5 mr-1" />
-                      Apply Constraints & Solve
+                      Apply Constraints &amp; Solve
                     </Button>
                   </div>
                 </div>
@@ -526,7 +498,6 @@ export function SolveDialog({
           {/* Error Message */}
           {error && (
             <Alert variant="destructive">
-              <AlertCircle className="h-4 w-4" />
               <AlertTitle>Solve error</AlertTitle>
               <AlertDescription className="font-mono text-xs break-all mt-1">
                 {error}
@@ -536,14 +507,13 @@ export function SolveDialog({
 
           {/* Node Cap Partial Result Banner (Ticket 20 requirement: keep searching extends search) */}
           {result?.status === "partial" && (
-            <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3 rounded-xl border border-amber-200 bg-amber-50/70 p-4">
-              <div className="flex items-start gap-2.5">
-                <AlertTriangle className="h-4 w-4 text-amber-600 shrink-0 mt-0.5" />
+            <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3 rounded-panel border border-amber-200 bg-amber-50/70 p-4">
+              <div>
+                <h4 className="text-xs font-bold text-amber-900">
+                  Search reached node limit (partial results)
+                </h4>
                 <div>
-                  <h4 className="text-xs font-bold text-amber-900">
-                    Search reached node limit (partial results)
-                  </h4>
-                  <p className="text-xs text-amber-700 mt-0.5">
+                  <p className="text-xs text-amber-900 mt-0.5">
                     Found {result.solutions.length} valid combination
                     {result.solutions.length === 1 ? "" : "s"} so far. You can extend
                     the search to explore more combinations.
@@ -555,9 +525,8 @@ export function SolveDialog({
                 size="sm"
                 onClick={handleContinueSolve}
                 disabled={isSolving || isContinuing}
-                className="text-xs shrink-0 bg-white hover:bg-amber-50 text-amber-900 border-amber-300"
+                className="text-xs shrink-0 text-amber-900 border-amber-300"
               >
-                <Sparkles className="h-3.5 w-3.5 mr-1 text-amber-600" />
                 {isContinuing ? "Searching..." : "Keep searching"}
               </Button>
             </div>
@@ -566,8 +535,7 @@ export function SolveDialog({
           {/* Exclusion notice (ticket 34): the constraint is visible and
               its staleness is judgeable — never a quiet exclusion. */}
           {exclusionNotice && (
-            <div className="flex items-start gap-2.5 rounded-xl border border-sky-200 bg-sky-50/70 p-4">
-              <Info className="h-4 w-4 text-sky-600 shrink-0 mt-0.5" />
+            <div className="rounded-panel border border-sky-200 bg-sky-50/70 p-4">
               <p className="text-xs text-sky-900 leading-relaxed">{exclusionNotice}</p>
             </div>
           )}
@@ -578,18 +546,17 @@ export function SolveDialog({
             (result.status === "unsatisfiable" ||
               result.unsatisfiableCourses.length > 0 ||
               result.status === "complete") && (
-              <div className="rounded-xl border border-slate-200 bg-white p-8 text-center space-y-3 shadow-2xs">
-                <div className="mx-auto flex h-12 w-12 items-center justify-center rounded-full bg-amber-50 text-amber-600">
-                  <AlertCircle className="h-6 w-6" />
-                </div>
-                <h3 className="text-base font-bold text-slate-900">
+              <div className="rounded-panel border border-border bg-card px-8 py-12 text-center">
+                <h3 className="text-lg font-semibold text-foreground">
                   No conflict-free schedules found
                 </h3>
-                <p className="text-xs text-slate-600 max-w-md mx-auto leading-relaxed">
+                <p className="mt-2 text-sm text-muted-foreground max-w-md mx-auto leading-relaxed">
                   {formatUnsatisfiableCoursesMessage(result.unsatisfiableCourses)}
                 </p>
-                <p className="text-[11px] text-slate-400">
-                  Try relaxing secondary constraints like day blacklists or start/end bounds, or unpinning conflicting sections.
+                <p className="mt-3 text-xs text-muted-foreground max-w-md mx-auto leading-relaxed">
+                  Try relaxing secondary constraints like day blacklists or
+                  start/end bounds, or unpinning a conflicting section so the
+                  solver can move it.
                 </p>
               </div>
             )}
@@ -598,10 +565,10 @@ export function SolveDialog({
           {result && result.solutions.length > 0 && (
             <div className="space-y-4">
               <div className="flex items-center justify-between">
-                <h3 className="text-xs font-bold uppercase tracking-wider text-slate-600">
+                <h3 className="text-micro font-bold uppercase tracking-wider text-muted-foreground">
                   Ranked Solutions ({result.solutions.length})
                 </h3>
-                <span className="text-xs text-slate-400">
+                <span className="text-xs text-muted-foreground">
                   Sorted by {options.preset.replace(/_/g, " ")}
                 </span>
               </div>
@@ -612,6 +579,7 @@ export function SolveDialog({
                     key={solution.id}
                     solution={solution}
                     rank={index + 1}
+                    topScore={result.solutions[0].score}
                     planSections={currentPlanSections}
                     isApplying={isApplying}
                     onApply={handleApplySolution}

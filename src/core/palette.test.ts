@@ -16,11 +16,13 @@ describe("palette", () => {
     const borderColors = new Set(COURSE_PALETTE.map((p) => p.borderHex));
     expect(borderColors.size).toBe(COURSE_PALETTE.length);
 
-    // Verify all themes define light and dark theme classes
+    // The app is light-only (ADR-0018). A stray `dark:` variant here rendered
+    // grid blocks dark while every surface around them stayed light.
     for (const theme of COURSE_PALETTE) {
-      expect(theme.bgClass).toContain("dark:");
-      expect(theme.textClass).toContain("dark:");
-      expect(theme.borderClass).toContain("dark:");
+      expect(theme.bgClass).not.toContain("dark:");
+      expect(theme.textClass).not.toContain("dark:");
+      expect(theme.borderClass).not.toContain("dark:");
+      expect(theme.badgeClass).not.toContain("dark:");
     }
   });
 

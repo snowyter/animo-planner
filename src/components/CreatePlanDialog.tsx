@@ -10,7 +10,6 @@ import {
 import { Button } from "./ui/button";
 import { Input } from "./ui/input";
 import { Alert, AlertDescription, AlertTitle } from "./ui/alert";
-import { AlertCircle, Calendar, Building2 } from "lucide-react";
 import type { CampusOption, SessionOption } from "../adapters/ipc/types";
 import { validateCreatePlanInput } from "../core/options";
 
@@ -83,7 +82,6 @@ export function CreatePlanDialog({
 
         {error && (
           <Alert variant="destructive" className="my-2">
-            <AlertCircle className="h-4 w-4" />
             <AlertTitle>Unable to create plan</AlertTitle>
             <AlertDescription className="font-mono text-xs break-all">
               {error}
@@ -93,8 +91,8 @@ export function CreatePlanDialog({
 
         <form onSubmit={handleSubmit} className="space-y-4 py-2">
           <div className="space-y-1.5">
-            <label htmlFor="plan-name" className="text-sm font-medium text-slate-900">
-              Plan Name <span className="text-red-500">*</span>
+            <label htmlFor="plan-name" className="text-sm font-medium text-foreground">
+              Plan Name <span className="text-red-600">*</span>
             </label>
             <Input
               id="plan-name"
@@ -115,9 +113,8 @@ export function CreatePlanDialog({
           </div>
 
           <div className="space-y-1.5">
-            <label htmlFor="plan-campus" className="text-sm font-medium text-slate-900 flex items-center gap-1.5">
-              <Building2 className="h-3.5 w-3.5 text-slate-500" />
-              <span>Campus</span> <span className="text-red-500">*</span>
+            <label htmlFor="plan-campus" className="text-sm font-medium text-foreground block">
+              Campus <span className="text-red-600">*</span>
             </label>
             <select
               id="plan-campus"
@@ -130,7 +127,7 @@ export function CreatePlanDialog({
                 }
               }}
               disabled={isLoading}
-              className="flex h-9 w-full rounded-md border border-slate-200 bg-white px-3 py-1 text-sm shadow-sm transition-colors focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-emerald-600 disabled:cursor-not-allowed disabled:opacity-50"
+              className="flex h-9 w-full rounded-control border border-input bg-card px-3 py-1 text-sm disabled:cursor-not-allowed disabled:opacity-50"
             >
               <option value="" disabled>
                 Select a campus...
@@ -147,9 +144,8 @@ export function CreatePlanDialog({
           </div>
 
           <div className="space-y-1.5">
-            <label htmlFor="plan-session" className="text-sm font-medium text-slate-900 flex items-center gap-1.5">
-              <Calendar className="h-3.5 w-3.5 text-slate-500" />
-              <span>Academic Session</span> <span className="text-red-500">*</span>
+            <label htmlFor="plan-session" className="text-sm font-medium text-foreground block">
+              Academic Session <span className="text-red-600">*</span>
             </label>
             <select
               id="plan-session"
@@ -162,7 +158,7 @@ export function CreatePlanDialog({
                 }
               }}
               disabled={isLoading}
-              className="flex h-9 w-full rounded-md border border-slate-200 bg-white px-3 py-1 text-sm shadow-sm transition-colors focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-emerald-600 disabled:cursor-not-allowed disabled:opacity-50"
+              className="flex h-9 w-full rounded-control border border-input bg-card px-3 py-1 text-sm disabled:cursor-not-allowed disabled:opacity-50"
             >
               <option value="" disabled>
                 Select an academic session...
@@ -178,7 +174,7 @@ export function CreatePlanDialog({
             )}
           </div>
 
-          <div className="rounded-md bg-slate-50 p-3 text-xs text-slate-600 border border-slate-200">
+          <div className="rounded-card bg-muted p-3 text-xs text-muted-foreground border border-border">
             <strong>Hard-scoping note:</strong> Once created, a plan is permanently
             scoped to this campus and session. Mixing terms is not supported.
           </div>

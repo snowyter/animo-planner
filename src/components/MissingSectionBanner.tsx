@@ -3,9 +3,15 @@
  *
  * SPEC §5 (ADR-0008: Sections are never hard-deleted; missing sections
  * raise a persistent banner naming them and surface alternatives).
+ *
+ * Ticket 33 — this reads as informative, not alarming. A section leaving the
+ * catalog is information the student needs during enlistment week, and the
+ * banner's job is to hand them the alternatives, not to sound an alarm. Amber,
+ * a plain heading, and no warning glyph on the heading itself.
  */
 
-import { AlertTriangle, Building2, Globe, Plus, Trash2, User, Users } from "lucide-react";
+/** Per-block modality is derived data that is displayed (ADR-0007). */
+import { Building2, Globe } from "lucide-react";
 import { Button } from "./ui/button";
 import { Badge } from "./ui/badge";
 import type { MissingSection, PlanSection, ScheduleBlock, Section } from "../adapters/ipc/types";
@@ -42,40 +48,34 @@ export function MissingSectionBanner({
         return (
           <div
             key={`missing-${missing.courseId}-${missing.sectionId}`}
-            className="rounded-xl border border-amber-300 bg-amber-50/80 p-5 shadow-xs"
+            className="rounded-panel border border-amber-300 bg-amber-50/80 p-panel"
           >
             <div className="flex flex-col md:flex-row md:items-start md:justify-between gap-4">
               <div className="space-y-1">
-                <div className="flex items-center gap-2">
-                  <div className="flex h-7 w-7 items-center justify-center rounded-md bg-amber-100 text-amber-800 shrink-0">
-                    <AlertTriangle className="h-4 w-4" />
-                  </div>
-                  <h4 className="text-base font-bold text-amber-950">
-                    Section {courseCode} {missing.sectionCode} is missing from the catalog
-                  </h4>
-                </div>
-                <p className="text-xs text-amber-900/90 pl-9">
+                <h4 className="text-base font-bold text-amber-950">
+                  Section {courseCode} {missing.sectionCode} is missing from the catalog
+                </h4>
+                <p className="text-xs text-amber-900">
                   This section was not found during refresh. Sections are never silently removed; it remains in your plan, but you can swap to an available alternative below.
                 </p>
               </div>
 
-              <div className="shrink-0 pl-9 md:pl-0">
+              <div className="shrink-0">
                 <Button
                   type="button"
                   variant="outline"
                   size="sm"
                   onClick={() => onRemoveMissingSection(missing.courseId, missing.sectionId)}
-                  className="h-8 text-xs border-amber-300 text-amber-900 bg-white hover:bg-amber-100/50 flex items-center gap-1.5"
+                  className="h-8 text-xs border-amber-300 text-amber-900 hover:bg-amber-100/50"
                 >
-                  <Trash2 className="h-3.5 w-3.5 text-amber-700" />
-                  <span>Remove from plan</span>
+                  Remove from plan
                 </Button>
               </div>
             </div>
 
             {/* Alternatives section */}
-            <div className="mt-4 pt-4 border-t border-amber-200/70 pl-0 md:pl-9 space-y-3">
-              <div className="text-xs font-semibold text-amber-950 uppercase tracking-wider">
+            <div className="mt-4 pt-4 border-t border-amber-200/70 space-y-3">
+              <div className="text-micro font-semibold text-amber-950 uppercase tracking-wider">
                 Available alternatives ({missing.alternatives.length}):
               </div>
 
@@ -95,11 +95,11 @@ export function MissingSectionBanner({
                     return (
                       <div
                         key={`alt-${alt.courseId}-${alt.sectionId}`}
-                        className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3 rounded-lg border border-amber-200 bg-white p-3 shadow-2xs"
+                        className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3 rounded-card border border-amber-200 bg-card p-3"
                       >
                         <div className="space-y-1.5 min-w-0 flex-1">
                           <div className="flex flex-wrap items-center gap-2">
-                            <span className="font-bold text-sm text-slate-900">
+                            <span className="font-bold text-sm text-foreground">
                               {alt.sectionCode}
                             </span>
                             <Badge
@@ -110,39 +110,38 @@ export function MissingSectionBanner({
                                   ? "secondary"
                                   : "campus"
                               }
-                              className="text-[10px]"
                             >
                               {alt.modality}
                             </Badge>
                             {alt.courseType && (
-                              <span className="text-xs text-slate-500">• {alt.courseType}</span>
+                              <span className="text-xs text-muted-foreground">• {alt.courseType}</span>
                             )}
                           </div>
 
                           {/* Meeting Blocks */}
-                          <div className="flex flex-wrap items-center gap-1.5 text-xs text-slate-700">
+                          <div className="flex flex-wrap items-center gap-1.5 text-xs text-foreground">
                             {alt.blocks.map((block: ScheduleBlock, idx: number) => {
                               const isF2F = block.modality === "F2F";
                               return (
                                 <div
                                   key={`alt-block-${block.day}-${block.startMin}-${idx}`}
-                                  className="flex items-center gap-1 rounded bg-slate-50 border border-slate-200 px-2 py-0.5 text-[11px]"
+                                  className="flex items-center gap-1 rounded-control bg-muted border border-border px-2 py-0.5 text-micro"
                                 >
-                                  <span className="font-semibold text-slate-800">{block.day}</span>
-                                  <span className="text-slate-400">•</span>
+                                  <span className="font-semibold text-foreground">{block.day}</span>
+                                  <span className="text-muted-foreground">•</span>
                                   <span className="font-mono">
                                     {formatMinutesToTime12(block.startMin)} –{" "}
                                     {formatMinutesToTime12(block.endMin)}
                                   </span>
-                                  <span className="text-slate-400">•</span>
+                                  <span className="text-muted-foreground">•</span>
                                   {isF2F ? (
-                                    <span className="flex items-center gap-0.5 text-emerald-700">
-                                      <Building2 className="h-3 w-3" />
+                                    <span className="flex items-center gap-0.5 text-emerald-800">
+                                      <Building2 className="h-3 w-3" aria-hidden="true" />
                                       <span>{block.location ?? "Room"}</span>
                                     </span>
                                   ) : (
-                                    <span className="flex items-center gap-0.5 text-blue-700">
-                                      <Globe className="h-3 w-3" />
+                                    <span className="flex items-center gap-0.5 text-blue-800">
+                                      <Globe className="h-3 w-3" aria-hidden="true" />
                                       <span>Online</span>
                                     </span>
                                   )}
@@ -152,15 +151,9 @@ export function MissingSectionBanner({
                           </div>
 
                           {/* Teacher & Enrolled */}
-                          <div className="flex flex-wrap items-center gap-x-3 text-xs text-slate-500">
-                            <div className="flex items-center gap-1">
-                              <User className="h-3 w-3 text-slate-400" />
-                              <span>Teacher: <strong className="text-slate-700">{teacherDisplay}</strong></span>
-                            </div>
-                            <div className="flex items-center gap-1">
-                              <Users className="h-3 w-3 text-slate-400" />
-                              <span>Enrolled: <strong className="font-mono text-slate-700">{enrolledCapDisplay}</strong></span>
-                            </div>
+                          <div className="flex flex-wrap items-center gap-x-3 text-xs text-muted-foreground">
+                            <span>Teacher: <strong className="text-foreground">{teacherDisplay}</strong></span>
+                            <span>Enrolled: <strong className="font-mono text-foreground">{enrolledCapDisplay}</strong></span>
                           </div>
                         </div>
 
@@ -169,10 +162,9 @@ export function MissingSectionBanner({
                             type="button"
                             size="sm"
                             onClick={() => onAddAlternative(alt)}
-                            className="h-8 text-xs bg-emerald-600 hover:bg-emerald-700 text-white flex items-center gap-1 shadow-xs"
+                            className="h-8 text-xs"
                           >
-                            <Plus className="h-3.5 w-3.5" />
-                            <span>Add to Plan</span>
+                            Add to Plan
                           </Button>
                         </div>
                       </div>

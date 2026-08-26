@@ -10,18 +10,8 @@ import {
 import { Button } from "./ui/button";
 import { Input } from "./ui/input";
 import { Alert, AlertDescription, AlertTitle } from "./ui/alert";
-import {
-  ArrowRight,
-  ShieldCheck,
-  Building2,
-  Calendar,
-  ExternalLink,
-  BookOpen,
-  Info,
-  CheckCircle2,
-  RefreshCw,
-  AlertCircle,
-} from "lucide-react";
+/** "Opens outside the app" is not something the label says. */
+import { ExternalLink } from "lucide-react";
 import type { CampusOption, SessionOption, PlanSummary } from "../adapters/ipc/types";
 import {
   DISCLAIMER_TEXT,
@@ -167,35 +157,30 @@ export function OnboardingDialog({
 
   return (
     <Dialog open={open} onOpenChange={handleOpenChange}>
-      <DialogContent className="sm:max-w-2xl max-h-[90vh] overflow-y-auto">
+      <DialogContent className="ambient-host sm:max-w-2xl max-h-[90vh] overflow-y-auto">
+        {/* A calm screen, and the first one a student sees. */}
+        <div data-testid="ambient-wash" aria-hidden="true" className="ambient-wash" />
+
         {step === "choice" && (
-          <div className="space-y-6 py-2">
-            <DialogHeader>
-              <div className="flex items-center gap-2 mb-1">
-                <div className="flex h-8 w-8 items-center justify-center rounded-lg bg-emerald-700 text-white font-bold">
-                  <BookOpen className="h-4 w-4" />
-                </div>
-                <DialogTitle className="text-xl font-bold text-slate-900">
-                  Welcome to Animo Plan
-                </DialogTitle>
-              </div>
-              <DialogDescription className="text-sm text-slate-600">
-Set up a plan for your campus and term, then capture the courses you are looking at in Archer&#39;s Hub.
+          /* One path in.
+             The sample-data option was removed, and this screen is set as a
+             single centred column rather than a two-up choice grid with one
+             cell missing — there is no choice left to present, so it stops
+             pretending there is. */
+          <div className="ambient-content space-y-6 py-4 text-center">
+            <DialogHeader className="space-y-2 text-center sm:text-center">
+              <DialogTitle className="text-wordmark text-foreground">
+                Welcome to Animo Plan
+              </DialogTitle>
+              <DialogDescription className="text-sm text-muted-foreground max-w-md mx-auto leading-relaxed">
+                Set up a plan for your campus and term, then capture the courses
+                you are looking at in Archer&#39;s Hub. Nothing is ever written
+                back, and no credentials are stored.
               </DialogDescription>
             </DialogHeader>
 
-            {/* Verbatim Disclaimer during first run (ADR-0001, ADR-0002, Spec §1) */}
-            <div className="rounded-lg border border-slate-200 bg-slate-50/80 p-3.5 text-xs text-slate-600 space-y-1">
-              <div className="flex items-center gap-1.5 font-semibold text-slate-800">
-                <Info className="h-3.5 w-3.5 text-emerald-700 shrink-0" />
-                <span>Disclaimer</span>
-              </div>
-              <p className="leading-relaxed">{DISCLAIMER_TEXT}</p>
-            </div>
-
             {error && (
-              <Alert variant="destructive">
-                <AlertCircle className="h-4 w-4" />
+              <Alert variant="destructive" className="text-left">
                 <AlertTitle>Error</AlertTitle>
                 <AlertDescription className="font-mono text-xs break-all">
                   {error}
@@ -203,40 +188,28 @@ Set up a plan for your campus and term, then capture the courses you are looking
               </Alert>
             )}
 
-            {/* The one path in (Ticket 24 & Spec §7) */}
-            <div className="grid grid-cols-1 gap-4">
-              <div className="flex flex-col justify-between rounded-xl border-2 border-emerald-600 bg-white p-5 shadow-xs transition-all hover:shadow-md">
-                <div className="space-y-2">
-                  <div className="flex items-center gap-2 text-emerald-800 font-bold text-base">
-                    <BookOpen className="h-5 w-5 text-emerald-700" />
-                    <h3>Start a real plan</h3>
-                  </div>
-                  <p className="text-xs text-slate-600 leading-relaxed">
-                    Set up your campus and term, sign in to Archer&#39;s Hub in a secure popup, and capture your courses directly.
-                  </p>
-                </div>
-                <div className="mt-5 pt-3 border-t border-slate-100">
-                  <Button
-                    onClick={() => {
-                      setError(null);
-                      setStep("pick-scope");
-                    }}
-                    className="w-full bg-emerald-700 hover:bg-emerald-800 text-white font-semibold flex items-center justify-center gap-1.5 shadow-sm"
-                  >
-                    <span>Create your plan</span>
-                    <ArrowRight className="h-4 w-4" />
-                  </Button>
-                </div>
-              </div>
+            <Button
+              onClick={() => {
+                setError(null);
+                setStep("pick-scope");
+              }}
+              className="px-8"
+            >
+              Create your plan
+            </Button>
 
+            {/* Verbatim Disclaimer during first run (ADR-0001, ADR-0002, Spec §1) */}
+            <div className="rounded-card border border-border bg-card/90 p-3.5 text-xs text-muted-foreground space-y-1 text-left">
+              <span className="font-semibold text-foreground block">Disclaimer</span>
+              <p className="leading-relaxed">{DISCLAIMER_TEXT}</p>
             </div>
 
-            <DialogFooter className="pt-2 sm:justify-between items-center">
+            <DialogFooter className="pt-1 sm:justify-center items-center">
               <Button
                 variant="ghost"
                 size="sm"
                 onClick={handleSkip}
-                className="text-xs text-slate-500 hover:text-slate-800"
+                className="text-xs text-muted-foreground hover:text-foreground"
               >
                 Skip tour
               </Button>
@@ -245,32 +218,31 @@ Set up a plan for your campus and term, then capture the courses you are looking
         )}
 
         {step === "pick-scope" && (
-          <div className="space-y-5 py-2">
+          <div className="ambient-content space-y-5 py-2">
             <DialogHeader>
               <div className="flex items-center justify-between">
-                <span className="text-xs font-bold uppercase tracking-wider text-emerald-700">
+                <span className="text-micro font-bold uppercase tracking-wider text-primary">
                   Step 1 of 3
                 </span>
                 <Button
                   variant="ghost"
                   size="sm"
                   onClick={handleSkip}
-                  className="h-7 text-xs text-slate-500 hover:text-slate-800"
+                  className="h-7 text-xs text-muted-foreground hover:text-foreground"
                 >
                   Skip
                 </Button>
               </div>
-              <DialogTitle className="text-lg font-bold text-slate-900">
+              <DialogTitle className="text-lg font-bold text-foreground">
                 Pick Campus &amp; Academic Session
               </DialogTitle>
-              <DialogDescription className="text-xs text-slate-600">
+              <DialogDescription className="text-xs text-muted-foreground">
                 A plan is hard-scoped to one campus and academic session to guarantee schedule validity.
               </DialogDescription>
             </DialogHeader>
 
             {error && (
               <Alert variant="destructive">
-                <AlertCircle className="h-4 w-4" />
                 <AlertTitle>Error</AlertTitle>
                 <AlertDescription className="font-mono text-xs break-all">
                   {error}
@@ -280,7 +252,7 @@ Set up a plan for your campus and term, then capture the courses you are looking
 
             <form onSubmit={handleCreateStepSubmit} className="space-y-4">
               <div className="space-y-1.5">
-                <label htmlFor="onboarding-plan-name" className="text-xs font-semibold text-slate-900">
+                <label htmlFor="onboarding-plan-name" className="text-xs font-semibold text-foreground">
                   Plan Name <span className="text-red-500">*</span>
                 </label>
                 <Input
@@ -302,9 +274,8 @@ Set up a plan for your campus and term, then capture the courses you are looking
               </div>
 
               <div className="space-y-1.5">
-                <label htmlFor="onboarding-campus" className="text-xs font-semibold text-slate-900 flex items-center gap-1.5">
-                  <Building2 className="h-3.5 w-3.5 text-slate-500" />
-                  <span>Campus</span> <span className="text-red-500">*</span>
+                <label htmlFor="onboarding-campus" className="text-xs font-semibold text-foreground block">
+                  Campus <span className="text-red-600">*</span>
                 </label>
                 <select
                   id="onboarding-campus"
@@ -317,7 +288,7 @@ Set up a plan for your campus and term, then capture the courses you are looking
                     }
                   }}
                   disabled={isLoading}
-                  className="flex h-9 w-full rounded-md border border-slate-200 bg-white px-3 py-1 text-sm shadow-sm focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-emerald-600"
+                  className="flex h-9 w-full rounded-control border border-input bg-card px-3 py-1 text-sm"
                 >
                   <option value="" disabled>
                     Select campus...
@@ -334,9 +305,8 @@ Set up a plan for your campus and term, then capture the courses you are looking
               </div>
 
               <div className="space-y-1.5">
-                <label htmlFor="onboarding-session" className="text-xs font-semibold text-slate-900 flex items-center gap-1.5">
-                  <Calendar className="h-3.5 w-3.5 text-slate-500" />
-                  <span>Academic Session</span> <span className="text-red-500">*</span>
+                <label htmlFor="onboarding-session" className="text-xs font-semibold text-foreground block">
+                  Academic Session <span className="text-red-600">*</span>
                 </label>
                 <select
                   id="onboarding-session"
@@ -349,7 +319,7 @@ Set up a plan for your campus and term, then capture the courses you are looking
                     }
                   }}
                   disabled={isLoading}
-                  className="flex h-9 w-full rounded-md border border-slate-200 bg-white px-3 py-1 text-sm shadow-sm focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-emerald-600"
+                  className="flex h-9 w-full rounded-control border border-input bg-card px-3 py-1 text-sm"
                 >
                   <option value="" disabled>
                     Select academic session...
@@ -379,7 +349,6 @@ Set up a plan for your campus and term, then capture the courses you are looking
                   type="submit"
                   size="sm"
                   disabled={isLoading}
-                  className="bg-emerald-700 hover:bg-emerald-800 text-white"
                 >
                   {isLoading ? "Creating..." : "Continue"}
                 </Button>
@@ -389,35 +358,34 @@ Set up a plan for your campus and term, then capture the courses you are looking
         )}
 
         {step === "sign-in" && (
-          <div className="space-y-5 py-2">
+          <div className="ambient-content space-y-5 py-2">
             <DialogHeader>
               <div className="flex items-center justify-between">
-                <span className="text-xs font-bold uppercase tracking-wider text-emerald-700">
+                <span className="text-micro font-bold uppercase tracking-wider text-primary">
                   Step 2 of 3
                 </span>
                 <Button
                   variant="ghost"
                   size="sm"
                   onClick={handleSkip}
-                  className="h-7 text-xs text-slate-500 hover:text-slate-800"
+                  className="h-7 text-xs text-muted-foreground hover:text-foreground"
                 >
                   Skip
                 </Button>
               </div>
-              <DialogTitle className="text-lg font-bold text-slate-900">
+              <DialogTitle className="text-lg font-bold text-foreground">
                 Sign In to Archer&#39;s Hub
               </DialogTitle>
-              <DialogDescription className="text-xs text-slate-600">
+              <DialogDescription className="text-xs text-muted-foreground">
                 Sign in manually through the Archer&#39;s Hub popup window to search your courses.
               </DialogDescription>
             </DialogHeader>
 
             {/* Clear Sign-In Privacy Notice (ADR-0002, Spec §8) */}
-            <div className="rounded-xl border border-emerald-200 bg-emerald-50/70 p-4 space-y-2">
-              <div className="flex items-center gap-2 text-emerald-900 font-semibold text-sm">
-                <ShieldCheck className="h-5 w-5 text-emerald-700 shrink-0" />
-                <span>Zero Credential Storage</span>
-              </div>
+            <div className="rounded-panel border border-emerald-200 bg-emerald-50/70 p-4 space-y-2">
+              <span className="block text-emerald-900 font-semibold text-sm">
+                Zero Credential Storage
+              </span>
               <p className="text-xs text-emerald-800 leading-relaxed font-medium">
                 {SIGN_IN_NOTICE}
               </p>
@@ -428,7 +396,6 @@ Set up a plan for your campus and term, then capture the courses you are looking
 
             {error && (
               <Alert variant="destructive">
-                <AlertCircle className="h-4 w-4" />
                 <AlertTitle>Error</AlertTitle>
                 <AlertDescription className="font-mono text-xs break-all">
                   {error}
@@ -440,20 +407,15 @@ Set up a plan for your campus and term, then capture the courses you are looking
               <Button
                 onClick={handleOpenArcherHub}
                 disabled={isLoading}
-                className="w-full sm:w-auto bg-emerald-700 hover:bg-emerald-800 text-white font-medium flex items-center justify-center gap-1.5"
+                className="w-full sm:w-auto font-medium flex items-center justify-center gap-1.5"
               >
-                {isLoading ? (
-                  <RefreshCw className="h-4 w-4 animate-spin" />
-                ) : (
-                  <ExternalLink className="h-4 w-4" />
-                )}
-                <span>Open Archer&#39;s Hub</span>
+                {!isLoading && <ExternalLink className="h-4 w-4" aria-hidden="true" />}
+                <span>{isLoading ? "Opening..." : "Open Archer's Hub"}</span>
               </Button>
               {hasOpenedCapture && (
-                <div className="flex items-center gap-1.5 text-xs text-emerald-700 font-medium">
-                  <CheckCircle2 className="h-4 w-4 text-emerald-600" />
-                  <span>Archer&#39;s Hub window opened</span>
-                </div>
+                <span className="text-xs text-emerald-800 font-medium">
+                  Archer&#39;s Hub window opened
+                </span>
               )}
             </div>
 
@@ -471,7 +433,6 @@ Set up a plan for your campus and term, then capture the courses you are looking
                 type="button"
                 size="sm"
                 onClick={() => setStep("search-course")}
-                className="bg-emerald-700 hover:bg-emerald-800 text-white"
               >
                 Next
               </Button>
@@ -480,60 +441,60 @@ Set up a plan for your campus and term, then capture the courses you are looking
         )}
 
         {step === "search-course" && (
-          <div className="space-y-5 py-2">
+          <div className="ambient-content space-y-5 py-2">
             <DialogHeader>
               <div className="flex items-center justify-between">
-                <span className="text-xs font-bold uppercase tracking-wider text-emerald-700">
+                <span className="text-micro font-bold uppercase tracking-wider text-primary">
                   Step 3 of 3
                 </span>
                 <Button
                   variant="ghost"
                   size="sm"
                   onClick={handleSkip}
-                  className="h-7 text-xs text-slate-500 hover:text-slate-800"
+                  className="h-7 text-xs text-muted-foreground hover:text-foreground"
                 >
                   Skip
                 </Button>
               </div>
-              <DialogTitle className="text-lg font-bold text-slate-900">
+              <DialogTitle className="text-lg font-bold text-foreground">
                 Search Your First Course
               </DialogTitle>
-              <DialogDescription className="text-xs text-slate-600">
+              <DialogDescription className="text-xs text-muted-foreground">
                 How automatic silent capture works during your enlistment planning.
               </DialogDescription>
             </DialogHeader>
 
             <div className="space-y-3">
-              <div className="flex items-start gap-3 rounded-lg border border-slate-200 bg-white p-3.5 shadow-2xs">
-                <div className="flex h-7 w-7 shrink-0 items-center justify-center rounded-md bg-emerald-100 text-emerald-800 font-bold text-xs">
+              <div className="flex items-start gap-3 rounded-card border border-border bg-card p-3.5">
+                <div className="flex h-7 w-7 shrink-0 items-center justify-center rounded-control bg-emerald-100 text-emerald-900 font-bold text-xs">
                   1
                 </div>
-                <div className="text-xs text-slate-600 leading-relaxed">
-                  <strong className="text-slate-900 block font-semibold mb-0.5">
+                <div className="text-xs text-muted-foreground leading-relaxed">
+                  <strong className="text-foreground block font-semibold mb-0.5">
                     Navigate to Course Finder
                   </strong>
                   In the Archer&#39;s Hub popup, open the Course Finder page.
                 </div>
               </div>
 
-              <div className="flex items-start gap-3 rounded-lg border border-slate-200 bg-white p-3.5 shadow-2xs">
-                <div className="flex h-7 w-7 shrink-0 items-center justify-center rounded-md bg-emerald-100 text-emerald-800 font-bold text-xs">
+              <div className="flex items-start gap-3 rounded-card border border-border bg-card p-3.5">
+                <div className="flex h-7 w-7 shrink-0 items-center justify-center rounded-control bg-emerald-100 text-emerald-900 font-bold text-xs">
                   2
                 </div>
-                <div className="text-xs text-slate-600 leading-relaxed">
-                  <strong className="text-slate-900 block font-semibold mb-0.5">
+                <div className="text-xs text-muted-foreground leading-relaxed">
+                  <strong className="text-foreground block font-semibold mb-0.5">
                     Search Any Subject
                   </strong>
-                  Select any course from the dropdown (e.g. <code className="text-emerald-700 font-mono">CSINTSY</code>, <code className="text-emerald-700 font-mono">GEARTAP</code>).
+                  Select any course from the dropdown (e.g. <code className="text-primary font-mono">CSINTSY</code>, <code className="text-primary font-mono">GEARTAP</code>).
                 </div>
               </div>
 
-              <div className="flex items-start gap-3 rounded-lg border border-slate-200 bg-white p-3.5 shadow-2xs">
-                <div className="flex h-7 w-7 shrink-0 items-center justify-center rounded-md bg-emerald-100 text-emerald-800 font-bold text-xs">
+              <div className="flex items-start gap-3 rounded-card border border-border bg-card p-3.5">
+                <div className="flex h-7 w-7 shrink-0 items-center justify-center rounded-control bg-emerald-100 text-emerald-900 font-bold text-xs">
                   3
                 </div>
-                <div className="text-xs text-slate-600 leading-relaxed">
-                  <strong className="text-slate-900 block font-semibold mb-0.5">
+                <div className="text-xs text-muted-foreground leading-relaxed">
+                  <strong className="text-foreground block font-semibold mb-0.5">
                     Silent Local Capture
                   </strong>
                   Sections are captured automatically into your local database. Animo Plan will update the live section counter and let you browse or solve conflict-free schedules.
@@ -554,10 +515,9 @@ Set up a plan for your campus and term, then capture the courses you are looking
                 type="button"
                 size="sm"
                 onClick={handleFinish}
-                className="bg-emerald-700 hover:bg-emerald-800 text-white font-semibold"
+                className="font-semibold"
               >
-                <span>Finish &amp; Go to Plan</span>
-                <ArrowRight className="h-4 w-4 ml-1" />
+                Finish &amp; Go to Plan
               </Button>
             </DialogFooter>
           </div>

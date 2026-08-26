@@ -1276,26 +1276,47 @@ impl Store {
         })
         .collect()
     }
-    /// The courses a refresh must re-run, in plan order: every course with
-    /// at least one plan section, carrying the plan's section ids for that
-    /// course so missing sections can be detected. Only courses in the plan
-    /// are returned — refresh never walks the catalog.
+    /// The courses a refresh must re-run, ordered by course id: **every course
+    /// captured under the plan's scope**, each carrying the plan's section ids
+    /// for that course so missing sections can be detected.
+    ///
+    /// Refreshing only the courses already chosen left every candidate in the
+    /// picker showing whatever enrolment number it happened to be captured
+    /// with — and those are exactly the numbers a student is comparing before
+    /// choosing, and the ones exclude-full solves against. A course with no
+    /// plan membership simply carries no section ids, so there is nothing of
+    /// it to flag missing (ADR-0008).
+    ///
+    /// This still never walks the catalog: it re-runs only what the student
+    /// already searched for, inside the one `(campus, session)` the plan is
+    /// hard-scoped to.
+    ///
+    /// Courses already in the plan come first. A run can halt part-way on an
+    /// expired session and keep its partial result (SPEC §4), so the numbers
+    /// the student has actually committed to are the ones that land before a
+    /// halt can take the rest.
     pub fn refresh_courses(&self, plan_id: &str) -> Result<Vec<RefreshCourse>, StoreError> {
-        let _ = plan_scope(&self.conn, plan_id)?;
+        let (campus_id, session_id) = plan_scope(&self.conn, plan_id)?;
         let mut stmt = self.conn.prepare(
-            "SELECT c.course_id, c.code, s.section_id
-             FROM plan_sections ps
-             JOIN sections s ON s.id = ps.section_fk
-             JOIN courses c ON c.campus_id = s.campus_id AND c.session_id = s.session_id
-                 AND c.course_id = s.course_id
-             WHERE ps.plan_id = ?1
-             ORDER BY c.course_id, s.section_id",
+            "SELECT c.course_id, c.code, member.section_id
+             FROM courses c
+             LEFT JOIN (
+                 SELECT s.campus_id, s.session_id, s.course_id, s.section_id
+                 FROM plan_sections ps
+                 JOIN sections s ON s.id = ps.section_fk
+                 WHERE ps.plan_id = ?1
+             ) AS member
+                 ON member.campus_id = c.campus_id
+                 AND member.session_id = c.session_id
+                 AND member.course_id = c.course_id
+             WHERE c.campus_id = ?2 AND c.session_id = ?3
+             ORDER BY (member.section_id IS NULL), c.course_id, member.section_id",
         )?;
-        let rows = stmt.query_map([plan_id], |row| {
+        let rows = stmt.query_map(rusqlite::params![plan_id, campus_id, session_id], |row| {
             Ok((
                 row.get::<_, i64>(0)?,
                 row.get::<_, String>(1)?,
-                row.get::<_, i64>(2)?,
+                row.get::<_, Option<i64>>(2)?,
             ))
         })?;
         let mut courses: Vec<RefreshCourse> = Vec::new();
@@ -1303,12 +1324,14 @@ impl Store {
             let (course_id, code, section_id) = row?;
             match courses.last_mut() {
                 Some(last) if last.course_id == course_id => {
-                    last.plan_section_ids.push(section_id);
+                    if let Some(section_id) = section_id {
+                        last.plan_section_ids.push(section_id);
+                    }
                 }
                 _ => courses.push(RefreshCourse {
                     course_id,
                     code,
-                    plan_section_ids: vec![section_id],
+                    plan_section_ids: section_id.into_iter().collect(),
                 }),
             }
         }
@@ -3669,21 +3692,22 @@ mod tests {
     }
 
     #[test]
-    fn refresh_courses_returns_only_plan_courses_with_their_section_ids_in_order() {
+    fn refresh_courses_covers_every_captured_course_in_scope_carrying_plan_section_ids() {
         let mut store = store();
         store.create_plan("p1", "T1 load", &SCOPE, T1).expect("plan");
         let mut geartap_y11 = parsed_section(564, 737, "Y11", None, Some(10), vec![]);
         geartap_y11.course_code = "GEARTAP".into();
         let mut geartap_y12 = parsed_section(564, 738, "Y12", None, Some(10), vec![]);
         geartap_y12.course_code = "GEARTAP".into();
+        let mut spare = parsed_section(999, 500, "X01", None, Some(5), vec![]);
+        spare.course_code = "SPARE".into();
         // Captured out of order so course-id ordering is what is asserted.
         let catalog = vec![
             parsed_section(2923, 384, "S01", None, Some(10), vec![]),
             parsed_section(2923, 385, "S02", None, Some(20), vec![]),
             geartap_y11,
             geartap_y12,
-            // A captured course with no plan membership must not appear.
-            parsed_section(999, 500, "X01", None, Some(5), vec![]),
+            spare,
         ];
         store.record_capture(&SCOPE, &catalog, T1).expect("capture");
         store.add_section_to_plan("p1", 2923, 385).expect("add S02");
@@ -3691,13 +3715,50 @@ mod tests {
         store.add_section_to_plan("p1", 2923, 384).expect("add S01");
 
         let courses = store.refresh_courses("p1").expect("refresh courses");
-        assert_eq!(courses.len(), 2, "only courses in the plan are refreshed");
-        assert_eq!(courses[0].course_id, 564, "courses are ordered by course id");
+        assert_eq!(
+            courses.len(),
+            3,
+            "every captured course is refreshed, not only the ones already chosen"
+        );
+        // Plan courses first, each ordered by course id, then the rest. A run
+        // can halt on an expired session and keep what it got, so the numbers
+        // the student has committed to land before a halt can take the rest.
+        assert_eq!(courses[0].course_id, 564, "plan courses come first, by course id");
         assert_eq!(courses[0].code, "GEARTAP");
         assert_eq!(courses[0].plan_section_ids, vec![737]);
         assert_eq!(courses[1].course_id, 2923);
         assert_eq!(courses[1].code, "CSINTSY");
         assert_eq!(courses[1].plan_section_ids, vec![384, 385]);
+        // A course the student is still weighing carries no plan sections, so
+        // nothing of it can be flagged missing — its numbers still refresh.
+        assert_eq!(courses[2].course_id, 999, "courses not yet chosen come last");
+        assert_eq!(courses[2].code, "SPARE");
+        assert!(
+            courses[2].plan_section_ids.is_empty(),
+            "a course with no plan membership has nothing to flag missing"
+        );
+    }
+
+    #[test]
+    fn refresh_courses_stays_inside_the_plan_scope() {
+        // A plan is hard-scoped to one (campus, session). Widening refresh to
+        // the captured catalog must not widen it across scopes.
+        let mut store = store();
+        store.create_plan("p1", "T1 load", &SCOPE, T1).expect("plan");
+        store
+            .record_capture(&SCOPE, &[parsed_section(2923, 384, "S01", None, Some(10), vec![])], T1)
+            .expect("in-scope capture");
+        store
+            .record_capture(
+                &OTHER_SCOPE,
+                &[parsed_section(777, 100, "Q01", None, Some(10), vec![])],
+                T1,
+            )
+            .expect("out-of-scope capture");
+
+        let courses = store.refresh_courses("p1").expect("refresh courses");
+        assert_eq!(courses.len(), 1, "only the plan's own scope is refreshed");
+        assert_eq!(courses[0].course_id, 2923);
     }
 
     #[test]
@@ -3716,10 +3777,27 @@ mod tests {
     }
 
     #[test]
-    fn refresh_courses_is_empty_for_an_empty_plan() {
+    fn refresh_courses_is_empty_when_nothing_is_captured_in_scope() {
         let mut store = store();
         store.create_plan("p1", "T1 load", &SCOPE, T1).expect("plan");
         assert!(store.refresh_courses("p1").expect("refresh courses").is_empty());
+    }
+
+    #[test]
+    fn refresh_courses_still_covers_the_catalog_when_the_plan_is_empty() {
+        // Enrolment numbers on candidate sections are what the picker shows
+        // and what exclude-full solves against. An empty plan is exactly when
+        // those numbers matter most.
+        let mut store = store();
+        store.create_plan("p1", "T1 load", &SCOPE, T1).expect("plan");
+        store
+            .record_capture(&SCOPE, &[parsed_section(2923, 384, "S01", None, Some(10), vec![])], T1)
+            .expect("capture");
+
+        let courses = store.refresh_courses("p1").expect("refresh courses");
+        assert_eq!(courses.len(), 1);
+        assert_eq!(courses[0].course_id, 2923);
+        assert!(courses[0].plan_section_ids.is_empty());
     }
 
     #[test]
