@@ -5,22 +5,16 @@ import {
   Image as ImageIcon,
   Loader2,
   ChevronDown,
-  Building2,
-  CalendarDays,
-  Layers,
   AlertTriangle,
-  CheckCircle2,
   AlertCircle,
 } from "lucide-react";
 import { toBlob } from "html-to-image";
 import { Button } from "./ui/button";
-import { Badge } from "./ui/badge";
 import { Alert, AlertDescription } from "./ui/alert";
 import { WeekGrid } from "./WeekGrid";
 import { exportPlanIcs } from "../adapters/ipc/client";
 import type { Conflict, IcsExport, Plan, PlanSummary } from "../adapters/ipc/types";
 import { deriveExportFileName, isAbortError } from "../core/export";
-import { formatSectionCount } from "../core/plan";
 
 export interface FileSaveOptions {
   suggestedName: string;
@@ -345,56 +339,19 @@ export function ExportMenu({
           }}
           className="p-8 space-y-5 bg-white text-slate-900 font-sans"
         >
-          {/* Self-describing Header for Exported Screenshot */}
-          <div className="rounded-xl border border-slate-200 bg-white p-5 shadow-xs">
-            <div className="flex items-center justify-between">
-              <div>
-                <div className="flex items-center gap-2">
-                  <span className="text-xs font-bold uppercase tracking-wider text-emerald-800 bg-emerald-50 px-2 py-0.5 rounded">
-                    Animo Plan
-                  </span>
-                  <span className="text-xs text-slate-400">•</span>
-                  <span className="text-xs text-slate-500 font-medium">
-                    DLSU Enlistment Schedule
-                  </span>
-                </div>
-                <h2 className="text-2xl font-bold tracking-tight text-slate-900 mt-1">
-                  {planSummary.name}
-                </h2>
-                <div className="flex items-center gap-2 mt-2">
-                  <Badge variant="campus" className="flex items-center gap-1 text-xs bg-slate-100 text-slate-800 border-slate-200">
-                    <Building2 className="h-3 w-3" />
-                    <span>{planSummary.campusName}</span>
-                  </Badge>
-                  <Badge variant="session" className="flex items-center gap-1 text-xs bg-slate-100 text-slate-800 border-slate-200">
-                    <CalendarDays className="h-3 w-3" />
-                    <span>{planSummary.sessionName}</span>
-                  </Badge>
-                </div>
+          {/* Header for Exported Screenshot: Academic year and term as title, brief conflict indicator if any (Ticket 44) */}
+          <div className="flex items-center justify-between">
+            <h1 className="text-2xl font-bold tracking-tight text-slate-900">
+              {planSummary.sessionName}
+            </h1>
+            {conflicts.length > 0 && (
+              <div className="flex items-center gap-1.5 text-sm font-semibold text-red-600">
+                <AlertTriangle className="h-4 w-4" />
+                <span>
+                  {conflicts.length} {conflicts.length === 1 ? "conflict" : "conflicts"}
+                </span>
               </div>
-
-              {/* Plan statistics and conflict status */}
-              <div className="flex items-center gap-4 text-xs text-slate-600 bg-slate-50 rounded-lg p-3 border border-slate-200">
-                <div className="flex items-center gap-1.5">
-                  <Layers className="h-4 w-4 text-emerald-700" />
-                  <span className="font-bold text-slate-900">
-                    {formatSectionCount(currentSections.length || planSummary.sectionCount)}
-                  </span>
-                </div>
-                <div className="h-4 w-px bg-slate-200" />
-                {conflicts.length > 0 ? (
-                  <div className="flex items-center gap-1 text-red-600 font-bold">
-                    <AlertTriangle className="h-4 w-4" />
-                    <span>{conflicts.length} {conflicts.length === 1 ? "conflict" : "conflicts"}</span>
-                  </div>
-                ) : (
-                  <div className="flex items-center gap-1 text-emerald-700 font-medium">
-                    <CheckCircle2 className="h-4 w-4 text-emerald-600" />
-                    <span>No conflicts</span>
-                  </div>
-                )}
-              </div>
-            </div>
+            )}
           </div>
 
           {/* Full Week Grid with full Mon–Sat columns */}

@@ -130,7 +130,7 @@ describe("ExportMenu", () => {
     expect(html).toContain("Schedule image (.png)");
   });
 
-  it("renders self-describing export container with plan name, campus, term, and week grid", () => {
+  it("renders export image header with only the academic year and term as title, omitting plan name, campus, and section count", () => {
     const html = renderToStaticMarkup(
       React.createElement(ExportMenu, {
         planSummary: mockPlanSummary,
@@ -139,12 +139,90 @@ describe("ExportMenu", () => {
       })
     );
 
-    expect(html).toContain("T1 Target Schedule");
-    expect(html).toContain("Manila");
-    expect(html).toContain("AY2026-27 T1");
-    expect(html).toContain("GEARTAP");
-    expect(html).toContain("CSINTSY");
-    expect(html).toContain("1 conflict");
+    // Extract export-canvas HTML substring
+    const canvasHtml = html.substring(html.indexOf('data-testid="export-canvas"'));
+
+    // Title is the session name
+    expect(canvasHtml).toContain("AY2026-27 T1");
+
+    // Grid contents are present
+    expect(canvasHtml).toContain("GEARTAP");
+    expect(canvasHtml).toContain("CSINTSY");
+
+    // Chrome is removed: plan name, campus, section count, app tag
+    expect(canvasHtml).not.toContain("T1 Target Schedule");
+    expect(canvasHtml).not.toContain("Manila");
+    expect(canvasHtml).not.toContain("Animo Plan");
+    expect(canvasHtml).not.toContain("DLSU Enlistment Schedule");
+    expect(canvasHtml).not.toContain("2 sections");
+  });
+
+  it("renders conflict warning in exported image when conflicts exist", () => {
+    const html = renderToStaticMarkup(
+      React.createElement(ExportMenu, {
+        planSummary: mockPlanSummary,
+        plan: mockPlan,
+        conflicts: mockConflicts,
+      })
+    );
+
+    const canvasHtml = html.substring(html.indexOf('data-testid="export-canvas"'));
+    expect(canvasHtml).toContain("1 conflict");
+
+    const multiConflicts: Conflict[] = [
+      mockConflicts[0],
+      {
+        a: { courseId: 1, sectionId: 2 },
+        b: { courseId: 3, sectionId: 4 },
+        day: "TUE",
+        startMin: 450,
+        endMin: 540,
+      },
+    ];
+    const multiHtml = renderToStaticMarkup(
+      React.createElement(ExportMenu, {
+        planSummary: mockPlanSummary,
+        plan: mockPlan,
+        conflicts: multiConflicts,
+      })
+    );
+    const multiCanvasHtml = multiHtml.substring(multiHtml.indexOf('data-testid="export-canvas"'));
+    expect(multiCanvasHtml).toContain("2 conflicts");
+  });
+
+  it("omits conflict warning completely in exported image when plan has no conflicts", () => {
+    const html = renderToStaticMarkup(
+      React.createElement(ExportMenu, {
+        planSummary: mockPlanSummary,
+        plan: mockPlan,
+        conflicts: [],
+      })
+    );
+
+    const canvasHtml = html.substring(html.indexOf('data-testid="export-canvas"'));
+    expect(canvasHtml).not.toMatch(/\b\d+\s+conflicts?\b/);
+    expect(canvasHtml).not.toContain("No conflicts");
+  });
+
+  it("renders long session name as title in exported image without extra chrome", () => {
+    const longSummary: PlanSummary = {
+      ...mockPlanSummary,
+      sessionName: "Academic Year 2026-2027 Trimester 1 (Undergraduate Regular Session)",
+    };
+
+    const html = renderToStaticMarkup(
+      React.createElement(ExportMenu, {
+        planSummary: longSummary,
+        plan: { ...mockPlan, sessionName: longSummary.sessionName },
+        conflicts: [],
+      })
+    );
+
+    const canvasHtml = html.substring(html.indexOf('data-testid="export-canvas"'));
+    expect(canvasHtml).toContain("Academic Year 2026-2027 Trimester 1 (Undergraduate Regular Session)");
+    expect(canvasHtml).not.toContain("T1 Target Schedule");
+    expect(canvasHtml).not.toContain("Manila");
+    expect(canvasHtml).not.toContain("No conflicts");
   });
 
   it("isolates off-screen positioning on wrapper and keeps export canvas statically positioned without negative coordinates", () => {
@@ -179,7 +257,7 @@ describe("ExportMenu", () => {
     expect(canvasIndex).toBeGreaterThan(wrapperIndex);
   });
 
-  it("renders readable export container for an empty plan with header and empty grid", () => {
+  it("renders readable export container for an empty plan with only title and empty grid", () => {
     const emptyPlan: Plan = {
       ...mockPlanSummary,
       sectionCount: 0,
@@ -194,12 +272,13 @@ describe("ExportMenu", () => {
       })
     );
 
-    expect(html).toContain("T1 Target Schedule");
-    expect(html).toContain("Manila");
-    expect(html).toContain("AY2026-27 T1");
-    expect(html).toContain("0 sections");
-    expect(html).toContain("No conflicts");
-    expect(html).toContain('data-testid="export-canvas"');
+    const canvasHtml = html.substring(html.indexOf('data-testid="export-canvas"'));
+    expect(canvasHtml).toContain("AY2026-27 T1");
+    expect(canvasHtml).not.toContain("T1 Target Schedule");
+    expect(canvasHtml).not.toContain("Manila");
+    expect(canvasHtml).not.toContain("0 sections");
+    expect(canvasHtml).not.toContain("No conflicts");
+    expect(canvasHtml).not.toContain("Animo Plan");
   });
 
   it("calls calendar export with sensible default filename derived from plan name and term", async () => {
