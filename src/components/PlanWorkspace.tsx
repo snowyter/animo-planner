@@ -1,17 +1,10 @@
 import { useState, useMemo } from "react";
-import {
-  Building2,
-  Calendar,
-  AlertCircle,
-  RefreshCw,
-  Layers,
-  Clock,
-  AlertTriangle,
-  CheckCircle2,
-  Sparkles,
-  BookOpen,
-  Trash2,
-} from "lucide-react";
+/**
+ * One glyph survives on this screen: the conflict indicator (ADR-0009), which
+ * is the single thing a student scans the plan header for. Everything else
+ * sat beside a word that already said it.
+ */
+import { AlertTriangle } from "lucide-react";
 
 import { Button } from "./ui/button";
 import { Badge } from "./ui/badge";
@@ -239,92 +232,91 @@ export function PlanWorkspace({
     }
   };
 
+  /**
+   * The week grid's header, shared by both layouts so they cannot drift.
+   *
+   * Clear schedule lives here rather than up in the plan banner: it destroys
+   * the schedule, so it belongs beside the schedule, where the student can see
+   * what they are about to lose. It stays visually subordinate to Export — a
+   * ghost button, not an outlined one — because emptying the plan is the rare
+   * action on this row.
+   */
+  const renderScheduleHeader = () => (
+    <div className="flex items-center justify-between gap-3">
+      <h3 className="text-base font-semibold text-foreground">Weekly Schedule</h3>
+      <div className="flex items-center gap-2">
+        <span className="text-xs text-muted-foreground">
+          {currentSections.length === 0
+            ? "No sections added yet"
+            : formatSectionCount(currentSections.length)}
+        </span>
+        <Button
+          type="button"
+          variant="ghost"
+          size="sm"
+          disabled={currentSections.length === 0 || isClearing || isLoading}
+          onClick={() => setIsConfirmingClear(true)}
+          className="h-9 text-xs text-muted-foreground hover:text-red-700 hover:bg-red-50"
+          data-testid="clear-schedule-button"
+          title={
+            currentSections.length === 0
+              ? "Plan is empty"
+              : "Clear all sections from schedule"
+          }
+        >
+          Clear schedule
+        </Button>
+        <ExportMenu planSummary={planSummary} plan={plan} conflicts={conflicts} />
+      </div>
+    </div>
+  );
+
   return (
     <div className="mx-auto max-w-7xl px-4 py-6 sm:px-6 lg:px-8 space-y-6">
       {/* Plan Scoping Banner — Always visible on every screen that operates on it */}
-      <div className="rounded-xl border border-slate-200 bg-white p-5 shadow-xs">
+      <div className="rounded-panel border border-border bg-card p-panel">
         <div className="flex flex-col md:flex-row md:items-center md:justify-between gap-4">
           <div>
-            <div className="flex items-center gap-2.5">
-              <h2 className="text-2xl font-bold tracking-tight text-slate-900">
-                {planSummary.name}
-              </h2>
-            </div>
+            <h2 className="text-2xl font-bold tracking-tight text-foreground">
+              {planSummary.name}
+            </h2>
             <div className="flex flex-wrap items-center gap-2 mt-2">
-              <span className="text-xs font-semibold text-slate-500 uppercase tracking-wider">
+              <span className="text-micro font-semibold text-muted-foreground uppercase tracking-wider">
                 Plan Scope:
               </span>
-              <Badge variant="campus" className="flex items-center gap-1 text-xs">
-                <Building2 className="h-3.5 w-3.5" />
-                <span>{planSummary.campusName}</span>
-              </Badge>
-              <Badge variant="session" className="flex items-center gap-1 text-xs">
-                <Calendar className="h-3.5 w-3.5" />
-                <span>{planSummary.sessionName}</span>
-              </Badge>
+              <Badge variant="campus">{planSummary.campusName}</Badge>
+              <Badge variant="session">{planSummary.sessionName}</Badge>
             </div>
           </div>
 
           {/* Persistent stats, conflict indicator, explicit Refresh control, and Export menu (SPEC §4, ADR-0009) */}
           <div className="flex flex-wrap items-center gap-3">
-            <div className="flex flex-wrap items-center gap-4 text-sm text-slate-600 bg-slate-50 rounded-lg p-3 border border-slate-100">
-              <div className="flex items-center gap-1.5">
-                <Layers className="h-4 w-4 text-emerald-700" />
-                <span className="font-semibold text-slate-900">
-                  {formatSectionCount(currentSections.length || planSummary.sectionCount)}
-                </span>
-              </div>
+            <div className="flex flex-wrap items-center gap-4 text-sm text-muted-foreground bg-muted/60 rounded-card p-3 border border-border">
+              <span className="font-semibold text-foreground">
+                {formatSectionCount(currentSections.length || planSummary.sectionCount)}
+              </span>
 
-              <div className="h-4 w-px bg-slate-200" />
+              <div className="h-4 w-px bg-border" />
 
-              {/* Persistent Conflict Count in Plan Header */}
+              {/* Persistent conflict count (ADR-0009). The glyph stays: this
+                  is the one thing on the header a student scans for. */}
               {conflicts.length > 0 ? (
-                <div className="flex items-center gap-1.5 text-red-600 font-semibold">
-                  <AlertTriangle className="h-4 w-4" />
+                <span className="flex items-center gap-1.5 text-red-600 font-semibold">
+                  <AlertTriangle className="h-4 w-4" aria-hidden="true" />
                   <span>
                     {conflicts.length} {conflicts.length === 1 ? "conflict" : "conflicts"}
                   </span>
-                </div>
+                </span>
               ) : (
-                <div className="flex items-center gap-1.5 text-slate-600">
-                  <CheckCircle2 className="h-4 w-4 text-emerald-600" />
-                  <span>No conflicts</span>
-                </div>
+                <span>No conflicts</span>
               )}
 
-              <div className="h-4 w-px bg-slate-200" />
+              <div className="h-4 w-px bg-border" />
 
-              <div className="flex items-center gap-1.5">
-                <Clock className="h-4 w-4 text-slate-400" />
-                <span>Created {new Date(planSummary.createdAt).toLocaleDateString()}</span>
-              </div>
+              <span>Created {new Date(planSummary.createdAt).toLocaleDateString()}</span>
             </div>
 
-            <div className="flex items-center gap-2">
-              <Button
-                type="button"
-                variant="outline"
-                size="sm"
-                disabled={currentSections.length === 0 || isClearing || isLoading}
-                onClick={() => setIsConfirmingClear(true)}
-                className="h-9 text-xs border-slate-200 text-slate-700 hover:bg-slate-50 hover:text-slate-900 flex items-center gap-1.5"
-                data-testid="clear-schedule-button"
-                title={
-                  currentSections.length === 0
-                    ? "Plan is empty"
-                    : "Clear all sections from schedule"
-                }
-              >
-                <Trash2 className="h-3.5 w-3.5" />
-                <span>Clear schedule</span>
-              </Button>
-
-              <ExportMenu
-                planSummary={planSummary}
-                plan={plan}
-                conflicts={conflicts}
-              />
-            </div>
+            <ExportMenu planSummary={planSummary} plan={plan} conflicts={conflicts} />
           </div>
         </div>
       </div>
@@ -333,13 +325,10 @@ export function PlanWorkspace({
       <Dialog open={isConfirmingClear} onOpenChange={setIsConfirmingClear}>
         <DialogContent className="max-w-md p-6" data-testid="clear-schedule-dialog">
           <DialogHeader className="space-y-2 text-left">
-            <div className="flex items-center gap-2 text-red-600">
-              <AlertTriangle className="h-5 w-5 shrink-0" />
-              <DialogTitle className="text-base font-bold text-slate-900">
-                Clear schedule?
-              </DialogTitle>
-            </div>
-            <DialogDescription className="text-xs text-slate-600 leading-relaxed">
+            <DialogTitle className="text-base font-bold text-foreground">
+              Clear schedule?
+            </DialogTitle>
+            <DialogDescription className="text-xs text-muted-foreground leading-relaxed">
               This will remove{" "}
               <strong className="text-slate-900 font-semibold">
                 {currentSections.length}{" "}
@@ -387,11 +376,10 @@ export function PlanWorkspace({
               size="sm"
               disabled={isClearing}
               onClick={handleClearSchedule}
-              className="h-8 text-xs bg-red-600 hover:bg-red-700 text-white flex items-center gap-1"
+              className="h-8 text-xs"
               data-testid="confirm-clear-schedule"
             >
-              <Trash2 className="h-3.5 w-3.5" />
-              <span>{isClearing ? "Clearing..." : "Clear schedule"}</span>
+              {isClearing ? "Clearing..." : "Clear schedule"}
             </Button>
           </DialogFooter>
         </DialogContent>
@@ -417,20 +405,22 @@ export function PlanWorkspace({
 
       {/* Refresh Progress Indicator (Ticket 21: Shows which course is being refreshed and how many remain) */}
       {isRefreshing && refreshProgress && (
-        <div className="rounded-xl border border-emerald-200 bg-emerald-50/80 p-4 flex items-center gap-3 shadow-2xs">
-          <RefreshCw className="h-4 w-4 animate-spin text-emerald-700 shrink-0" />
-          <div className="flex-1 min-w-0">
-            <p className="text-sm font-semibold text-emerald-950">
-              {formatRefreshProgress(refreshProgress)}
-            </p>
-          </div>
+        /* No spinner: a refresh is in flight, which is one of the two
+           moments the app must not be animating through. The progress text
+           already names the course and the count. */
+        <div
+          className="rounded-panel border border-emerald-200 bg-emerald-50/80 p-4"
+          role="status"
+        >
+          <p className="text-sm font-semibold text-emerald-950">
+            {formatRefreshProgress(refreshProgress)}
+          </p>
         </div>
       )}
 
       {/* Session Expiry Notice with Resume Button (Ticket 21, SPEC §4) */}
       {isSessionExpired && (
         <Alert variant="destructive" className="border-amber-300 bg-amber-50/90 text-amber-950">
-          <AlertCircle className="h-4 w-4 text-amber-800" />
           <AlertTitle className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-2 text-amber-950">
             <span className="font-bold">Session expired — sign in to continue</span>
             <div className="flex items-center gap-2">
@@ -448,10 +438,9 @@ export function PlanWorkspace({
                 size="sm"
                 disabled={isRefreshing}
                 onClick={() => resumeRefresh()}
-                className="h-7 text-xs bg-emerald-600 hover:bg-emerald-700 text-white shadow-2xs flex items-center gap-1"
+                className="h-7 text-xs"
               >
-                <RefreshCw className={`h-3 w-3 ${isResuming ? "animate-spin" : ""}`} />
-                <span>Resume</span>
+                {isResuming ? "Resuming..." : "Resume"}
               </Button>
             </div>
           </AlertTitle>
@@ -471,9 +460,8 @@ export function PlanWorkspace({
 
       {/* Offline Notice (Ticket 21, SPEC §4) */}
       {isOffline && (
-        <Alert className="border-slate-300 bg-slate-50 text-slate-800">
-          <AlertCircle className="h-4 w-4 text-slate-600" />
-          <AlertTitle className="flex items-center justify-between font-semibold text-slate-900">
+        <Alert className="border-border bg-muted text-foreground">
+          <AlertTitle className="flex items-center justify-between font-semibold text-foreground">
             <span>Offline</span>
             <Button
               variant="ghost"
@@ -493,7 +481,6 @@ export function PlanWorkspace({
       {/* Refresh Error Banner */}
       {refreshError && (
         <Alert variant="destructive">
-          <AlertCircle className="h-4 w-4" />
           <AlertTitle className="flex items-center justify-between">
             <span>Refresh failed</span>
             <Button
@@ -519,16 +506,14 @@ export function PlanWorkspace({
 
       {error && (
         <Alert variant="destructive">
-          <AlertCircle className="h-4 w-4" />
           <AlertTitle className="flex items-center justify-between">
             <span>Unable to load plan details</span>
             <Button
               variant="outline"
               size="sm"
               onClick={onRetry}
-              className="h-7 text-xs bg-white hover:bg-slate-50 text-slate-900 border-red-200"
+              className="h-7 text-xs border-red-200"
             >
-              <RefreshCw className="h-3 w-3 mr-1" />
               Retry
             </Button>
           </AlertTitle>
@@ -539,37 +524,29 @@ export function PlanWorkspace({
       )}
 
       {isLoading && !plan && !error && (
-        <div className="flex min-h-[300px] flex-col items-center justify-center space-y-3 rounded-xl border border-slate-200 bg-white p-8">
-          <RefreshCw className="h-8 w-8 animate-spin text-emerald-600" />
-          <p className="text-sm text-slate-500 font-medium">Loading plan details...</p>
-        </div>
+        /* The shape of a week is known, so the skeleton draws it. */
+        <WeekGrid sections={[]} isLoading interactive={false} />
       )}
 
       {/* Main workspace layout: Section Picker + Week Grid (SPEC §7, ADR-0011, ADR-0012, ADR-0014, Ticket 28) */}
       <div className="space-y-6">
         {/* Solver affordance / Entry point ("Let the solver build it" / "Solve the rest") */}
-        <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3 rounded-xl border border-blue-100 bg-blue-50/50 p-4">
-          <div className="flex items-start sm:items-center gap-3">
-            <div className="flex h-9 w-9 items-center justify-center rounded-lg bg-blue-100 text-blue-700 shrink-0">
-              <Sparkles className="h-4 w-4" />
-            </div>
-            <div>
-              <h4 className="text-sm font-semibold text-slate-900">
-                Let the solver build it
-              </h4>
-              <p className="text-xs text-slate-500">
-                Solve conflict-free combinations filled around your choices.
-              </p>
-            </div>
+        <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3 rounded-panel border border-border bg-card p-4">
+          <div>
+            <h4 className="text-sm font-semibold text-foreground">
+              Let the solver build it
+            </h4>
+            <p className="text-xs text-muted-foreground">
+              Solve conflict-free combinations filled around your choices.
+            </p>
           </div>
           <Button
             variant="outline"
             size="sm"
             disabled={isLoading}
             onClick={() => setIsSolveOpen(true)}
-            className="text-xs shrink-0 bg-white hover:bg-slate-50 text-blue-700 border-blue-200"
+            className="text-xs shrink-0"
           >
-            <Sparkles className="h-3.5 w-3.5 mr-1" />
             Solve the rest
           </Button>
         </div>
@@ -632,24 +609,13 @@ export function PlanWorkspace({
               />
             </div>
 
-            {/* Week grid column: right and sticky on desktop, above the picker
-                when stacked so the preview is never below the list. */}
-            <div className="w-full lg:flex-1 min-w-0 order-1 lg:order-2 lg:sticky lg:top-6 space-y-3">
-              <div className="flex items-center justify-between">
-                <h3 className="text-base font-semibold text-slate-900">Weekly Schedule</h3>
-                <div className="flex items-center gap-3">
-                  <span className="text-xs text-slate-500">
-                    {currentSections.length === 0
-                      ? "No sections added yet"
-                      : formatSectionCount(currentSections.length)}
-                  </span>
-                  <ExportMenu
-                    planSummary={planSummary}
-                    plan={plan}
-                    conflicts={conflicts}
-                  />
-                </div>
-              </div>
+            {/* Week grid column: right and pinned on desktop, above the picker
+                when stacked so the preview is never below the list.
+                `top-20` clears the app header (sticky, h-16) with a little
+                room; at `top-6` the column pinned underneath it and lost the
+                "Weekly Schedule / Clear schedule / Export" row. */}
+            <div className="w-full lg:flex-1 min-w-0 order-1 lg:order-2 lg:sticky lg:top-20 space-y-3">
+              {renderScheduleHeader()}
 
               <WeekGrid
                 sections={currentSections}
@@ -669,48 +635,28 @@ export function PlanWorkspace({
           /* Single-column reading order when picker is closed */
           <div className="space-y-6">
             {/* Pick my own sections affordance */}
-            <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3 rounded-xl border border-emerald-100 bg-emerald-50/50 p-4">
-              <div className="flex items-start sm:items-center gap-3">
-                <div className="flex h-9 w-9 items-center justify-center rounded-lg bg-emerald-100 text-emerald-700 shrink-0">
-                  <BookOpen className="h-4 w-4" />
-                </div>
-                <div>
-                  <h4 className="text-sm font-semibold text-slate-900">
-                    Pick my own sections
-                  </h4>
-                  <p className="text-xs text-slate-500">
-                    Browse captured sections course by course and preview ghosts on the week grid.
-                  </p>
-                </div>
+            <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3 rounded-panel border border-border bg-card p-4">
+              <div>
+                <h4 className="text-sm font-semibold text-foreground">
+                  Pick my own sections
+                </h4>
+                <p className="text-xs text-muted-foreground">
+                  Browse captured sections course by course and preview ghosts on the week grid.
+                </p>
               </div>
               <Button
                 variant="outline"
                 size="sm"
                 onClick={() => setIsPickerOpen(true)}
-                className="text-xs shrink-0 bg-white hover:bg-slate-50 text-emerald-700 border-emerald-200"
+                className="text-xs shrink-0"
               >
-                <BookOpen className="h-3.5 w-3.5 mr-1" />
                 Open picker
               </Button>
             </div>
 
             {/* Week Grid in full width single column */}
             <div className="space-y-3">
-              <div className="flex items-center justify-between">
-                <h3 className="text-base font-semibold text-slate-900">Weekly Schedule</h3>
-                <div className="flex items-center gap-3">
-                  <span className="text-xs text-slate-500">
-                    {currentSections.length === 0
-                      ? "No sections added yet"
-                      : formatSectionCount(currentSections.length)}
-                  </span>
-                  <ExportMenu
-                    planSummary={planSummary}
-                    plan={plan}
-                    conflicts={conflicts}
-                  />
-                </div>
-              </div>
+              {renderScheduleHeader()}
 
               <WeekGrid
                 sections={currentSections}

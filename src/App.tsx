@@ -1,4 +1,5 @@
 import { useState, useEffect } from "react";
+import { LazyMotion, MotionConfig } from "motion/react";
 import { AppHeader } from "./components/AppHeader";
 import { PlanList } from "./components/PlanList";
 import { CreatePlanDialog } from "./components/CreatePlanDialog";
@@ -18,6 +19,9 @@ import "./App.css";
 export interface AppProps {
   initialUpdateCheck?: UpdateCheck | null;
 }
+
+/** The feature bundle, loaded lazily. See `src/lib/motionFeatures.ts`. */
+const loadMotionFeatures = () => import("./lib/motionFeatures").then((mod) => mod.default);
 
 function AppContent({ initialUpdateCheck }: AppProps) {
   const [isOnboardingOpen, setIsOnboardingOpen] = useState(() => !isOnboardingCompleted());
@@ -115,7 +119,7 @@ function AppContent({ initialUpdateCheck }: AppProps) {
   };
 
   return (
-    <div className="min-h-screen bg-slate-50 text-slate-900 flex flex-col font-sans">
+    <div className="min-h-screen bg-background text-foreground flex flex-col font-sans">
       <AppHeader
         activePlan={activePlanSummary}
         onBackToPlans={onBackToPlans}
@@ -130,7 +134,9 @@ function AppContent({ initialUpdateCheck }: AppProps) {
         onDismiss={() => setIsUpdateDismissed(true)}
       />
 
-      <main className="flex-1">
+      {/* Keyed so switching between the two screens replays the entrance
+          rather than cutting. One animated element, not one per card. */}
+      <main key={activePlanSummary ? `plan-${activePlanSummary.id}` : "plans"} className="flex-1 screen-enter">
         {activePlanSummary ? (
           <PlanWorkspace
             planSummary={activePlanSummary}
@@ -204,7 +210,17 @@ function AppContent({ initialUpdateCheck }: AppProps) {
 }
 
 export function App(props: AppProps) {
-  return <AppContent {...props} />;
+  return (
+    /* The single reduced-motion pattern for everything `motion` drives; the
+       CSS half lives at the bottom of App.css. `strict` makes a stray full
+       `motion.*` component fail loudly instead of quietly pulling the whole
+       feature set into the initial bundle. */
+    <MotionConfig reducedMotion="user">
+      <LazyMotion features={loadMotionFeatures} strict>
+        <AppContent {...props} />
+      </LazyMotion>
+    </MotionConfig>
+  );
 }
 
 export default App;

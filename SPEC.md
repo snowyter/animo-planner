@@ -141,9 +141,15 @@ each time is 10 interruptions in the exact task being sped up.
 
 ### Refresh
 
-Explicit user action. The app re-selects each course **already in the plan**, sequentially,
-~1.5 s apart. This is the same request the page makes on a normal click, and it is read-only. Never
-on a timer, never in the background.
+Explicit user action. The app re-selects **every course already captured** under the plan's
+(campus, session), sequentially, ~1.5 s apart, with the courses already in the plan going first.
+This is the same request the page makes on a normal click, and it is read-only. Never on a timer,
+never in the background.
+
+This is deliberately wider than "the courses in the plan" (ADR-0019): the enrolment numbers a
+student is comparing before choosing, and the ones `exclude-full` solves against, belong to
+sections that are *not* in the plan yet. It is still never a catalog walk — only what the student
+already searched for.
 
 **Session expiry mid-refresh:** halt immediately, **keep the partial result**, show
 "Session expired — sign in to continue" with a **Resume** button. Detect by asserting the table

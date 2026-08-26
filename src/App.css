@@ -1,33 +1,332 @@
 @import "tailwindcss";
 
-@layer base {
-  :root {
-    --background: 0 0% 100%;
-    --foreground: 222.2 84% 4.9%;
-    --card: 0 0% 100%;
-    --card-foreground: 222.2 84% 4.9%;
-    --popover: 0 0% 100%;
-    --popover-foreground: 222.2 84% 4.9%;
-    --primary: 142.1 76.2% 36.3%; /* Archer Green theme */
-    --primary-foreground: 355.7 100% 97.3%;
-    --secondary: 210 40% 96.1%;
-    --secondary-foreground: 222.2 47.4% 11.2%;
-    --muted: 210 40% 96.1%;
-    --muted-foreground: 215.4 16.3% 46.9%;
-    --accent: 210 40% 96.1%;
-    --accent-foreground: 222.2 47.4% 11.2%;
-    --destructive: 0 84.2% 60.2%;
-    --destructive-foreground: 210 40% 98%;
-    --border: 214.3 31.8% 91.4%;
-    --input: 214.3 31.8% 91.4%;
-    --ring: 142.1 76.2% 36.3%;
-    --radius: 0.5rem;
-  }
+/* ============================================================================
+   Animo Plan — design foundation (ticket 33)
 
+   One recorded token set: colour, type, spacing rhythm, radii, elevation, and
+   motion. The reasoning behind each choice is written down in
+   `docs/design-system.md`; this file is the machine-readable half.
+
+   The app is LIGHT ONLY (ADR-0018). There are no `dark:` variants anywhere in
+   `src/`, and `src/designSystem.test.ts` fails if one reappears.
+   ============================================================================ */
+
+@theme {
+  /* ---- Colour -------------------------------------------------------------
+     The shadcn variable names, adopted for real. They previously sat in
+     `:root` as bare HSL triplets outside Tailwind's theme, so nothing could
+     consume them and every component reached for `bg-white` / `text-slate-900`
+     instead. Declared here they generate `bg-background`, `text-foreground`,
+     `border-border`, `text-muted-foreground`, `bg-primary`, and the rest. */
+  --color-background: #f6f7f9;
+  --color-foreground: #0f172a;
+  --color-card: #ffffff;
+  --color-card-foreground: #0f172a;
+  --color-popover: #ffffff;
+  --color-popover-foreground: #0f172a;
+  --color-primary: #15803d; /* Archer Green */
+  --color-primary-hover: #126633;
+  --color-primary-foreground: #ffffff;
+  --color-primary-soft: #ecfdf5;
+  --color-secondary: #f1f5f9;
+  --color-secondary-foreground: #0f172a;
+  --color-muted: #f1f5f9;
+  --color-muted-foreground: #5b6675; /* 5.8:1 on card, 5.4:1 on background */
+  --color-accent: #ecfdf5;
+  --color-accent-foreground: #14532d;
+  --color-destructive: #dc2626;
+  --color-destructive-foreground: #ffffff;
+  --color-border: #e2e8f0;
+  --color-input: #e2e8f0;
+  --color-ring: #15803d;
+
+  /* ---- Type scale ---------------------------------------------------------
+     Tailwind's own steps cover `text-xs` upward. These three are the sizes the
+     app was expressing as arbitrary values (`text-[9px]`, `text-[10px]`,
+     `text-[11px]`) plus the one display size the wordmark needs. */
+  --text-nano: 0.625rem; /* 10px — dense grid metadata */
+  --text-nano--line-height: 0.875rem;
+  --text-micro: 0.6875rem; /* 11px — labels, badges, captions */
+  --text-micro--line-height: 1rem;
+  --text-wordmark: 1.3125rem; /* 21px — the mark, and nothing else */
+  --text-wordmark--line-height: 1;
+  --text-wordmark--letter-spacing: -0.035em;
+  --text-wordmark--font-weight: 800;
+
+  /* ---- Spacing rhythm -----------------------------------------------------
+     Tailwind's 4px scale stays the spacing system. These name the two
+     distances that were drifting per component: the gap between stacked
+     sections of a screen, and the inner padding of a panel. */
+  --spacing-section: 1.5rem;
+  --spacing-panel: 1.25rem;
+
+  /* ---- Radii --------------------------------------------------------------
+     Three steps, by role, so a control and the panel holding it never
+     disagree. `rounded-control` / `rounded-card` / `rounded-panel`. */
+  --radius-control: 0.375rem;
+  --radius-card: 0.625rem;
+  --radius-panel: 0.875rem;
+
+  /* ---- Elevation ----------------------------------------------------------
+     Four steps. Anything repeated (grid blocks, section cards, plan cards)
+     uses `flat` or no shadow at all — a shadow on forty elements is paint
+     the app cannot afford. */
+  --shadow-flat: 0 1px 0 0 rgb(15 23 42 / 0.04);
+  --shadow-raised: 0 1px 2px 0 rgb(15 23 42 / 0.05), 0 1px 3px -1px rgb(15 23 42 / 0.05);
+  --shadow-lifted: 0 4px 14px -4px rgb(15 23 42 / 0.12);
+  --shadow-overlay: 0 16px 40px -12px rgb(15 23 42 / 0.28);
+
+  /* ---- Motion easing ------------------------------------------------------ */
+  --ease-quiet: cubic-bezier(0.22, 1, 0.36, 1);
+  --ease-enter: cubic-bezier(0.16, 1, 0.3, 1);
+}
+
+/* ---- Motion durations -----------------------------------------------------
+   Deliberately outside `@theme`: these are consumed by the component classes
+   below and by `src/core/motion.ts`, not by generated utilities, and Tailwind
+   would tree-shake them as unused theme keys.
+
+   Nothing here exceeds 260ms. Animo Plan is used during enlistment, under
+   time pressure — motion is allowed to soften a change, never to be something
+   the student waits for. */
+:root {
+  --motion-instant: 90ms;
+  --motion-quick: 140ms;
+  --motion-base: 200ms;
+  --motion-slow: 260ms;
+  --motion-stagger: 40ms;
+}
+
+@layer base {
   body {
-    background-color: #f8fafc;
-    color: #0f172a;
+    background-color: var(--color-background);
+    color: var(--color-foreground);
     font-feature-settings: "rlig" 1, "calt" 1;
     min-height: 100vh;
+  }
+
+  /* Focus is visible on every interactive element by default, so a new
+     surface cannot ship without it. */
+  :focus-visible {
+    outline: 2px solid var(--color-ring);
+    outline-offset: 2px;
+  }
+}
+
+@layer components {
+  /* ---- Ambient surfaces ---------------------------------------------------
+     Rich screens only: the plan list, onboarding, and About. Never the plan
+     workspace — hue on the week grid is load-bearing (ADR-0012) and any tint
+     behind it shifts the perceived colour of every block.
+
+     Static by construction. It fades in once on arrival and is then still,
+     because an idle Animo Plan must have zero continuously animating
+     elements. The parent keeps `z-index: auto`, so this creates no stacking
+     context that a portalled, position-fixed menu could get trapped by. */
+  .ambient-host {
+    position: relative;
+  }
+
+  .ambient-wash {
+    position: absolute;
+    inset: 0;
+    pointer-events: none;
+    background-image:
+      radial-gradient(60rem 32rem at 12% -8%, rgb(21 128 61 / 0.07), transparent 62%),
+      radial-gradient(48rem 28rem at 92% 4%, rgb(56 116 189 / 0.06), transparent 58%),
+      linear-gradient(180deg, rgb(15 23 42 / 0.02), transparent 40%);
+    animation: ambient-settle 520ms var(--ease-quiet) backwards;
+  }
+
+  .ambient-content {
+    position: relative;
+  }
+
+  /* ---- Screen and dialog transitions -------------------------------------
+     `transform` and `opacity` only. Never blocking input: these are
+     non-interactive properties and the surface is hit-testable immediately.
+
+     `backwards`, never `forwards` or `both`. A retained final keyframe leaves
+     a `transform` on the element forever, and a permanent transform is both a
+     stacking context and the containing block for every `position: fixed`
+     descendant — the two things that broke the grid context menu (ticket 45)
+     and would mis-place the off-screen PNG export wrapper (ticket 40). Each
+     of these animations ends on its element's natural values, so dropping the
+     retained frame costs nothing. */
+  .screen-enter {
+    animation: screen-enter var(--motion-base) var(--ease-enter) backwards;
+  }
+
+  .dialog-overlay[data-state="open"] {
+    animation: fade-in var(--motion-quick) var(--ease-quiet) backwards;
+  }
+
+  .dialog-overlay[data-state="closed"] {
+    animation: fade-out var(--motion-instant) var(--ease-quiet) both;
+  }
+
+  .dialog-panel[data-state="open"] {
+    animation: dialog-in var(--motion-base) var(--ease-enter) backwards;
+  }
+
+  .dialog-panel[data-state="closed"] {
+    animation: dialog-out var(--motion-quick) var(--ease-quiet) both;
+  }
+
+  .menu-enter {
+    animation: menu-in var(--motion-instant) var(--ease-quiet) backwards;
+  }
+
+  /* ---- Ranked stagger -----------------------------------------------------
+     The ordering of solve results should read as an ordering. The delay is
+     CSS `animation-delay` set per card — never a chain of `setTimeout`s and
+     never per-item JS state. `src/core/motion.ts` caps the delay so the
+     twentieth card is not still waiting to appear. */
+  .stagger-rise {
+    animation: stagger-rise var(--motion-base) var(--ease-enter) backwards;
+    animation-delay: var(--stagger-delay, 0ms);
+  }
+
+  /* ---- Skeletons ----------------------------------------------------------
+     Replaces spinners wherever the shape of the incoming content is known.
+     Animates `opacity` only, so it stays on the compositor, and it exists
+     only while something is loading. */
+  .skeleton {
+    background-color: var(--color-muted);
+    border-radius: var(--radius-control);
+    animation: skeleton-breathe 1.6s ease-in-out infinite;
+  }
+
+  /* ---- Conflict hatching --------------------------------------------------
+     A conflict appears the instant it exists. No transition, no fade, no
+     delay (ADR-0009). */
+  .conflict-hatch {
+    background-image: repeating-linear-gradient(
+      135deg,
+      rgb(239 68 68 / 0.14),
+      rgb(239 68 68 / 0.14) 8px,
+      transparent 8px,
+      transparent 16px
+    );
+  }
+}
+
+@keyframes ambient-settle {
+  from {
+    opacity: 0;
+  }
+  to {
+    opacity: 1;
+  }
+}
+
+@keyframes screen-enter {
+  from {
+    opacity: 0;
+    transform: translate3d(0, 6px, 0);
+  }
+  to {
+    opacity: 1;
+    transform: translate3d(0, 0, 0);
+  }
+}
+
+@keyframes stagger-rise {
+  from {
+    opacity: 0;
+    transform: translate3d(0, 8px, 0);
+  }
+  to {
+    opacity: 1;
+    transform: translate3d(0, 0, 0);
+  }
+}
+
+@keyframes fade-in {
+  from {
+    opacity: 0;
+  }
+  to {
+    opacity: 1;
+  }
+}
+
+@keyframes fade-out {
+  from {
+    opacity: 1;
+  }
+  to {
+    opacity: 0;
+  }
+}
+
+/* The dialog keyframes animate the *delta* only — never the centering.
+   Tailwind v4 compiles `translate-x-[-50%]` to the `translate` property, and
+   `translate` composes with `transform` rather than being overridden by it.
+   A keyframe that restates the -50% offset therefore applies it twice and
+   throws the panel up and to the left by half its own size. Centering belongs
+   to the panel's own utilities; these only nudge and scale. */
+@keyframes dialog-in {
+  from {
+    opacity: 0;
+    transform: translate3d(0, 8px, 0) scale(0.98);
+  }
+  to {
+    opacity: 1;
+    transform: none;
+  }
+}
+
+@keyframes dialog-out {
+  from {
+    opacity: 1;
+    transform: none;
+  }
+  to {
+    opacity: 0;
+    transform: translate3d(0, 6px, 0) scale(0.98);
+  }
+}
+
+@keyframes menu-in {
+  from {
+    opacity: 0;
+    transform: translate3d(0, -4px, 0);
+  }
+  to {
+    opacity: 1;
+    transform: translate3d(0, 0, 0);
+  }
+}
+
+@keyframes skeleton-breathe {
+  0%,
+  100% {
+    opacity: 1;
+  }
+  50% {
+    opacity: 0.55;
+  }
+}
+
+/* ---- The single reduced-motion pattern -------------------------------------
+   Two halves, both at the root, and nothing per component:
+
+   1. This block, which neutralises every CSS animation and transition.
+   2. `<MotionConfig reducedMotion="user">` in `src/App.tsx`, which does the
+      same for everything `motion` drives.
+
+   A component reaching for its own `prefers-reduced-motion` handling is a
+   smell, and `src/designSystem.test.ts` fails if one does. */
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation-duration: 1ms !important;
+    animation-delay: 0ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 1ms !important;
+    transition-delay: 0ms !important;
+    scroll-behavior: auto !important;
   }
 }

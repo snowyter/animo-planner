@@ -5,6 +5,7 @@ import {
   isSectionInPlan,
   isSectionPinned,
   findCandidateConflicts,
+  formatCandidateConflictLabel,
   groupSectionsForPicker,
 } from "./section";
 import type { PlanSection, ScheduleBlock, Section } from "../adapters/ipc/types";
@@ -227,5 +228,109 @@ describe("section core logic", () => {
       expect(result.inPlan.map((s) => s.sectionCode)).toEqual(["S01", "S04", "S02", "S03"]);
       expect(result.other).toEqual([]);
     });
+  });
+});
+
+describe("formatCandidateConflictLabel", () => {
+  const makeBlock = (
+    day: ScheduleBlock["day"],
+    startMin: number,
+    endMin: number
+  ): ScheduleBlock => ({ day, startMin, endMin, modality: "ONLINE", location: null });
+
+  const makePlanSection = (
+    courseId: number,
+    sectionId: number,
+    courseCode: string,
+    sectionCode: string,
+    blocks: ScheduleBlock[]
+  ): PlanSection => ({
+    courseId,
+    courseCode,
+    courseTitle: `${courseCode} Title`,
+    sectionId,
+    sectionCode,
+    pinned: false,
+    missing: false,
+    modality: "ONLINE",
+    blocks,
+    latestSnapshot: {
+      capturedAt: "2026-08-22T00:00:00Z",
+      enrolled: 40,
+      teacher: null,
+      remark: null,
+    },
+  });
+
+  const mon = makeBlock("MON", 555, 645);
+  const thu = makeBlock("THU", 555, 645);
+  const tue = makeBlock("TUE", 555, 645);
+
+  const label = (candidate: PlanSection, plan: PlanSection[]) =>
+    formatCandidateConflictLabel(candidate, findCandidateConflicts(candidate, plan), plan);
+
+  it("is null when nothing conflicts", () => {
+    const candidate = makePlanSection(1, 10, "GESTSOC", "E06", [mon]);
+    const plan = [makePlanSection(2, 20, "CSOPESY", "S03", [tue])];
+    expect(label(candidate, plan)).toBeNull();
+  });
+
+  it("names the course and section it collides with", () => {
+    // "Conflict (2 days)" reported a quantity the student cannot act on.
+    // What they need is the name of the thing to swap.
+    const candidate = makePlanSection(1, 10, "GESTSOC", "E06", [mon]);
+    const plan = [makePlanSection(2, 20, "CSOPESY", "S03", [mon])];
+    expect(label(candidate, plan)).toBe("Conflicts with CSOPESY S03");
+  });
+
+  it("names only the section when the collision is another section of the same course", () => {
+    // The course code is already the one the picker is showing, so repeating
+    // it says nothing. The section code is the whole distinction.
+    const candidate = makePlanSection(1, 10, "GESTSOC", "E06", [mon]);
+    const plan = [makePlanSection(1, 11, "GESTSOC", "Z16", [mon])];
+    expect(label(candidate, plan)).toBe("Conflicts with Z16");
+  });
+
+  it("counts one section once even when it collides on several days", () => {
+    const candidate = makePlanSection(1, 10, "GESTSOC", "E06", [mon, thu]);
+    const plan = [makePlanSection(1, 11, "GESTSOC", "Z16", [mon, thu])];
+    expect(label(candidate, plan)).toBe("Conflicts with Z16");
+  });
+
+  it("names the first and counts the rest when several sections collide", () => {
+    const candidate = makePlanSection(1, 10, "GESTSOC", "E06", [mon, thu, tue]);
+    const plan = [
+      makePlanSection(2, 20, "CSOPESY", "S03", [mon]),
+      makePlanSection(3, 30, "NSCOM", "S40A", [thu]),
+      makePlanSection(4, 40, "GEWORLD", "Y04", [tue]),
+    ];
+    expect(label(candidate, plan)).toBe("Conflicts with CSOPESY S03 and 2 more");
+  });
+
+  it("says 1 more, not 1 mores, for a single extra", () => {
+    const candidate = makePlanSection(1, 10, "GESTSOC", "E06", [mon, thu]);
+    const plan = [
+      makePlanSection(2, 20, "CSOPESY", "S03", [mon]),
+      makePlanSection(3, 30, "NSCOM", "S40A", [thu]),
+    ];
+    expect(label(candidate, plan)).toBe("Conflicts with CSOPESY S03 and 1 more");
+  });
+
+  it("degrades to a plain statement rather than naming nothing", () => {
+    // A conflict whose other side is not in the list handed in is a bug, not
+    // a reason to render "Conflicts with  ".
+    const candidate = makePlanSection(1, 10, "GESTSOC", "E06", [mon]);
+    const orphan = [
+      {
+        a: { courseId: 1, sectionId: 10 },
+        b: { courseId: 99, sectionId: 99 },
+        day: "MON" as const,
+        startMin: 555,
+        endMin: 645,
+      },
+    ];
+    expect(formatCandidateConflictLabel(candidate, orphan, [])).toBe(
+      "Conflicts with another section"
+    );
   });
 });

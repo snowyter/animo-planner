@@ -11,24 +11,28 @@
  * - Overlapping conflicting blocks render hatched with conflict indicators.
  * - Context menu on right-click or keyboard activation for plan schedule blocks.
  * - Details modal, conflict explanation modal, and missing/flagged explanation modal.
+ *
+ * Ticket 33 — this is a *working* surface, and it is treated as one: no
+ * ambient background behind it, no per-block shadow or transition, no hover
+ * repaint, and nothing that animates while the app is idle. The single
+ * exception is the ghost-to-block handoff, which is armed for one section at
+ * a time and disarmed as soon as it settles.
  */
 
 import { useState, useEffect, useRef, useMemo } from "react";
 import { createPortal } from "react-dom";
-import {
-  Building2,
-  Globe,
-  Pin,
-  PinOff,
-  AlertTriangle,
-  AlertCircle,
-  Info,
-  BookOpen,
-  Copy,
-  Check,
-  Trash2,
-  MessageSquare,
-} from "lucide-react";
+// `motion/react-m` carries only `m`, so the feature bundle stays splittable.
+import * as m from "motion/react-m";
+/**
+ * Four glyphs survive the icon cull, and they are not chrome.
+ *
+ * Hue is already spent on course identity (ADR-0012), so per-block modality
+ * (ADR-0007), the conflict indicator (ADR-0009), and pin state have nowhere
+ * else to live. Removing them destroys data the student is reading. Every
+ * other icon on this surface sat beside a word that already said the same
+ * thing, and the word is what stayed.
+ */
+import { Building2, Globe, Pin, AlertTriangle } from "lucide-react";
 import type { Conflict, Day, PlanSection, ScheduleBlock, Section } from "../adapters/ipc/types";
 import {
   DAYS,
@@ -54,6 +58,8 @@ import {
 } from "../core/gridMenu";
 import { Button } from "./ui/button";
 import { Badge } from "./ui/badge";
+import { Skeleton } from "./ui/skeleton";
+import { MOTION_DURATION_MS } from "../core/motion";
 import {
   Dialog,
   DialogContent,
@@ -78,7 +84,14 @@ export interface WeekGridProps {
   onRemoveSection?: (section: PlanSection) => void | Promise<void>;
   onShowOtherSections?: (courseId: number) => void;
   interactive?: boolean;
+  /** Renders the grid's shape as a skeleton instead of a spinner. */
+  isLoading?: boolean;
   initialMenu?: OpenMenuState | null;
+  /**
+   * Test seam for the ghost-to-block handoff, which is otherwise driven by an
+   * effect and therefore inert under static markup.
+   */
+  initialHandoffKey?: string | null;
   initialDetailsSection?: PlanSection | null;
   initialConflictDetails?: OpenMenuState | null;
   initialFlaggedDetails?: PlanSection | null;
@@ -130,7 +143,9 @@ export function WeekGrid({
   onRemoveSection,
   onShowOtherSections,
   interactive = true,
+  isLoading = false,
   initialMenu = null,
+  initialHandoffKey = null,
   initialDetailsSection = null,
   initialConflictDetails = null,
   initialFlaggedDetails = null,
@@ -147,6 +162,18 @@ export function WeekGrid({
     () => initialFlaggedDetails
   );
   const [copiedId, setCopiedId] = useState<string | null>(null);
+
+  /**
+   * The ghost-to-block handoff (ticket 33).
+   *
+   * `layoutId` is the one shared-element transition worth having here: the
+   * preview the student is hovering becomes the committed block. It is also
+   * the one thing that could put layout measurement on all forty blocks, so
+   * it is armed for exactly the section that just landed and disarmed as soon
+   * as it settles. Everything else on this grid renders as a plain `div`.
+   */
+  const [handoffKey, setHandoffKey] = useState<string | null>(() => initialHandoffKey);
+  const previousGhostKey = useRef<string | null>(null);
 
   const menuRef = useRef<HTMLDivElement>(null);
 
@@ -186,6 +213,30 @@ export function WeekGrid({
       document.removeEventListener("keydown", handleKeyDown);
     };
   }, [openMenu]);
+
+  // Arm the handoff when a hovered ghost stops being a ghost and starts
+  // being part of the plan, then disarm it one animation later.
+  useEffect(() => {
+    const currentKey = ghostSection
+      ? `${ghostSection.courseId}-${ghostSection.sectionId}`
+      : null;
+    const departedKey = previousGhostKey.current;
+    previousGhostKey.current = currentKey;
+
+    if (currentKey !== null || departedKey === null) {
+      return;
+    }
+    const landed = sections.some(
+      (s) => `${s.courseId}-${s.sectionId}` === departedKey
+    );
+    if (!landed) {
+      return;
+    }
+
+    setHandoffKey(departedKey);
+    const timer = setTimeout(() => setHandoffKey(null), MOTION_DURATION_MS.slow);
+    return () => clearTimeout(timer);
+  }, [ghostSection, sections]);
 
   // Compute conflicts for plan sections if not provided via props
   const conflicts = useMemo(() => {
@@ -291,17 +342,66 @@ export function WeekGrid({
     setTimeout(() => setCopiedId(null), 2000);
   };
 
+  const isEmpty = sections.length === 0 && !ghostSection;
+
+  if (isLoading) {
+    // The shape of the incoming content is known, so a skeleton says more
+    // than a spinner — and a spinner would be an animation running at exactly
+    // the moment the machine is busiest.
+    return (
+      <div
+        className={`rounded-panel border border-border bg-card overflow-hidden ${className}`}
+        data-testid="week-grid-skeleton"
+      >
+        <div className="grid grid-cols-[70px_repeat(6,1fr)] border-b border-border bg-muted/60 text-xs font-semibold text-foreground">
+          <div className="p-3 text-center text-muted-foreground font-normal border-r border-border">
+            Time
+          </div>
+          {DAY_INFOS.map((info) => (
+            <div
+              key={info.day}
+              className="p-3 text-center border-r last:border-r-0 border-border"
+            >
+              {info.shortLabel}
+            </div>
+          ))}
+        </div>
+        <div className="grid grid-cols-[70px_repeat(6,1fr)] min-h-[640px]">
+          <div className="border-r border-border bg-muted/30 p-2 space-y-14">
+            {LATTICE_START_MINUTES.map((startMin) => (
+              <Skeleton key={startMin} className="h-3 w-10" />
+            ))}
+          </div>
+          {DAYS.map((day, column) => (
+            <div
+              key={day}
+              className="border-r last:border-r-0 border-border p-1.5 space-y-3"
+            >
+              {[0, 1].map((row) => (
+                <Skeleton
+                  key={row}
+                  className="w-full"
+                  style={{ height: "72px", marginTop: row === 0 ? `${column * 26}px` : undefined }}
+                />
+              ))}
+            </div>
+          ))}
+        </div>
+      </div>
+    );
+  }
+
   return (
     <div
-      className={`rounded-xl border border-slate-200 bg-white shadow-xs overflow-hidden ${className}`}
+      className={`relative rounded-panel border border-border bg-card overflow-hidden ${className}`}
       data-testid="week-grid"
     >
       {/* Scroll container for smaller viewports */}
       <div className="overflow-x-auto">
         <div className="min-w-[680px]">
           {/* Day Headers (Mon–Sat) */}
-          <div className="grid grid-cols-[70px_repeat(6,1fr)] border-b border-slate-200 bg-slate-50/80 sticky top-0 z-10 text-xs font-semibold text-slate-700">
-            <div className="p-3 text-center text-slate-400 font-normal border-r border-slate-200">
+          <div className="grid grid-cols-[70px_repeat(6,1fr)] border-b border-border bg-muted/60 sticky top-0 z-10 text-xs font-semibold text-foreground">
+            <div className="p-3 text-center text-muted-foreground font-normal border-r border-border">
               Time
             </div>
             {DAY_INFOS.map((info) => {
@@ -309,14 +409,14 @@ export function WeekGrid({
               return (
                 <div
                   key={info.day}
-                  className="p-3 text-center border-r last:border-r-0 border-slate-200"
+                  className="p-3 text-center border-r last:border-r-0 border-border"
                 >
-                  <span className="font-bold text-slate-900">{info.shortLabel}</span>
-                  <span className="hidden sm:inline text-slate-500 font-normal ml-1">
+                  <span className="font-bold text-foreground">{info.shortLabel}</span>
+                  <span className="hidden sm:inline text-muted-foreground font-normal ml-1">
                     ({info.label})
                   </span>
                   {dayBlockCount > 0 && (
-                    <span className="ml-1.5 inline-flex items-center justify-center rounded-full bg-slate-200/80 px-1.5 py-0.5 text-[10px] font-medium text-slate-700">
+                    <span className="ml-1.5 inline-flex items-center justify-center rounded-full bg-secondary px-1.5 py-0.5 text-nano font-medium text-muted-foreground">
                       {dayBlockCount}
                     </span>
                   )}
@@ -326,9 +426,9 @@ export function WeekGrid({
           </div>
 
           {/* Grid Canvas */}
-          <div className="relative grid grid-cols-[70px_repeat(6,1fr)] min-h-[640px] bg-white">
+          <div className="relative grid grid-cols-[70px_repeat(6,1fr)] min-h-[640px] bg-card">
             {/* Time labels & horizontal guide lines */}
-            <div className="border-r border-slate-200 bg-slate-50/40 relative">
+            <div className="border-r border-border bg-muted/30 relative">
               {LATTICE_START_MINUTES.map((startMin) => {
                 const pos = computeBlockPosition(
                   startMin,
@@ -339,7 +439,7 @@ export function WeekGrid({
                 return (
                   <div
                     key={startMin}
-                    className={`absolute right-2 text-[11px] font-mono font-medium text-slate-400 select-none pointer-events-none ${
+                    className={`absolute right-2 text-micro font-mono font-medium text-muted-foreground select-none pointer-events-none ${
                       pos.topPercent <= 0 ? "translate-y-0" : "-translate-y-2"
                     }`}
                     style={{ top: `${pos.topPercent}%` }}
@@ -362,7 +462,7 @@ export function WeekGrid({
                 return (
                   <div
                     key={startMin}
-                    className="absolute inset-x-0 border-t border-slate-100"
+                    className="absolute inset-x-0 border-t border-border/70"
                     style={{ top: `${pos.topPercent}%` }}
                   />
                 );
@@ -376,7 +476,7 @@ export function WeekGrid({
               return (
                 <div
                   key={day}
-                  className="relative border-r last:border-r-0 border-slate-200 min-h-[640px] p-1"
+                  className="relative border-r last:border-r-0 border-border min-h-[640px] p-1"
                 >
                   {dayBlocks.map(({ section, block, isConflicting, isGhost }) => {
                     const pos = computeBlockPosition(
@@ -409,29 +509,42 @@ export function WeekGrid({
                       ? "border-l-solid border-l-[4px]"
                       : "border-l-dashed border-l-[4px]";
 
-                    // Pinned vs tentative vs ghost vs missing styling
+                    // Pinned vs tentative vs ghost vs missing.
+                    //
+                    // Ring weight and opacity only — no per-block shadow. A
+                    // box-shadow on forty repeated elements is paint this app
+                    // cannot afford.
                     const visualClass = isGhost
-                      ? "opacity-75 ring-2 ring-dashed ring-slate-400/70 shadow-sm"
+                      ? "opacity-75 ring-2 ring-dashed ring-slate-400/70"
                       : isMissing
-                      ? "ring-2 ring-amber-500/80 opacity-90 shadow-xs"
+                      ? "ring-2 ring-amber-500/80"
                       : isPinned
-                      ? "ring-1 ring-slate-400/50 shadow-xs opacity-100"
-                      : "opacity-95";
-
-                    // Conflicting hatched styling
-                    const conflictClass = isConflicting
-                      ? "hatched ring-2 ring-red-500/80"
+                      ? "ring-1 ring-slate-500/60"
                       : "";
 
-                    const hatchedBgStyle = isConflicting
+                    // Conflicting hatched styling. `.conflict-hatch` lives in
+                    // App.css; it paints instantly and never transitions,
+                    // because a conflict is displayed and never softened
+                    // (ADR-0009).
+                    const conflictClass = isConflicting
+                      ? "hatched conflict-hatch ring-2 ring-red-500/80"
+                      : "";
+
+                    // The ghost-to-block handoff is armed for one section at a
+                    // time. Every other block stays a plain `div` and never
+                    // measures.
+                    const sectionKey = `${section.courseId}-${section.sectionId}`;
+                    const isHandingOff = isGhost || handoffKey === sectionKey;
+                    const BlockTag = isHandingOff ? m.div : "div";
+                    const handoffProps = isHandingOff
                       ? {
-                          backgroundImage:
-                            "repeating-linear-gradient(135deg, rgba(239, 68, 68, 0.12), rgba(239, 68, 68, 0.12) 8px, transparent 8px, transparent 16px)",
+                          layoutId: `grid-block-${sectionKey}-${block.day}-${block.startMin}`,
                         }
                       : {};
 
                     return (
-                      <div
+                      <BlockTag
+                        {...handoffProps}
                         key={`${isGhost ? "ghost-" : ""}${section.courseId}-${section.sectionId}-${block.day}-${block.startMin}`}
                         data-pinned={isPinned ? "true" : "false"}
                         data-missing={isMissing ? "true" : "false"}
@@ -448,7 +561,7 @@ export function WeekGrid({
                             onSelectSection(section as PlanSection);
                           }
                         }}
-                        onContextMenu={(e) => {
+                        onContextMenu={(e: React.MouseEvent<HTMLDivElement>) => {
                           if (!interactive || isGhost) return;
                           e.preventDefault();
                           e.stopPropagation();
@@ -466,7 +579,7 @@ export function WeekGrid({
                             },
                           });
                         }}
-                        onKeyDown={(e) => {
+                        onKeyDown={(e: React.KeyboardEvent<HTMLDivElement>) => {
                           if (!interactive || isGhost) return;
                           if (
                             e.key === "Enter" ||
@@ -491,11 +604,11 @@ export function WeekGrid({
                             });
                           }
                         }}
-                        className={`absolute inset-x-1 rounded-md p-2 flex flex-col justify-between transition-all duration-150 select-none ${
+                        className={`absolute inset-x-1 rounded-control p-2 flex flex-col justify-between select-none ${
                           isGhost
                             ? "cursor-default pointer-events-none"
                             : interactive
-                            ? "cursor-pointer focus:outline-hidden focus-visible:ring-2 focus-visible:ring-slate-900 focus-visible:ring-offset-2"
+                            ? "cursor-pointer focus-visible:ring-2 focus-visible:ring-slate-900 focus-visible:ring-offset-2"
                             : "cursor-default"
                         } ${theme.bgClass} ${theme.borderClass} ${theme.textClass} ${borderStyleClass} ${visualClass} ${conflictClass}`}
                         style={{
@@ -504,7 +617,6 @@ export function WeekGrid({
                           minHeight: "56px",
                           borderLeftColor: isConflicting ? "#ef4444" : isMissing ? "#f59e0b" : theme.borderHex,
                           borderLeftStyle: isF2F ? "solid" : "dashed",
-                          ...hatchedBgStyle,
                         }}
                         title={
                           isCurrentMenuOpen
@@ -522,16 +634,16 @@ export function WeekGrid({
                             <span className="font-bold text-xs truncate">
                               {section.courseCode}
                             </span>
-                            <span className="text-[11px] font-medium opacity-75">
+                            <span className="text-micro font-medium opacity-75">
                               {section.sectionCode}
                             </span>
                             {isGhost && (
-                              <span className="text-[9px] uppercase tracking-wider font-semibold opacity-75 bg-black/5 dark:bg-white/10 px-1 rounded ml-0.5">
+                              <span className="text-nano uppercase tracking-wider font-semibold opacity-75 bg-black/5 px-1 rounded-control ml-0.5">
                                 Preview
                               </span>
                             )}
                             {isMissing && (
-                              <span className="text-[9px] uppercase tracking-wider font-semibold bg-amber-200 text-amber-900 dark:bg-amber-900/50 dark:text-amber-200 px-1 rounded ml-0.5">
+                              <span className="text-nano uppercase tracking-wider font-semibold bg-amber-200 text-amber-900 px-1 rounded-control ml-0.5">
                                 Missing
                               </span>
                             )}
@@ -540,13 +652,17 @@ export function WeekGrid({
                           <div className="flex items-center gap-1 shrink-0">
                             {isPinned && (
                               <Pin
-                                className="h-3 w-3 text-slate-700 dark:text-slate-200"
+                                className="h-3 w-3 text-slate-700"
                                 aria-label="Pinned"
                               />
                             )}
                             {isConflicting && (
                               <AlertTriangle
-                                className="h-3.5 w-3.5 text-red-600 animate-pulse"
+                                /* No pulse: a conflict is shown the instant it
+                                   exists, and animating it would soften it
+                                   (ADR-0009) as well as put a forever-looping
+                                   element on a forty-block surface. */
+                                className="h-3.5 w-3.5 text-red-600"
                                 aria-label="Conflicting section"
                               />
                             )}
@@ -554,7 +670,7 @@ export function WeekGrid({
                         </div>
 
                         {/* Middle: Time and Location / Modality */}
-                        <div className="flex items-center justify-between text-[10px] mt-1 opacity-90">
+                        <div className="flex items-center justify-between text-nano mt-1 opacity-90">
                           <div className="flex items-center gap-1 truncate">
                             {isF2F ? (
                               <>
@@ -571,7 +687,7 @@ export function WeekGrid({
 
                           {/* Enrolled / Cap numeric label */}
                           <div
-                            className="font-mono text-[10px] font-medium px-1 py-0.2 rounded bg-black/5 dark:bg-white/10 shrink-0"
+                            className="font-mono text-nano font-medium px-1 py-0.2 rounded-control bg-black/5 shrink-0"
                             title="Enrolled / Capacity"
                           >
                             {enrollLabel}
@@ -579,10 +695,10 @@ export function WeekGrid({
                         </div>
 
                         {/* Bottom: Precise Time Range */}
-                        <div className="text-[9px] font-mono opacity-70 mt-0.5">
+                        <div className="text-nano font-mono opacity-70 mt-0.5">
                           {formatMinutesToTime12(block.startMin)} – {formatMinutesToTime12(block.endMin)}
                         </div>
-                      </div>
+                      </BlockTag>
                     );
                   })}
                 </div>
@@ -591,6 +707,29 @@ export function WeekGrid({
           </div>
         </div>
       </div>
+
+      {/* Empty state.
+          The grid is still drawn behind it, because the Mon-Sat shape is part
+          of the answer to "what goes here". No ambient colour: this is a
+          working surface, and any tint shifts the perceived hue of every block
+          that lands in it (ADR-0012). */}
+      {isEmpty && (
+        <div
+          data-testid="week-grid-empty"
+          className="pointer-events-none absolute inset-0 top-12 flex items-center justify-center p-6"
+        >
+          <div className="pointer-events-auto max-w-sm rounded-panel border border-border bg-card/95 px-6 py-5 text-center shadow-lifted">
+            <p className="text-base font-semibold text-foreground">
+              No sections yet
+            </p>
+            <p className="mt-1.5 text-xs text-muted-foreground leading-relaxed">
+              Pick a course in the section list and hover a section to preview
+              it here. Clicking commits it to the plan — the preview becomes the
+              block.
+            </p>
+          </div>
+        </div>
+      )}
 
       {/* Context Menu (Ticket 41, Ticket 45: rendered outside grid subtree and portaled to body in browser) */}
       {(() => {
@@ -632,11 +771,11 @@ export function WeekGrid({
             data-testid="grid-context-menu"
             role="menu"
             aria-orientation="vertical"
-            className={`z-50 w-56 rounded-xl border border-slate-200 bg-white p-1.5 shadow-xl ring-1 ring-black/5 text-slate-900 text-xs font-sans ${placementClass}`}
+            className={`menu-enter z-50 w-56 rounded-panel border border-border bg-popover p-1.5 shadow-overlay text-popover-foreground text-xs font-sans ${placementClass}`}
             style={computedStyle}
             onClick={(e) => e.stopPropagation()}
           >
-            <div className="px-2 py-1 border-b border-slate-100 text-[11px] font-semibold text-slate-500 truncate">
+            <div className="px-2 py-1 border-b border-border text-micro font-semibold text-muted-foreground truncate">
               {section.courseCode} {section.sectionCode}
             </div>
 
@@ -649,9 +788,8 @@ export function WeekGrid({
                   setOpenMenu(null);
                   setDetailsSection(section as PlanSection);
                 }}
-                className="flex w-full items-center gap-2 rounded-lg px-2 py-1.5 text-left text-xs text-slate-700 hover:bg-slate-50 hover:text-slate-900 cursor-pointer"
+                className="flex w-full items-center rounded-control px-2 py-1.5 text-left text-xs text-foreground hover:bg-muted cursor-pointer"
               >
-                <Info className="h-3.5 w-3.5 text-slate-500" />
                 <span>View details</span>
               </button>
 
@@ -663,19 +801,9 @@ export function WeekGrid({
                   setOpenMenu(null);
                   onTogglePin?.(section as PlanSection, !isPinned);
                 }}
-                className="flex w-full items-center gap-2 rounded-lg px-2 py-1.5 text-left text-xs text-slate-700 hover:bg-slate-50 hover:text-slate-900 cursor-pointer"
+                className="flex w-full items-center rounded-control px-2 py-1.5 text-left text-xs text-foreground hover:bg-muted cursor-pointer"
               >
-                {isPinned ? (
-                  <>
-                    <PinOff className="h-3.5 w-3.5 text-slate-500" />
-                    <span>Unpin section</span>
-                  </>
-                ) : (
-                  <>
-                    <Pin className="h-3.5 w-3.5 text-slate-500" />
-                    <span>Pin section</span>
-                  </>
-                )}
+                <span>{isPinned ? "Unpin section" : "Pin section"}</span>
               </button>
 
               {/* 3. Show other sections of this course */}
@@ -686,9 +814,8 @@ export function WeekGrid({
                   setOpenMenu(null);
                   onShowOtherSections?.(section.courseId);
                 }}
-                className="flex w-full items-center gap-2 rounded-lg px-2 py-1.5 text-left text-xs text-slate-700 hover:bg-slate-50 hover:text-slate-900 cursor-pointer"
+                className="flex w-full items-center rounded-control px-2 py-1.5 text-left text-xs text-foreground hover:bg-muted cursor-pointer"
               >
-                <BookOpen className="h-3.5 w-3.5 text-slate-500" />
                 <span>Show other sections of this course</span>
               </button>
 
@@ -700,18 +827,12 @@ export function WeekGrid({
                   handleCopySectionDetails(section);
                   setOpenMenu(null);
                 }}
-                className="flex w-full items-center gap-2 rounded-lg px-2 py-1.5 text-left text-xs text-slate-700 hover:bg-slate-50 hover:text-slate-900 cursor-pointer"
+                className="flex w-full items-center rounded-control px-2 py-1.5 text-left text-xs text-foreground hover:bg-muted cursor-pointer"
               >
                 {copiedId === `${section.courseId}-${section.sectionId}` ? (
-                  <>
-                    <Check className="h-3.5 w-3.5 text-emerald-600" />
-                    <span className="text-emerald-700 font-medium">Copied!</span>
-                  </>
+                  <span className="text-primary font-medium">Copied!</span>
                 ) : (
-                  <>
-                    <Copy className="h-3.5 w-3.5 text-slate-500" />
-                    <span>Copy details</span>
-                  </>
+                  <span>Copy details</span>
                 )}
               </button>
 
@@ -727,9 +848,8 @@ export function WeekGrid({
                       block,
                     });
                   }}
-                  className="flex w-full items-center gap-2 rounded-lg px-2 py-1.5 text-left text-xs text-red-700 hover:bg-red-50 cursor-pointer font-medium"
+                  className="flex w-full items-center rounded-control px-2 py-1.5 text-left text-xs text-red-700 hover:bg-red-50 cursor-pointer font-medium"
                 >
-                  <AlertTriangle className="h-3.5 w-3.5 text-red-600" />
                   <span>Why is this conflicting?</span>
                 </button>
               )}
@@ -743,15 +863,14 @@ export function WeekGrid({
                     setOpenMenu(null);
                     setFlaggedExplanation(section as PlanSection);
                   }}
-                  className="flex w-full items-center gap-2 rounded-lg px-2 py-1.5 text-left text-xs text-amber-800 hover:bg-amber-50 cursor-pointer font-medium"
+                  className="flex w-full items-center rounded-control px-2 py-1.5 text-left text-xs text-amber-800 hover:bg-amber-50 cursor-pointer font-medium"
                 >
-                  <AlertCircle className="h-3.5 w-3.5 text-amber-600" />
                   <span>Why is this flagged?</span>
                 </button>
               )}
 
               {/* Separator before destructive action */}
-              <div className="my-1 border-t border-slate-100" />
+              <div className="my-1 border-t border-border" />
 
               {/* 7. Remove from schedule (Destructive, last) */}
               <button
@@ -761,9 +880,8 @@ export function WeekGrid({
                   setOpenMenu(null);
                   onRemoveSection?.(section as PlanSection);
                 }}
-                className="flex w-full items-center gap-2 rounded-lg px-2 py-1.5 text-left text-xs text-red-600 hover:bg-red-50 hover:text-red-700 cursor-pointer font-medium"
+                className="flex w-full items-center rounded-control px-2 py-1.5 text-left text-xs text-red-600 hover:bg-red-50 hover:text-red-700 cursor-pointer font-medium"
               >
-                <Trash2 className="h-3.5 w-3.5" />
                 <span>Remove from schedule</span>
               </button>
             </div>
@@ -782,10 +900,10 @@ export function WeekGrid({
           <DialogContent className="max-w-lg p-6 space-y-4" data-testid="section-details-dialog">
             <DialogHeader className="space-y-2 text-left">
               <div className="flex flex-wrap items-center gap-2">
-                <span className="font-bold text-xl text-slate-900">
+                <span className="font-bold text-xl text-foreground">
                   {detailsSection.courseCode}
                 </span>
-                <span className="text-slate-500 font-semibold text-lg">
+                <span className="text-muted-foreground font-semibold text-lg">
                   {detailsSection.sectionCode}
                 </span>
                 <Badge
@@ -800,42 +918,36 @@ export function WeekGrid({
                 >
                   {detailsSection.modality}
                 </Badge>
-                {detailsSection.pinned && (
-                  <Badge variant="secondary" className="flex items-center gap-1 text-xs">
-                    <Pin className="h-3 w-3" />
-                    <span>Pinned</span>
-                  </Badge>
-                )}
+                {detailsSection.pinned && <Badge variant="secondary">Pinned</Badge>}
                 {detailsSection.missing && (
-                  <Badge variant="destructive" className="flex items-center gap-1 text-xs bg-amber-100 text-amber-900 border-amber-300">
-                    <AlertTriangle className="h-3 w-3 text-amber-700" />
-                    <span>Missing</span>
+                  <Badge variant="destructive" className="bg-amber-100 text-amber-900 border-amber-300">
+                    Missing
                   </Badge>
                 )}
               </div>
-              <DialogTitle className="text-base font-semibold text-slate-800 leading-snug">
+              <DialogTitle className="text-base font-semibold text-foreground leading-snug">
                 {detailsSection.courseTitle}
               </DialogTitle>
-              <DialogDescription className="text-xs text-slate-500">
+              <DialogDescription className="text-xs text-muted-foreground">
                 Detailed schedule and capture information for this section.
               </DialogDescription>
             </DialogHeader>
 
             {/* Meeting Schedule Blocks */}
             <div className="space-y-2">
-              <label className="text-xs font-semibold text-slate-600 uppercase tracking-wider block">
+              <label className="text-micro font-semibold text-muted-foreground uppercase tracking-wider block">
                 Meeting Schedule
               </label>
               <div className="space-y-1.5">
                 {detailsSection.blocks.map((b, idx) => (
                   <div
                     key={`${b.day}-${b.startMin}-${idx}`}
-                    className="flex items-center justify-between rounded-lg border border-slate-200 bg-slate-50/70 px-3 py-2 text-xs"
+                    className="flex items-center justify-between rounded-card border border-border bg-muted/50 px-3 py-2 text-xs"
                   >
                     <div className="flex items-center gap-2">
-                      <span className="font-bold text-slate-900">{b.day}</span>
-                      <span className="text-slate-400">•</span>
-                      <span className="font-mono text-slate-700">
+                      <span className="font-bold text-foreground">{b.day}</span>
+                      <span className="text-muted-foreground">•</span>
+                      <span className="font-mono text-muted-foreground">
                         {formatMinutesToTime12(b.startMin)} – {formatMinutesToTime12(b.endMin)}
                       </span>
                     </div>
@@ -860,7 +972,7 @@ export function WeekGrid({
             </div>
 
             {/* Details Grid */}
-            <div className="grid grid-cols-2 gap-3 rounded-xl border border-slate-100 bg-slate-50/50 p-3 text-xs">
+            <div className="grid grid-cols-2 gap-3 rounded-panel border border-border bg-muted/40 p-3 text-xs">
               <div>
                 <span className="text-slate-500 block">Teacher:</span>
                 <span className="font-medium text-slate-900">
@@ -899,27 +1011,23 @@ export function WeekGrid({
             {/* Remark (verbatim display if present) */}
             {detailsSection.latestSnapshot?.remark && (
               <div className="rounded-lg border border-slate-200 bg-white p-3 text-xs space-y-1">
-                <span className="font-semibold text-slate-700 flex items-center gap-1">
-                  <MessageSquare className="h-3.5 w-3.5 text-slate-400" />
-                  <span>Remark:</span>
-                </span>
+                <span className="font-semibold text-foreground block">Remark:</span>
                 <p className="text-slate-600 font-mono break-words">
                   {detailsSection.latestSnapshot.remark}
                 </p>
               </div>
             )}
 
-            <DialogFooter className="flex flex-wrap items-center justify-between gap-2 pt-3 border-t border-slate-100">
+            <DialogFooter className="flex flex-wrap items-center justify-between gap-2 pt-3 border-t border-border">
               <div className="flex items-center gap-2">
                 <Button
                   type="button"
                   variant="outline"
                   size="sm"
                   onClick={() => handleCopySectionDetails(detailsSection)}
-                  className="h-8 text-xs flex items-center gap-1.5"
+                  className="h-8 text-xs"
                 >
-                  <Copy className="h-3.5 w-3.5 text-slate-500" />
-                  <span>Copy details</span>
+                  Copy details
                 </Button>
 
                 {onShowOtherSections && (
@@ -931,10 +1039,9 @@ export function WeekGrid({
                       onShowOtherSections(detailsSection.courseId);
                       setDetailsSection(null);
                     }}
-                    className="h-8 text-xs flex items-center gap-1.5 text-slate-700"
+                    className="h-8 text-xs"
                   >
-                    <BookOpen className="h-3.5 w-3.5 text-slate-500" />
-                    <span>Other sections</span>
+                    Other sections
                   </Button>
                 )}
               </div>
@@ -949,17 +1056,16 @@ export function WeekGrid({
                       onRemoveSection(detailsSection);
                       setDetailsSection(null);
                     }}
-                    className="h-8 text-xs border-red-200 text-red-600 hover:bg-red-50 hover:text-red-700 flex items-center gap-1"
+                    className="h-8 text-xs border-red-200 text-red-600 hover:bg-red-50 hover:text-red-700"
                   >
-                    <Trash2 className="h-3.5 w-3.5" />
-                    <span>Remove</span>
+                    Remove
                   </Button>
                 )}
                 <Button
                   type="button"
                   size="sm"
                   onClick={() => setDetailsSection(null)}
-                  className="h-8 text-xs bg-slate-900 text-white hover:bg-slate-800"
+                  className="h-8 text-xs bg-foreground text-white hover:bg-slate-800"
                 >
                   Close
                 </Button>
@@ -977,12 +1083,9 @@ export function WeekGrid({
         >
           <DialogContent className="max-w-md p-6 space-y-4" data-testid="conflict-explanation-dialog">
             <DialogHeader className="space-y-2 text-left">
-              <div className="flex items-center gap-2 text-red-600">
-                <AlertTriangle className="h-5 w-5 shrink-0" />
-                <DialogTitle className="text-base font-bold text-slate-900">
-                  Why is this conflicting?
-                </DialogTitle>
-              </div>
+              <DialogTitle className="text-base font-bold text-foreground">
+                Why is this conflicting?
+              </DialogTitle>
               <DialogDescription className="text-xs text-slate-600 leading-relaxed">
                 {(() => {
                   const desc = describeBlockConflict(
@@ -1017,7 +1120,7 @@ export function WeekGrid({
               </p>
             </div>
 
-            <DialogFooter className="flex flex-row items-center justify-end gap-2 pt-3 border-t border-slate-100">
+            <DialogFooter className="flex flex-row items-center justify-end gap-2 pt-3 border-t border-border">
               {onShowOtherSections && (
                 <Button
                   type="button"
@@ -1027,17 +1130,16 @@ export function WeekGrid({
                     onShowOtherSections(conflictExplanation.section.courseId);
                     setConflictExplanation(null);
                   }}
-                  className="h-8 text-xs text-slate-700"
+                  className="h-8 text-xs"
                 >
-                  <BookOpen className="h-3.5 w-3.5 mr-1" />
-                  <span>Show alternatives</span>
+                  Show alternatives
                 </Button>
               )}
               <Button
                 type="button"
                 size="sm"
                 onClick={() => setConflictExplanation(null)}
-                className="h-8 text-xs bg-slate-900 text-white hover:bg-slate-800"
+                className="h-8 text-xs bg-foreground text-white hover:bg-slate-800"
               >
                 Close
               </Button>
@@ -1054,12 +1156,9 @@ export function WeekGrid({
         >
           <DialogContent className="max-w-md p-6 space-y-4" data-testid="flagged-explanation-dialog">
             <DialogHeader className="space-y-2 text-left">
-              <div className="flex items-center gap-2 text-amber-600">
-                <AlertCircle className="h-5 w-5 shrink-0" />
-                <DialogTitle className="text-base font-bold text-slate-900">
-                  Why is this flagged?
-                </DialogTitle>
-              </div>
+              <DialogTitle className="text-base font-bold text-foreground">
+                Why is this flagged?
+              </DialogTitle>
               <DialogDescription className="text-xs text-slate-600 leading-relaxed">
                 <strong className="text-slate-900 font-semibold">
                   {flaggedExplanation.courseCode} {flaggedExplanation.sectionCode}
@@ -1073,8 +1172,8 @@ export function WeekGrid({
               return (
                 <div className="rounded-lg border border-slate-200 bg-slate-50 p-3 text-xs text-slate-700 space-y-2">
                   <div className="flex items-center justify-between">
-                    <span className="font-semibold text-slate-900">Retention Invariant (ADR-0008):</span>
-                    <span className="text-[11px] text-slate-500">
+                    <span className="font-semibold text-foreground">Retention Invariant (ADR-0008):</span>
+                    <span className="text-micro text-muted-foreground">
                       Last seen: {missingDesc.lastSeen}
                     </span>
                   </div>
@@ -1085,7 +1184,7 @@ export function WeekGrid({
               );
             })()}
 
-            <DialogFooter className="flex flex-row items-center justify-end gap-2 pt-3 border-t border-slate-100">
+            <DialogFooter className="flex flex-row items-center justify-end gap-2 pt-3 border-t border-border">
               {onShowOtherSections && (
                 <Button
                   type="button"
@@ -1095,10 +1194,9 @@ export function WeekGrid({
                     onShowOtherSections(flaggedExplanation.courseId);
                     setFlaggedExplanation(null);
                   }}
-                  className="h-8 text-xs text-slate-700"
+                  className="h-8 text-xs"
                 >
-                  <BookOpen className="h-3.5 w-3.5 mr-1" />
-                  <span>Find alternative</span>
+                  Find alternative
                 </Button>
               )}
               {onRemoveSection && (
@@ -1112,15 +1210,14 @@ export function WeekGrid({
                   }}
                   className="h-8 text-xs border-red-200 text-red-600 hover:bg-red-50 hover:text-red-700"
                 >
-                  <Trash2 className="h-3.5 w-3.5 mr-1" />
-                  <span>Remove</span>
+                  Remove
                 </Button>
               )}
               <Button
                 type="button"
                 size="sm"
                 onClick={() => setFlaggedExplanation(null)}
-                className="h-8 text-xs bg-slate-900 text-white hover:bg-slate-800"
+                className="h-8 text-xs bg-foreground text-white hover:bg-slate-800"
               >
                 Close
               </Button>

@@ -816,4 +816,55 @@ describe("SectionPicker", () => {
     expect(s11PosAfter).toBeGreaterThan(-1);
     expect(s12PosAfter).toBeGreaterThan(-1);
   });
+
+  // The course selector used to live in the chrome half, which sits full
+  // width above both columns. Scroll down into a long section list and it was
+  // off screen -- changing course meant scrolling back to the top of the page.
+  describe("changing course without leaving the list", () => {
+    const listProps = {
+      render: "list" as const,
+      courses: mockCourses,
+      selectedCourseId: 2923,
+      sections: sampleSections,
+      planSections: [],
+      onSelectCourse: vi.fn(),
+      onAddSection: vi.fn(),
+      onRemoveSection: vi.fn(),
+      onTogglePin: vi.fn(),
+      onHoverSection: vi.fn(),
+    };
+
+    it("puts the course selector in the list half, where the sections are", () => {
+      const html = renderToStaticMarkup(React.createElement(SectionPicker, listProps));
+      expect(html).toContain('data-testid="course-select"');
+    });
+
+    it("pins it so it stays reachable as the list scrolls past", () => {
+      const html = renderToStaticMarkup(React.createElement(SectionPicker, listProps));
+      const bar = html.slice(0, html.indexOf('data-testid="course-select"'));
+      // Below the app header, never behind it.
+      expect(bar).toMatch(/sticky[^"]*top-16/);
+    });
+
+    it("does not leave a second selector behind in the chrome half", () => {
+      const chrome = renderToStaticMarkup(
+        React.createElement(SectionPicker, { ...listProps, render: "chrome" as const })
+      );
+      expect(chrome).not.toContain('data-testid="course-select"');
+    });
+
+    it("still offers exactly one selector when both halves render together", () => {
+      const html = renderToStaticMarkup(
+        React.createElement(SectionPicker, { ...listProps, render: "all" as const })
+      );
+      expect(html.match(/data-testid="course-select"/g)).toHaveLength(1);
+    });
+
+    it("names the control for screen readers now that its label is visual chrome", () => {
+      const html = renderToStaticMarkup(React.createElement(SectionPicker, listProps));
+      const select = html.match(/<select[^>]*data-testid="course-select"[^>]*>/);
+      expect(select).not.toBeNull();
+      expect(select![0]).toMatch(/aria-label="[^"]+"/);
+    });
+  });
 });
