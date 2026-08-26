@@ -1,6 +1,6 @@
 [package]
 name = "animo-plan"
-version = "0.2.0"
+version = "0.3.0"
 description = "Animo Plan - Read-only DLSU Enlistment Planner"
 authors = ["Animo Plan Contributors"]
 edition = "2021"
