@@ -733,11 +733,13 @@ export function PlanWorkspace({
         )}
       </div>
 
-      {/* Solve The Rest Dialog (Ticket 20) */}
+      {/* Solve The Rest Dialog (Ticket 20, Ticket 43) */}
       <SolveDialog
         open={isSolveOpen}
         onOpenChange={setIsSolveOpen}
         planId={planSummary.id}
+        planSections={currentSections}
+        onTogglePin={handleTogglePin}
         onPlanUpdated={(updatedPlan) => {
           onPlanUpdated?.(updatedPlan);
           onRetry();

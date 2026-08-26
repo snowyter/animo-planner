@@ -11,6 +11,7 @@ import {
   XCircle,
   RotateCcw,
   Info,
+  Pin,
 } from "lucide-react";
 import {
   Dialog,
@@ -22,7 +23,7 @@ import {
 import { Button } from "./ui/button";
 import { Alert, AlertTitle, AlertDescription } from "./ui/alert";
 import { SolutionThumbnail } from "./SolutionThumbnail";
-import type { Day, Plan, Preset, Solution, SolveOptions, SolveResult } from "../adapters/ipc/types";
+import type { Day, Plan, PlanSection, Preset, Solution, SolveOptions, SolveResult } from "../adapters/ipc/types";
 import { DAY_INFOS } from "../core/grid";
 import { PRESET_INFOS, defaultSolveOptions, formatExclusionNotice, formatUnsatisfiableCoursesMessage } from "../core/solver";
 import * as client from "../adapters/ipc/client";
@@ -33,6 +34,8 @@ export interface SolveDialogProps {
   open: boolean;
   onOpenChange: (open: boolean) => void;
   planId: string;
+  planSections?: PlanSection[];
+  onTogglePin?: (section: PlanSection, pinned: boolean) => void;
   initialResult?: SolveResult | null;
   defaultShowConstraints?: boolean;
   onPlanUpdated?: (plan: Plan) => void;
@@ -63,6 +66,8 @@ export function SolveDialog({
   open,
   onOpenChange,
   planId,
+  planSections,
+  onTogglePin,
   initialResult = null,
   defaultShowConstraints = false,
   onPlanUpdated,
@@ -74,6 +79,42 @@ export function SolveDialog({
   const [isApplying, setIsApplying] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [result, setResult] = useState<SolveResult | null>(initialResult);
+  const [currentPlanSections, setCurrentPlanSections] = useState<PlanSection[]>(
+    () => planSections ?? []
+  );
+
+  useEffect(() => {
+    if (planSections) {
+      setCurrentPlanSections(planSections);
+    }
+  }, [planSections]);
+
+  const handleTogglePinSection = async (section: PlanSection, pinned: boolean) => {
+    setCurrentPlanSections((prev) =>
+      prev.map((s) =>
+        s.courseId === section.courseId && s.sectionId === section.sectionId
+          ? { ...s, pinned }
+          : s
+      )
+    );
+
+    try {
+      if (onTogglePin) {
+        onTogglePin(section, pinned);
+      } else {
+        const updated = await client.setSectionPinned({
+          planId,
+          courseId: section.courseId,
+          sectionId: section.sectionId,
+          pinned,
+        });
+        onPlanUpdated?.(updated);
+      }
+      runSolve(options);
+    } catch (err) {
+      setError(formatErrorMessage(err));
+    }
+  };
 
   const runSolve = useCallback(
     async (solveOpts: SolveOptions) => {
@@ -190,13 +231,81 @@ export function SolveDialog({
           </div>
           <DialogDescription className="text-xs text-slate-500 mt-1">
             Find ranked, conflict-free combinations to fill unassigned courses
-            around your choices. Anything already in your plan is treated as
-            pinned and kept unchanged.
+            around your choices. Pinned sections are fixed and never moved;
+            unpinned sections may be moved to find valid combinations.
           </DialogDescription>
         </DialogHeader>
 
         {/* Scrollable Main Area */}
         <div className="flex-1 overflow-y-auto p-6 space-y-6 bg-slate-50/50">
+          {/* Your Plan Sections & Pinning Panel (Ticket 43) */}
+          {currentPlanSections.length > 0 && (
+            <div className="rounded-xl border border-slate-200 bg-white p-4 shadow-2xs space-y-3">
+              <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-1">
+                <div className="flex items-center gap-2 text-slate-900 font-bold text-xs uppercase tracking-wider">
+                  <Pin className="h-4 w-4 text-emerald-700" />
+                  <span>Your Plan Sections ({currentPlanSections.length})</span>
+                </div>
+                <span className="text-xs text-slate-500 font-normal">
+                  Pinned sections are exempt from moving
+                </span>
+              </div>
+              <p className="text-xs text-slate-500 leading-relaxed">
+                Pinned sections are fixed and never moved. Unpinned sections can be swapped if needed to find conflict-free combinations.
+              </p>
+
+              <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-2 pt-1">
+                {currentPlanSections.map((sec) => (
+                  <div
+                    key={`${sec.courseId}-${sec.sectionId}`}
+                    className={`flex items-center justify-between p-2.5 rounded-lg border text-xs transition-colors ${
+                      sec.pinned
+                        ? "border-emerald-200 bg-emerald-50/50"
+                        : "border-slate-200 bg-slate-50/40"
+                    }`}
+                  >
+                    <div className="flex flex-col min-w-0 pr-2">
+                      <div className="flex items-center gap-1.5 font-bold text-slate-900 truncate">
+                        <span>{sec.courseCode}</span>
+                        <span className="text-slate-600 font-medium">{sec.sectionCode}</span>
+                      </div>
+                      <div className="mt-0.5">
+                        {sec.pinned ? (
+                          <span className="inline-flex items-center gap-1 text-[10px] font-semibold text-emerald-800">
+                            <Pin className="h-2.5 w-2.5 fill-emerald-600 text-emerald-600" />
+                            Pinned (Exempt)
+                          </span>
+                        ) : (
+                          <span className="text-[10px] text-slate-500 font-medium">
+                            Unpinned
+                          </span>
+                        )}
+                      </div>
+                    </div>
+
+                    <Button
+                      type="button"
+                      variant={sec.pinned ? "outline" : "secondary"}
+                      size="sm"
+                      disabled={isSolving}
+                      onClick={() => handleTogglePinSection(sec, !sec.pinned)}
+                      className="h-6 text-[11px] px-2 shrink-0 cursor-pointer"
+                    >
+                      {sec.pinned ? (
+                        <span>Unpin</span>
+                      ) : (
+                        <span className="flex items-center gap-1">
+                          <Pin className="h-2.5 w-2.5" />
+                          Pin
+                        </span>
+                      )}
+                    </Button>
+                  </div>
+                ))}
+              </div>
+            </div>
+          )}
+
           {/* Primary Controls: Presets (SPEC §6, Ticket 20) */}
           <div className="space-y-2">
             <div className="flex items-center justify-between">
@@ -503,6 +612,7 @@ export function SolveDialog({
                     key={solution.id}
                     solution={solution}
                     rank={index + 1}
+                    planSections={currentPlanSections}
                     isApplying={isApplying}
                     onApply={handleApplySolution}
                   />

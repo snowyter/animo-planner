@@ -2,13 +2,16 @@ import { describe, expect, it } from "vitest";
 import {
   PRESET_INFOS,
   defaultSolveOptions,
+  diffSolutionWithPlan,
+  formatApplyConsequence,
+  formatDiffSummary,
   formatExclusionNotice,
   formatScoreBreakdown,
   formatUnsatisfiableCoursesMessage,
   formatWarningLabel,
   solutionToSectionRefs,
 } from "./solver";
-import type { Solution, TransitionWarning, UnsatisfiableCourse } from "../adapters/ipc/types";
+import type { PlanSection, Solution, TransitionWarning, UnsatisfiableCourse } from "../adapters/ipc/types";
 
 describe("core/solver", () => {
 
@@ -192,5 +195,148 @@ describe("core/solver", () => {
       { courseId: 2923, sectionId: 384 },
       { courseId: 564, sectionId: 737 },
     ]);
+  });
+
+  describe("diffSolutionWithPlan", () => {
+    const makePlanSection = (
+      courseId: number,
+      courseCode: string,
+      sectionId: number,
+      sectionCode: string,
+      pinned: boolean
+    ): PlanSection => ({
+      courseId,
+      courseCode,
+      courseTitle: `${courseCode} Title`,
+      sectionId,
+      sectionCode,
+      pinned,
+      missing: false,
+      modality: "F2F",
+      blocks: [],
+      latestSnapshot: {
+        capturedAt: "2026-08-22T00:00:00Z",
+        enrolled: 30,
+        teacher: null,
+        remark: null,
+      },
+    });
+
+    const mockSolution: Solution = {
+      id: "solution-1",
+      score: 100,
+      breakdown: [],
+      warnings: [],
+      sections: [
+        {
+          courseId: 2923,
+          courseCode: "GEARTAP",
+          sectionId: 384,
+          sectionCode: "S11",
+          pinned: true,
+          blocks: [],
+        },
+        {
+          courseId: 564,
+          courseCode: "CSINTSY",
+          sectionId: 738,
+          sectionCode: "S12",
+          pinned: false,
+          blocks: [],
+        },
+      ],
+    };
+
+    it("correctly identifies when a solution changes nothing (moves 0, keeps all)", () => {
+      const planSections: PlanSection[] = [
+        makePlanSection(2923, "GEARTAP", 384, "S11", true),
+        makePlanSection(564, "CSINTSY", 738, "S12", false),
+      ];
+
+      const diff = diffSolutionWithPlan(planSections, mockSolution);
+
+      expect(diff.moveCount).toBe(0);
+      expect(diff.stayCount).toBe(2);
+      expect(diff.totalPlanSections).toBe(2);
+      expect(diff.moved).toHaveLength(0);
+      expect(diff.kept).toHaveLength(2);
+      expect(diff.pinned).toHaveLength(1);
+      expect(diff.pinned[0].sectionCode).toBe("S11");
+      expect(diff.unpinnedKept).toHaveLength(1);
+      expect(diff.unpinnedKept[0].sectionCode).toBe("S12");
+
+      const summary = formatDiffSummary(diff);
+      expect(summary).toMatch(/keeps all 2 sections/i);
+
+      const consequence = formatApplyConsequence(diff);
+      expect(consequence).toContain("keeps all 2 of your chosen sections");
+    });
+
+    it("correctly identifies moved sections and details what would move", () => {
+      const planSections: PlanSection[] = [
+        makePlanSection(2923, "GEARTAP", 384, "S11", true), // stays (pinned)
+        makePlanSection(564, "CSINTSY", 737, "S11", false), // moves to S12 (id 738)
+      ];
+
+      const diff = diffSolutionWithPlan(planSections, mockSolution);
+
+      expect(diff.moveCount).toBe(1);
+      expect(diff.stayCount).toBe(1);
+      expect(diff.totalPlanSections).toBe(2);
+      expect(diff.moved).toHaveLength(1);
+      expect(diff.moved[0]).toEqual({
+        courseId: 564,
+        courseCode: "CSINTSY",
+        fromSectionId: 737,
+        fromSectionCode: "S11",
+        toSectionId: 738,
+        toSectionCode: "S12",
+      });
+      expect(diff.pinned).toHaveLength(1);
+      expect(diff.pinned[0].courseCode).toBe("GEARTAP");
+
+      const summary = formatDiffSummary(diff);
+      expect(summary).toBe("Moves 1 section, keeps 1");
+
+      const consequence = formatApplyConsequence(diff);
+      expect(consequence).toContain("CSINTSY S11 → S12");
+      expect(consequence).toContain("keep 1");
+    });
+
+    it("handles an empty plan where all solution sections are additions", () => {
+      const diff = diffSolutionWithPlan([], mockSolution);
+
+      expect(diff.moveCount).toBe(0);
+      expect(diff.stayCount).toBe(0);
+      expect(diff.totalPlanSections).toBe(0);
+      expect(diff.added).toHaveLength(2);
+
+      const summary = formatDiffSummary(diff);
+      expect(summary).toBe("Adds 2 sections to schedule");
+
+      const consequence = formatApplyConsequence(diff);
+      expect(consequence).toContain("add 2 sections to your plan");
+    });
+
+    it("handles a solution that moves all plan sections", () => {
+      const planSections: PlanSection[] = [
+        makePlanSection(2923, "GEARTAP", 380, "S09", false),
+        makePlanSection(564, "CSINTSY", 737, "S11", false),
+      ];
+
+      const diff = diffSolutionWithPlan(planSections, mockSolution);
+
+      expect(diff.moveCount).toBe(2);
+      expect(diff.stayCount).toBe(0);
+      expect(diff.moved).toHaveLength(2);
+
+      const summary = formatDiffSummary(diff);
+      expect(summary).toBe("Moves all 2 sections");
+
+      const consequence = formatApplyConsequence(diff);
+      expect(consequence).toContain("move all 2 of your sections");
+      expect(consequence).toContain("GEARTAP S09 → S11");
+      expect(consequence).toContain("CSINTSY S11 → S12");
+    });
   });
 });

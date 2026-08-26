@@ -188,4 +188,115 @@ describe("SolveDialog", () => {
     expect(html).toContain("every section is full");
     expect(html).toContain("Excluded 2 full sections");
   });
+
+  it("clarifies in dialog description that pinned sections are fixed and unpinned can move", () => {
+    const html = renderToStaticMarkup(
+      React.createElement(SolveDialog, {
+        open: true,
+        onOpenChange: vi.fn(),
+        planId,
+        onPlanUpdated: vi.fn(),
+      })
+    );
+
+    expect(html).toContain("Pinned sections are fixed and never moved");
+    expect(html).toContain("unpinned sections may be moved");
+  });
+
+  it("renders current plan sections with pinned exemption status and reachable pin toggles", () => {
+    const planSections = [
+      {
+        courseId: 2923,
+        courseCode: "GEARTAP",
+        courseTitle: "Great Books",
+        sectionId: 384,
+        sectionCode: "S11",
+        pinned: true,
+        missing: false,
+        modality: "F2F" as const,
+        blocks: [],
+        latestSnapshot: {
+          capturedAt: "2026-08-22T00:00:00Z",
+          enrolled: 30,
+          teacher: null,
+          remark: null,
+        },
+      },
+      {
+        courseId: 564,
+        courseCode: "CSINTSY",
+        courseTitle: "Intro to AI",
+        sectionId: 737,
+        sectionCode: "S10",
+        pinned: false,
+        missing: false,
+        modality: "ONLINE" as const,
+        blocks: [],
+        latestSnapshot: {
+          capturedAt: "2026-08-22T00:00:00Z",
+          enrolled: 30,
+          teacher: null,
+          remark: null,
+        },
+      },
+    ];
+
+    const html = renderToStaticMarkup(
+      React.createElement(SolveDialog, {
+        open: true,
+        onOpenChange: vi.fn(),
+        planId,
+        planSections,
+        initialResult: mockSolveResult,
+        onPlanUpdated: vi.fn(),
+      })
+    );
+
+    expect(html).toContain("Your Plan Sections");
+    expect(html).toContain("Pinned sections are exempt from moving");
+    expect(html).toContain("GEARTAP");
+    expect(html).toContain("S11");
+    expect(html).toContain("Pinned (Exempt)");
+    expect(html).toContain("CSINTSY");
+    expect(html).toContain("S10");
+    expect(html).toContain("Unpinned");
+  });
+
+  it("passes planSections to solution thumbnails to show what moves and what stays", () => {
+    const planSections = [
+      {
+        courseId: 2923,
+        courseCode: "GEARTAP",
+        courseTitle: "Great Books",
+        sectionId: 380,
+        sectionCode: "S09",
+        pinned: false,
+        missing: false,
+        modality: "F2F" as const,
+        blocks: [],
+        latestSnapshot: {
+          capturedAt: "2026-08-22T00:00:00Z",
+          enrolled: 30,
+          teacher: null,
+          remark: null,
+        },
+      },
+    ];
+
+    const html = renderToStaticMarkup(
+      React.createElement(SolveDialog, {
+        open: true,
+        onOpenChange: vi.fn(),
+        planId,
+        planSections,
+        initialResult: mockSolveResult,
+        onPlanUpdated: vi.fn(),
+      })
+    );
+
+    // mockSolveResult has GEARTAP S11; plan has GEARTAP S09
+    expect(html).toContain("moves S09 →");
+    expect(html).toContain("S11");
+    expect(html).toContain("Applying this will move your 1 section (GEARTAP S09 → S11).");
+  });
 });
