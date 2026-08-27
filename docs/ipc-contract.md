@@ -17,7 +17,7 @@
 - IDs: `campus_id`, `session_id`, `course_id`, `section_id` are numbers; `plan_id`,
   `resume_token`, and `Solution.id` are strings.
 - Times are minutes since midnight (`start_min`, `end_min`).
-- **A blank `teacher` is `null`, meaning *unknown*.** `null` is never interpreted as "not this
+- **A blank `professor` is `null`, meaning *unknown*.** `null` is never interpreted as "not this
   professor"; no filter may treat it as a mismatch (ADR-0007-adjacent rule, CONTEXT.md).
 - **`remark` is opaque.** Stored and returned verbatim; never parsed or branched on.
 
@@ -142,6 +142,33 @@ before this migration read as `included: true`, which is the behaviour that alre
 | `export_plan_ics` | `{ planId }` | `IcsExport` |
 | `build_capture_report` | `{ error }` | `CaptureReport` |
 
+### Professor preferences (ticket 47)
+
+| Command | Arguments | Returns |
+|---|---|---|
+| `list_rankable_professors` | `{ campusId, sessionId, courseId }` | `RankableProfessor[]` |
+| `get_course_preferences` | `{ campusId, sessionId, courseId }` | `ProfessorPreference[]` |
+| `write_course_preferences` | `{ campusId, sessionId, courseId, ranked, avoided }` | `ProfessorPreference[]` |
+
+`list_rankable_professors` returns the distinct professors on the latest snapshot of each of a
+course's sections, keyed and de-duplicated. A blank professor has no key and never appears.
+
+`get_course_preferences` returns a course's stored preferences, including entries whose professor
+no longer appears in the latest-snapshot set. Those are **inactive**: kept, returned, flagged
+(`active: false`), and scoring nothing.
+
+`write_course_preferences` replaces a course's preferences in one call. `ranked` is an ordered
+list of `{ key, displayName }`, and `avoided` is an unordered list of the same shape. Both carry
+the display name: the key is case-folded for matching and is never fit to show, so an avoided
+"Bryant Lee" must not come back as "bryant lee". Ranks are contiguous from 1 within a course —
+the store owns that invariant. The command returns the updated preferences.
+
+Preferences are **app-wide within a capture scope**, shared by every plan under that
+`(campus, session)`. They are not plan data and must not be copied into a plan.
+
+Forgetting a course leaves its preferences alone — they lie dormant and come back if the course
+is re-captured.
+
 **Amended in ticket 19:** the arguments no longer carry a `fragment`. The failing DOM is
 retained Rust-side at the capture-failure site and scrubbed there before any report is
 assembled, so raw DOM never crosses into the webview; the command matches `error` against
@@ -255,10 +282,10 @@ type ScheduleBlock =
 ### `Snapshot`
 
 ```json
-{ "capturedAt": "ISO", "enrolled": 39, "teacher": null, "remark": null }
+{ "capturedAt": "ISO", "enrolled": 39, "professor": null, "remark": null }
 ```
 
-`teacher: string | null` — `null` is *unknown*, never "not-X".
+`professor: string | null` — `null` is *unknown*, never "not-X".
 
 ### `Day`
 
@@ -392,6 +419,28 @@ continues from there. On `"offline"` nothing changed.
 fully scrubbed (`hdnStudId`, `userID`, `IP_ADDRESS`, `MAC_ADDRESS` removed, along with
 anything shaped like a MAC or IPv4 address); the app never posts it — the student reviews
 and opens `issueUrl` themselves.
+
+### `RankableProfessor`
+
+```json
+{ "key": "bryant lee", "displayName": "Bryant Lee", "sectionIds": [384, 385] }
+```
+
+`key` is the normalized professor key (trimmed, case-folded, inner whitespace collapsed).
+`displayName` is the verbatim name from the first snapshot that produced this key.
+`sectionIds` are the sections this professor appears on in the latest snapshots.
+
+### `ProfessorPreference`
+
+```json
+{ "professorKey": "bryant lee", "displayName": "Bryant Lee",
+  "rank": 1, "avoid": false, "active": true }
+```
+
+`rank` is non-null when the professor is ranked (1..n, contiguous); `avoid` is `true` when the
+professor is avoided. The two are mutually exclusive (enforced by CHECK in the schema).
+`active` is `false` when the professor no longer appears on the course's latest snapshots — the
+preference is kept and shown, but scores nothing.
 
 ### `UpdateCheck`
 

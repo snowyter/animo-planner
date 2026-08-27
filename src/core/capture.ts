@@ -47,7 +47,7 @@ function formatAge(stamp: string, now: Date): string | null {
  * capture is what decides whether its numbers are worth acting on.
  *
  * An unparseable timestamp reads as unknown, never as recent — the same rule
- * a blank teacher follows (CONTEXT.md): missing is not a value.
+ * a blank professor follows (CONTEXT.md): missing is not a value.
  */
 export function formatCapturedAge(capturedAt: string, now: Date = new Date()): string {
   const age = formatAge(capturedAt, now);

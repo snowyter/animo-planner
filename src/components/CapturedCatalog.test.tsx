@@ -191,4 +191,28 @@ describe("CapturedCatalog", () => {
       expect(html).toMatch(/Checked courses are the ones the solver fills/i);
     });
   });
+
+  describe("ranking the professors of a course (ticket 49)", () => {
+    it("offers the drill-down on the row where the professor names already are", () => {
+      const html = renderToStaticMarkup(
+        React.createElement(CapturedCatalog, {
+          courses,
+          now,
+          onRankProfessors: vi.fn(),
+        })
+      );
+
+      expect(html).toContain('data-testid="rank-professors-2923"');
+      expect(html).toContain('data-testid="rank-professors-564"');
+      expect(html).toContain("Professors");
+    });
+
+    it("stays out of the row entirely when there is nowhere to drill down to", () => {
+      const html = renderToStaticMarkup(
+        React.createElement(CapturedCatalog, { courses, now })
+      );
+
+      expect(html).not.toContain('data-testid="rank-professors-2923"');
+    });
+  });
 });

@@ -202,7 +202,7 @@ describe("SolvePanel", () => {
         latestSnapshot: {
           capturedAt: "2026-08-22T00:00:00Z",
           enrolled: 30,
-          teacher: null,
+          professor: null,
           remark: null,
         },
       },
@@ -219,7 +219,7 @@ describe("SolvePanel", () => {
         latestSnapshot: {
           capturedAt: "2026-08-22T00:00:00Z",
           enrolled: 30,
-          teacher: null,
+          professor: null,
           remark: null,
         },
       },
@@ -259,7 +259,7 @@ describe("SolvePanel", () => {
         latestSnapshot: {
           capturedAt: "2026-08-22T00:00:00Z",
           enrolled: 30,
-          teacher: null,
+          professor: null,
           remark: null,
         },
       },
@@ -380,7 +380,7 @@ describe("SolvePanel", () => {
           latestSnapshot: {
             capturedAt: "2026-08-22T00:00:00Z",
             enrolled: 30,
-            teacher: null,
+            professor: null,
             remark: null,
           },
         },
@@ -472,7 +472,7 @@ describe("the solve panel in a narrow column", () => {
             latestSnapshot: {
               capturedAt: "2026-08-22T00:00:00Z",
               enrolled: 30,
-              teacher: null,
+              professor: null,
               remark: null,
             },
           },
@@ -510,5 +510,62 @@ describe("the solve panel in a narrow column", () => {
     expect(label![0]).toContain("Exclude full sections");
     expect(label![0]).not.toContain("(enrolled");
     expect(html).toContain("Enrolled is at or over capacity");
+  });
+
+  describe("the Priority control (ticket 49, ADR-0021)", () => {
+    const renderPanel = (props: Record<string, unknown> = {}) =>
+      renderToStaticMarkup(
+        React.createElement(SolvePanel, {
+          planId,
+          initialResult: mockSolveResult,
+          onPlanUpdated: vi.fn(),
+          ...props,
+        })
+      );
+
+    it("sits with the other constraints, offering Schedule, Professors and Hybrid", () => {
+      const html = renderPanel();
+
+      expect(html).toContain('data-testid="solve-priority"');
+      expect(html).toContain("Schedule");
+      expect(html).toContain("Professors");
+      expect(html).toContain("Hybrid");
+    });
+
+    it("defaults to Schedule, which is exactly today's behaviour", () => {
+      const html = renderPanel();
+
+      expect(html).toMatch(/data-priority="schedule"[^>]*data-priority-selected="true"/);
+      expect(html).toMatch(/data-priority="professors"[^>]*data-priority-selected="false"/);
+    });
+
+    it("summarises the preferences read-only, and points back at where they are made", () => {
+      const html = renderPanel({
+        preferenceSummary: { rankedCourses: 3, avoidedProfessors: 2 },
+      });
+
+      expect(html).toContain("3 courses ranked · 2 professors avoided");
+      expect(html).toContain('data-testid="solve-priority-summary-link"');
+    });
+
+    it("says a ranking is being ignored under Schedule, and offers the switch", () => {
+      const html = renderPanel({
+        preferenceSummary: { rankedCourses: 3, avoidedProfessors: 2 },
+      });
+
+      expect(html).toContain('data-testid="priority-noop-warning"');
+      expect(html).toContain("being ignored");
+      expect(html).toContain('data-testid="priority-noop-switch"');
+    });
+
+    it("stays quiet when there is nothing to ignore, or when the priority already uses it", () => {
+      expect(renderPanel()).not.toContain('data-testid="priority-noop-warning"');
+      expect(
+        renderPanel({
+          preferenceSummary: { rankedCourses: 3, avoidedProfessors: 2 },
+          initialPriority: "professors",
+        })
+      ).not.toContain('data-testid="priority-noop-warning"');
+    });
   });
 });

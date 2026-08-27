@@ -90,9 +90,11 @@ describe("App shell and navigation", () => {
       })
     );
 
-    expect(workspaceHtml).toContain("T1 Target Schedule");
-    expect(workspaceHtml).toContain("Manila");
-    expect(workspaceHtml).toContain("AY2026-27 T1");
+    // The workspace no longer repeats any of it. The plan banner that did
+    // was a second card saying what the header above it already said, and
+    // it cost the week grid the top of the screen.
+    expect(workspaceHtml).not.toContain("T1 Target Schedule");
+    expect(workspaceHtml).not.toContain("Plan Scope:");
   });
 
   it("surfaces identifiable unimplemented error in the workspace when getPlan rejects", () => {

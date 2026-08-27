@@ -8,6 +8,13 @@ import { SolutionCard } from "./SolutionCard";
 import type { Day, Plan, PlanSection, Preset, Solution, SolveOptions, SolveResult } from "../adapters/ipc/types";
 import { DAY_INFOS } from "../core/grid";
 import { PRESET_INFOS, defaultSolveOptions, formatExclusionNotice, formatUnsatisfiableCoursesMessage } from "../core/solver";
+import type { PreferenceSummary, Priority } from "../core/professorRanking";
+import {
+  DEFAULT_PRIORITY,
+  PRIORITY_INFOS,
+  formatPreferenceSummary,
+  formatSchedulePriorityNoOp,
+} from "../core/professorRanking";
 import * as client from "../adapters/ipc/client";
 import { formatErrorMessage } from "../core/error";
 import { solutionToSectionRefs } from "../core/solver";
@@ -42,6 +49,20 @@ export interface SolvePanelProps {
    */
   selectedSolutionId?: string | null;
   onSelectSolution?: (selection: SolutionSelection | null) => void;
+  /**
+   * How heavily a professor ranking weighs against the preset (ADR-0021).
+   * A second axis, not a fourth preset. The suite renders to static markup
+   * and cannot click, so the selection is drivable from props.
+   */
+  initialPriority?: Priority;
+  /**
+   * What the student has already said, across the plan. Read-only here: the
+   * panel is where a ranking is *felt*, and deliberately not where it is
+   * made.
+   */
+  preferenceSummary?: PreferenceSummary;
+  /** The way back to where preferences are actually edited. */
+  onOpenPreferences?: () => void;
 }
 
 const EARLIEST_START_OPTIONS: { label: string; min: number | null }[] = [
@@ -75,8 +96,20 @@ export function SolvePanel({
   onPlanUpdated,
   selectedSolutionId = null,
   onSelectSolution,
+  initialPriority = DEFAULT_PRIORITY,
+  preferenceSummary = { rankedCourses: 0, avoidedProfessors: 0 },
+  onOpenPreferences,
 }: SolvePanelProps) {
   const [options, setOptions] = useState<SolveOptions>(() => defaultSolveOptions());
+  /**
+   * The priority axis.
+   *
+   * Held beside the solve options rather than inside them: the solver does
+   * not read it yet (ticket 48 is what teaches it to), and `Schedule` is
+   * bit-for-bit today's behaviour, so a ranking simply has no effect until
+   * that lands. What must not wait is the interface saying so.
+   */
+  const [priority, setPriority] = useState<Priority>(initialPriority);
   const [showConstraints, setShowConstraints] = useState(defaultShowConstraints);
   const [isSolving, setIsSolving] = useState(initialIsSolving);
   const [isContinuing, setIsContinuing] = useState(false);
@@ -232,6 +265,8 @@ export function SolvePanel({
     options.latestEndMin !== null ||
     options.excludeFull !== defaultSolveOptions(options.preset).excludeFull;
 
+  const noOpWarning = formatSchedulePriorityNoOp(priority, preferenceSummary);
+
   const exclusionNotice = result
     ? formatExclusionNotice(result.excludedFullCount, result.snapshotTakenAt)
     : null;
@@ -371,6 +406,80 @@ export function SolvePanel({
                 );
               })}
             </div>
+          </div>
+
+          {/* Priority: the second axis (ADR-0021). Every priority composes
+              with every preset, which is why this is a row of its own rather
+              than three more presets. */}
+          <div className="space-y-2" data-testid="solve-priority">
+            <div className="flex flex-wrap items-baseline justify-between gap-x-2 gap-y-0.5">
+              <label className="text-micro font-bold uppercase tracking-wider text-muted-foreground">
+                Priority
+              </label>
+              <span className="text-nano text-muted-foreground">
+                {formatPreferenceSummary(preferenceSummary)}
+                {" · "}
+                <button
+                  type="button"
+                  onClick={onOpenPreferences}
+                  data-testid="solve-priority-summary-link"
+                  className="cursor-pointer underline underline-offset-2 hover:text-foreground"
+                >
+                  Rank professors in Capture
+                </button>
+              </span>
+            </div>
+
+            <div className="grid grid-cols-3 gap-2">
+              {PRIORITY_INFOS.map((info) => {
+                const isSelected = priority === info.priority;
+                return (
+                  <button
+                    key={info.priority}
+                    type="button"
+                    data-priority={info.priority}
+                    data-priority-selected={isSelected ? "true" : "false"}
+                    disabled={isSolving}
+                    onClick={() => setPriority(info.priority)}
+                    title={info.description}
+                    className={`rounded-card border bg-card px-2 py-2 text-xs font-bold cursor-pointer ${
+                      isSelected
+                        ? "border-primary text-emerald-900 ring-1 ring-primary/25"
+                        : "border-border text-foreground hover:border-slate-300"
+                    }`}
+                  >
+                    {info.label}
+                  </button>
+                );
+              })}
+            </div>
+
+            <p className="text-nano leading-relaxed text-muted-foreground">
+              {PRIORITY_INFOS.find((info) => info.priority === priority)?.description}
+            </p>
+
+            {/* A ranking under Schedule is a no-op by design, so the panel
+                says so. A student who ranked for five minutes and saw nothing
+                change would file the feature as broken (ADR-0021). */}
+            {noOpWarning && (
+              <div
+                data-testid="priority-noop-warning"
+                className="rounded-card border border-amber-300 bg-amber-50/80 p-3 space-y-2"
+                role="status"
+              >
+                <p className="text-xs leading-relaxed text-amber-900">{noOpWarning}</p>
+                <Button
+                  type="button"
+                  variant="outline"
+                  size="sm"
+                  onClick={() => setPriority("professors")}
+                  data-testid="priority-noop-switch"
+                  className="h-7 border-amber-300 bg-white text-xs text-amber-900 hover:bg-amber-100/50"
+                >
+                  Switch to Professors
+                </Button>
+              </div>
+            )}
           </div>
 
           {/* Secondary Controls: Constraints (Ticket 20) */}

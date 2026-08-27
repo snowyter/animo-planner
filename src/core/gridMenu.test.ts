@@ -45,7 +45,7 @@ describe("gridMenu core domain logic", () => {
       courseTitle?: string;
       pinned?: boolean;
       missing?: boolean;
-      teacher?: string | null;
+      professor?: string | null;
       enrolled?: number;
       enrollCap?: number;
       remark?: string | null;
@@ -68,7 +68,7 @@ describe("gridMenu core domain logic", () => {
     latestSnapshot: {
       capturedAt: options?.capturedAt ?? "2026-08-22T00:00:00Z",
       enrolled: options?.enrolled ?? 42,
-      teacher: options && "teacher" in options ? options.teacher ?? null : "Prof Gregory Cu",
+      professor: options && "professor" in options ? options.professor ?? null : "Prof Gregory Cu",
       remark: options && "remark" in options ? options.remark ?? null : null,
     },
     enrollCap: options?.enrollCap ?? 45,
@@ -87,7 +87,7 @@ describe("gridMenu core domain logic", () => {
         ],
         {
           courseTitle: "Art Appreciation",
-          teacher: "Gregory Cu",
+          professor: "Gregory Cu",
           enrolled: 42,
           enrollCap: 45,
           remark: "Verified schedule",
@@ -97,14 +97,14 @@ describe("gridMenu core domain logic", () => {
       const text = formatSectionCopyText(section);
 
       expect(text).toContain("GEARTAP S11 — Art Appreciation");
-      expect(text).toContain("Teacher: Gregory Cu");
+      expect(text).toContain("Professor: Gregory Cu");
       expect(text).toContain("TUE 2:30 PM – 4:00 PM (L226, F2F)");
       expect(text).toContain("FRI 2:30 PM – 4:00 PM (Online)");
       expect(text).toContain("Enrolled: 42/45");
       expect(text).toContain("Remark: Verified schedule");
     });
 
-    it("formats blank teacher as Unknown (never absent or a dash)", () => {
+    it("formats blank professor as Unknown (never absent or a dash)", () => {
       const section = makeSection(
         564,
         737,
@@ -112,7 +112,7 @@ describe("gridMenu core domain logic", () => {
         "Z01",
         [makeBlock("WED", 660, 750, "ONLINE")],
         {
-          teacher: null,
+          professor: null,
           enrolled: 30,
           enrollCap: 40,
         }
@@ -121,8 +121,8 @@ describe("gridMenu core domain logic", () => {
       const text = formatSectionCopyText(section);
 
       expect(text).toContain("CSINTSY Z01");
-      expect(text).toContain("Teacher: Unknown");
-      expect(text).not.toContain("Teacher: -");
+      expect(text).toContain("Professor: Unknown");
+      expect(text).not.toContain("Professor: -");
     });
   });
 

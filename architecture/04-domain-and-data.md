@@ -42,7 +42,7 @@
           └──▶ SNAPSHOTS (append-only)  Online / Hybrid based on
                point-in-time readings   the mix of its blocks.
                of the mutable values:
-               enrolled count, teacher,
+               enrolled count, professor,
                remark. History IS data.
 ```
 
@@ -66,7 +66,7 @@
                       FK section_fk        PK id (random)       PK(plan_id,section_fk)
                       captured_at          name                 pinned 0|1
                       enrolled             campus_id+session_id
-                      teacher (NULL=unknown) created_at
+                      professor (NULL=unknown) created_at
                       remark (verbatim)
 ```
 
@@ -94,8 +94,8 @@ These are project invariants (`CONTEXT.md`, `docs/adr/`). Violating any of them 
 ### History, not state
 - Captures **append snapshots**; they never overwrite history. Seat-count change over time
   is itself information (fill velocity is planned v1.1 analysis).
-- `teacher` and `remark` live on snapshots, not sections, for the same reason.
-- **Blank teacher means unknown**, stored as SQL `NULL`. No filter may treat it as
+- `professor` and `remark` live on snapshots, not sections, for the same reason.
+- **Blank professor means unknown**, stored as SQL `NULL`. No filter may treat it as
   "not this professor" — that would silently discard valid sections.
 - `remark` is stored and displayed verbatim. Never parsed, never branched on.
 

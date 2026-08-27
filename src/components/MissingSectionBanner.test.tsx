@@ -33,7 +33,7 @@ describe("MissingSectionBanner", () => {
     latestSnapshot: {
       capturedAt: "2026-08-24T00:00:00Z",
       enrolled: 40,
-      teacher: "Prof B",
+      professor: "Prof B",
       remark: null,
     },
   };
@@ -58,7 +58,7 @@ describe("MissingSectionBanner", () => {
     latestSnapshot: {
       capturedAt: "2026-08-24T00:00:00Z",
       enrolled: 42,
-      teacher: null,
+      professor: null,
       remark: null,
     },
   };

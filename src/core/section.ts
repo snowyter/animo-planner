@@ -7,16 +7,16 @@ import type { Conflict, PlanSection, Section, SectionRef } from "../adapters/ipc
 import { findConflicts } from "./conflicts";
 
 /**
- * Format teacher display name.
+ * Format professor display name.
  *
- * Blank teacher displays as "Unknown", never as absent or as a dash that reads like a value.
+ * Blank professor displays as "Unknown", never as absent or as a dash that reads like a value.
  * (SPEC §5, §7, CONTEXT.md)
  */
-export function formatTeacher(teacher: string | null | undefined): string {
-  if (!teacher) {
+export function formatProfessor(professor: string | null | undefined): string {
+  if (!professor) {
     return "Unknown";
   }
-  const trimmed = teacher.trim();
+  const trimmed = professor.trim();
   return trimmed.length > 0 ? trimmed : "Unknown";
 }
 

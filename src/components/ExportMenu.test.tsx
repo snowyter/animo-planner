@@ -73,7 +73,7 @@ describe("ExportMenu", () => {
     latestSnapshot: {
       capturedAt: "2026-08-22T00:00:00Z",
       enrolled: 42,
-      teacher: "Prof X",
+      professor: "Prof X",
       remark: null,
     },
   });

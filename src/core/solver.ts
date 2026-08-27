@@ -227,7 +227,7 @@ export function solutionToPreviewSections(
       latestSnapshot:
         known && known.sectionId === s.sectionId
           ? known.latestSnapshot
-          : { capturedAt: "", enrolled: 0, teacher: null, remark: null },
+          : { capturedAt: "", enrolled: 0, professor: null, remark: null },
     };
   });
 }

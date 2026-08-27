@@ -51,7 +51,7 @@ describe("findConflicts", () => {
     latestSnapshot: {
       capturedAt: "2026-08-22T00:00:00Z",
       enrolled: 40,
-      teacher: null,
+      professor: null,
       remark: null,
     },
   });

@@ -48,7 +48,7 @@ import { getCourseTheme } from "../core/palette";
 import { findConflicts, isBlockConflicting } from "../core/conflicts";
 import {
   findCandidateConflicts,
-  formatTeacher,
+  formatProfessor,
   formatEnrolledCap,
   toPlanSection,
 } from "../core/section";
@@ -143,11 +143,11 @@ interface FlattenedBlock {
 }
 
 /**
- * What a schedule block says on hover. The teacher lives on the section's
+ * What a schedule block says on hover. The professor lives on the section's
  * latest snapshot and was not shown anywhere on the grid, so choosing between
  * two sections of the same course meant going back to the picker.
  *
- * A blank teacher reads as *unknown*, never as absent and never as a dash:
+ * A blank professor reads as *unknown*, never as absent and never as a dash:
  * the value is missing, not empty (CONTEXT.md).
  */
 export function blockTooltip(
@@ -156,12 +156,12 @@ export function blockTooltip(
   flags: { isF2F: boolean; isGhost: boolean; isMissing: boolean }
 ): string {
   const where = flags.isF2F ? block.location ?? "Room" : "Online";
-  const teacher = section.latestSnapshot?.teacher?.trim();
+  const professor = section.latestSnapshot?.professor?.trim();
   const snapshot = section.latestSnapshot;
 
   const lines = [
     `${section.courseCode} ${section.sectionCode} (${formatMinutesRange(block.startMin, block.endMin)}) — ${where}`,
-    `Teacher: ${teacher ? teacher : "Unknown"}`,
+    `Professor: ${professor ? professor : "Unknown"}`,
   ];
   if (snapshot && typeof snapshot.enrolled === "number") {
     lines.push(`Enrolled: ${snapshot.enrolled}`);
@@ -520,8 +520,23 @@ export function WeekGrid({
         </div>
       )}
 
-      {/* Scroll container for smaller viewports */}
-      <div className="overflow-x-auto">
+      {/* Scroll container for smaller viewports.
+          An empty grid fades back so the "No sections yet" card carries the
+          screen. The fade is on the lattice, never on the root — the card
+          sits outside this element and stays at full strength, and dimming
+          the root would dim the message along with everything else.
+          Deliberately opacity and not a tint: a wash of colour would shift
+          the perceived hue of every block that lands here (ADR-0012), and
+          at zero sections there is nothing whose colour can be distorted.
+          `overflow-x-auto` also computes `overflow-y: auto`, so the fade
+          must not become a stacking context that clips the portalled
+          context menu — opacity below 1 creates one, which is why it is
+          applied only while the grid is empty and has no menu to open. */}
+      <div
+        className={isEmpty ? "overflow-x-auto opacity-40" : "overflow-x-auto"}
+        data-testid="week-grid-lattice"
+        aria-hidden={isEmpty ? true : undefined}
+      >
         <div className="min-w-[680px]">
           {/* Day Headers (Mon–Sat) */}
           <div className="grid grid-cols-[70px_repeat(6,1fr)] border-b border-border bg-muted/60 sticky top-0 z-10 text-xs font-semibold text-foreground">
@@ -1103,9 +1118,9 @@ export function WeekGrid({
             {/* Details Grid */}
             <div className="grid grid-cols-2 gap-3 rounded-panel border border-border bg-muted/40 p-3 text-xs">
               <div>
-                <span className="text-slate-500 block">Teacher:</span>
+                <span className="text-slate-500 block">Professor:</span>
                 <span className="font-medium text-slate-900">
-                  {formatTeacher(detailsSection.latestSnapshot?.teacher)}
+                  {formatProfessor(detailsSection.latestSnapshot?.professor)}
                 </span>
               </div>
 

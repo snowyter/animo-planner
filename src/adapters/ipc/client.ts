@@ -33,12 +33,14 @@ import type {
   Plan,
   PlanSummary,
   Preset,
+  RankableProfessor,
   RefreshOutcome,
   RefreshProgress,
   Section,
   SectionRef,
   SessionOption,
   SolveResult,
+  ProfessorPreference,
   UpdateCheck,
 } from "./types";
 
@@ -242,6 +244,51 @@ export function exportPlanIcs(args: { planId: string }): Promise<IcsExport> {
  */
 export function buildCaptureReport(args: { error: string }): Promise<CaptureReport> {
   return invoke("build_capture_report", { args });
+}
+
+// Professor preferences (ticket 47)
+
+/**
+ * Returns the distinct professors on the latest snapshot of each of a course's
+ * sections, keyed and de-duplicated. A blank professor has no key and never
+ * appears.
+ */
+export function listRankableProfessors(args: {
+  campusId: number;
+  sessionId: number;
+  courseId: number;
+}): Promise<RankableProfessor[]> {
+  return invoke("list_rankable_professors", { args });
+}
+
+/**
+ * Returns a course's stored preferences, including entries whose professor no
+ * longer appears in the latest-snapshot set. Those are inactive: kept,
+ * returned, flagged (`active: false`), and scoring nothing.
+ */
+export function getCoursePreferences(args: {
+  campusId: number;
+  sessionId: number;
+  courseId: number;
+}): Promise<ProfessorPreference[]> {
+  return invoke("get_course_preferences", { args });
+}
+
+/**
+ * Replaces a course's preferences in one call. `ranked` is an ordered list
+ * of `{ key, displayName }` and `avoided` is an unordered list of the same
+ * shape — an avoided professor carries a display name too, because the key is
+ * case-folded and the student must see the name they avoided. Returns the
+ * updated preferences.
+ */
+export function writeCoursePreferences(args: {
+  campusId: number;
+  sessionId: number;
+  courseId: number;
+  ranked: { key: string; displayName: string }[];
+  avoided: { key: string; displayName: string }[];
+}): Promise<ProfessorPreference[]> {
+  return invoke("write_course_preferences", { args });
 }
 
 // Updates (ticket 38 — headless; the student decides, nothing installs itself)

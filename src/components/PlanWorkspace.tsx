@@ -1,13 +1,12 @@
-import { useState, useMemo } from "react";
+import { useState, useMemo, useRef } from "react";
 /**
  * One glyph survives on this screen: the conflict indicator (ADR-0009), which
  * is the single thing a student scans the plan header for. Everything else
  * sat beside a word that already said it.
  */
-import { AlertTriangle } from "lucide-react";
+import { Menu } from "lucide-react";
 
 import { Button } from "./ui/button";
-import { Badge } from "./ui/badge";
 import { Alert, AlertTitle, AlertDescription } from "./ui/alert";
 import {
   Dialog,
@@ -26,10 +25,19 @@ import { useSectionPicker } from "./useSectionPicker";
 import { SolvePanel } from "./SolvePanel";
 import { usePlanRefresh } from "./usePlanRefresh";
 import { MissingSectionBanner } from "./MissingSectionBanner";
+import { AvoidedProfessorNotice } from "./AvoidedProfessorNotice";
+import { ProfessorRanking } from "./ProfessorRanking";
+import { useCourseRanking, useProfessorPreferences } from "./useProfessorPreferences";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "./ui/tabs";
 import * as client from "../adapters/ipc/client";
-import type { Plan, PlanSection, PlanSummary, Section, Solution } from "../adapters/ipc/types";
-import { formatSectionCount } from "../core/plan";
+import type {
+  Plan,
+  PlanSection,
+  PlanSummary,
+  Section,
+  Solution,
+  ProfessorPreference,
+} from "../adapters/ipc/types";
 import { findConflicts } from "../core/conflicts";
 import {
   formatRefreshProgress,
@@ -49,6 +57,10 @@ import {
   solutionToSectionRefs,
 } from "../core/solver";
 import { ExportMenu } from "./ExportMenu";
+import {
+  findAvoidedProfessorAdvisories,
+  summarisePreferences,
+} from "../core/professorRanking";
 
 export interface PlanWorkspaceProps {
   planSummary: PlanSummary;
@@ -73,6 +85,19 @@ export interface PlanWorkspaceProps {
    * control, so this is drivable from props.
    */
   initialToolsOpen?: boolean;
+  /**
+   * Which course's professor ranking the drill-down opens on, if any
+   * (ticket 49). The suite renders to static markup and cannot click a
+   * course row, so the drill-down is drivable from props — the same seam
+   * `initialTab` provides for the tool panel.
+   */
+  initialRankingCourseId?: number | null;
+  /**
+   * The catalog's stored preferences, seeded. Nothing loads under a static
+   * render, and the advisory notice and the Priority summary are both
+   * computed from this.
+   */
+  initialPreferencesByCourse?: Map<number, ProfessorPreference[]>;
   onBack: () => void;
   onRetry: () => void;
   onReportBrokenCapture?: (error: string) => void;
@@ -88,6 +113,8 @@ export function PlanWorkspace({
   initialTab = DEFAULT_TOOL_TAB,
   initialPreviewSolution = null,
   initialToolsOpen = false,
+  initialRankingCourseId = null,
+  initialPreferencesByCourse,
   onRetry,
   onReportBrokenCapture,
   onPlanUpdated,
@@ -121,6 +148,25 @@ export function PlanWorkspace({
     solution: Solution;
     rank: number;
   } | null>(() => (initialPreviewSolution ? { solution: initialPreviewSolution, rank: 1 } : null));
+  /**
+   * Which course's professor ranking is open, if any.
+   *
+   * A drill-down, not a fourth tab: the workspace stays, the plan header
+   * stays, and the two-column region gives way to it for as long as it is
+   * open. Held beside the selected tab so leaving returns to the tool the
+   * student came from.
+   */
+  const [rankingCourseId, setRankingCourseId] = useState<number | null>(
+    () => initialRankingCourseId
+  );
+  /**
+   * Where the tool column was scrolled when the drill-down was entered.
+   * The column unmounts while the ranking is open, so the offset is put back
+   * by the scroll region's own ref rather than by an effect.
+   */
+  const toolScrollRef = useRef<HTMLDivElement | null>(null);
+  const savedToolScrollRef = useRef<number>(0);
+  const savedWindowScrollRef = useRef<number>(0);
   const [isConfirmingClear, setIsConfirmingClear] = useState<boolean>(
     () => initialConfirmingClear
   );
@@ -173,6 +219,43 @@ export function PlanWorkspace({
       fetchSummary();
     },
   });
+
+  /**
+   * The catalog's professor preferences.
+   *
+   * Read here rather than inside the Solve panel because two surfaces need
+   * them and neither owns the other: the panel summarises them, and the
+   * advisory notice — which lives outside the tabs — is computed from them.
+   */
+  const { preferencesByCourse, reloadPreferences } = useProfessorPreferences(
+    { campusId: planSummary.campusId, sessionId: planSummary.sessionId },
+    courses.map((course) => course.courseId),
+    initialPreferencesByCourse
+  );
+
+  const rankingCourse = courses.find((course) => course.courseId === rankingCourseId);
+
+  const ranking = useCourseRanking(
+    { campusId: planSummary.campusId, sessionId: planSummary.sessionId },
+    rankingCourseId
+  );
+
+  const preferenceSummary = useMemo(
+    () => summarisePreferences([...preferencesByCourse.values()]),
+    [preferencesByCourse]
+  );
+
+  /**
+   * A section already in the plan that has acquired an avoided professor.
+   *
+   * Advisory only. Nothing is removed and nothing is re-solved — the plan is
+   * the student's (ADR-0009), and avoid is a filter on what a solve offers
+   * (ADR-0020).
+   */
+  const avoidedProfessorAdvisories = useMemo(
+    () => findAvoidedProfessorAdvisories(currentSections, preferencesByCourse),
+    [currentSections, preferencesByCourse]
+  );
 
   const handleClearSchedule = async () => {
     setIsClearing(true);
@@ -317,6 +400,29 @@ export function PlanWorkspace({
   };
 
   /**
+   * Going into, and coming back from, the ranking.
+   *
+   * Leaving returns to the Capture tab on the course it was entered from,
+   * scrolled where it was — the panel's scroll offset is restored when the
+   * tool column mounts again. Coming back also re-reads the preferences, so
+   * the Priority summary and the advisory notice reflect what was just said.
+   */
+  const openRanking = (courseId: number) => {
+    savedToolScrollRef.current = toolScrollRef.current?.scrollTop ?? 0;
+    savedWindowScrollRef.current =
+      typeof window === "undefined" ? 0 : window.scrollY;
+    setPreviewSelection(null);
+    setActiveTab("capture");
+    setIsToolsOpen(true);
+    setRankingCourseId(courseId);
+  };
+
+  const closeRanking = () => {
+    setRankingCourseId(null);
+    reloadPreferences();
+  };
+
+  /**
    * The one preview on the grid (ticket 46).
    *
    * A solution preview and the picker's hover ghost are the same concept and
@@ -380,54 +486,118 @@ export function PlanWorkspace({
   };
 
   /**
-   * The week grid's header, shared by both layouts so they cannot drift.
+   * The one bar above the workspace: the fold control, the tabs, the title,
+   * and the actions that operate on the schedule.
    *
-   * Clear schedule lives here rather than up in the plan banner: it destroys
-   * the schedule, so it belongs beside the schedule, where the student can see
-   * what they are about to lose. It stays visually subordinate to Export — a
-   * ghost button, not an outlined one — because emptying the plan is the rare
-   * action on this row.
+   * It used to be two stacked cards — a plan banner repeating the name and
+   * scope the app header already shows, and a separate schedule toolbar
+   * under it. Two cards, one of them redundant, and the grid pushed below
+   * the fold to pay for them.
+   *
+   * The bar mirrors the two columns beneath it: the fold control and the
+   * tabs sit over the tool panel, the title and the actions over the grid.
+   * The plan's stats ride along on the right because nothing else shows
+   * them any more.
    */
-  const renderScheduleHeader = () => (
-    <div className="flex flex-wrap items-center justify-between gap-3">
-      <div className="flex items-center gap-3">
-        <h3 className="text-base font-semibold text-foreground">Weekly Schedule</h3>
+  const renderWorkspaceBar = () => (
+    /* Not a card. The tab strip has to line up with the tool panel below it,
+       and a card's own padding is exactly the offset that stopped it: the
+       panel starts at the column's left edge, so anything that must align
+       with it has to start there too. Dropping the chrome also spends one
+       fewer box on a screen whose whole revision was about spending fewer. */
+    <div
+      data-testid="workspace-bar"
+      className={`flex flex-wrap items-center ${
+        isToolsOpen ? "gap-x-6" : "gap-x-4"
+      } gap-y-3`}
+    >
+      {/* One cluster over the column it drives, at exactly that column's
+          width and flush with its left edge.
 
-        {/* Unfolding the tools. Folding hides more than a tab does, so the
-            way back is a named control rather than an edge to find, and it
-            carries the empty-catalog signal the tab strip would have. */}
-        {!isToolsOpen && (
-          <Button
-            type="button"
-            variant="outline"
-            size="sm"
-            onClick={() => setIsToolsOpen(true)}
-            className="h-8 gap-1.5 text-xs"
-            data-testid="show-tools"
-            title="Show Capture, Solve, and Pick"
-          >
-            <span>Tools</span>
-            {emptyCatalogSignal && (
-              <span className="rounded-pill bg-amber-100 px-1.5 py-0.5 text-nano font-bold uppercase tracking-wider text-amber-900">
-                {emptyCatalogSignal}
-              </span>
-            )}
-          </Button>
-        )}
-      </div>
-      <div className="flex items-center gap-2">
-        <span className="text-xs text-muted-foreground">
-          {currentSections.length === 0
-            ? "No sections added yet"
-            : formatSectionCount(currentSections.length)}
-        </span>
+          The fold control sits *inside* the cluster rather than before it,
+          which is the only arrangement that satisfies both things at once:
+          eyes travel left to right, so the control that opens the tools is
+          the first thing on the row — and because it is inside, it costs the
+          strip no offset. Put it before the cluster and its own width is
+          exactly how far out of line the tabs fall. */}
+      <div
+        data-testid="tool-cluster"
+        className={
+          isToolsOpen
+            ? "flex w-full shrink-0 items-center gap-1 rounded-panel border border-border bg-muted p-1 lg:w-[400px] xl:w-[480px]"
+            : "flex shrink-0 items-center"
+        }
+      >
         <Button
           type="button"
-          variant="ghost"
+          size="sm"
+          onClick={() => setIsToolsOpen(!isToolsOpen)}
+          className="h-9 shrink-0 gap-2 bg-emerald-700 px-3 text-white hover:bg-emerald-800"
+          data-testid={isToolsOpen ? "hide-tools" : "show-tools"}
+          aria-expanded={isToolsOpen}
+          title={
+            isToolsOpen
+              ? "Hide the tools and give the schedule the whole window"
+              : "Show Capture, Solve, and Pick"
+          }
+        >
+          <Menu className="h-4 w-4" aria-hidden="true" />
+          <span className="sr-only">{isToolsOpen ? "Hide tools" : "Show tools"}</span>
+          {!isToolsOpen && emptyCatalogSignal && (
+            <span className="rounded-pill bg-amber-100 px-1.5 py-0.5 text-nano font-bold uppercase tracking-wider text-amber-900">
+              {emptyCatalogSignal}
+            </span>
+          )}
+        </Button>
+
+        {/* The strip drops its own shell inside the cluster: the cluster is
+            already wearing it, and two nested pills would read as two
+            controls. Rendered only while the panel it selects is on screen. */}
+        {isToolsOpen && (
+        <TabsList
+          className="min-w-0 flex-1 border-0 bg-transparent p-0"
+          data-testid="tool-tabs"
+        >
+          {TOOL_TABS.map((info) => (
+            <TabsTrigger
+              key={info.tab}
+              value={info.tab}
+              title={info.description}
+              data-empty-catalog={
+                info.tab === "capture" && emptyCatalogSignal ? "true" : undefined
+              }
+            >
+              {info.label}
+              {info.tab === "capture" && emptyCatalogSignal && (
+                /* The cost of tabs, paid deliberately: a student on Solve
+                   or Pick can see that the catalog behind Capture is
+                   empty without switching to find out. */
+                <span className="rounded-pill bg-amber-100 px-1.5 py-0.5 text-nano font-bold uppercase tracking-wider text-amber-900">
+                  {emptyCatalogSignal}
+                </span>
+              )}
+            </TabsTrigger>
+          ))}
+        </TabsList>
+        )}
+      </div>
+
+      <h3 className="text-base font-semibold text-foreground">Weekly Schedule</h3>
+
+      <div className="ml-auto flex flex-wrap items-center gap-2">
+        {/* Clear schedule destroys the schedule, so it belongs beside it.
+            It reads as destructive rather than as a ghost: it was quiet
+            enough that students could not find it, and a control nobody
+            can find is not restraint. Outlined and red rather than solid —
+            it is still the rare action on this row, and Export is still
+            the common one. */}
+        <Button
+          type="button"
+          variant="outline"
           size="sm"
           disabled={currentSections.length === 0 || isClearing || isLoading}
           onClick={() => setIsConfirmingClear(true)}
-          className="h-9 text-xs text-muted-foreground hover:text-red-700 hover:bg-red-50"
+          className="h-9 border-red-200 text-xs font-semibold text-red-700 hover:border-red-300 hover:bg-red-50 hover:text-red-800 disabled:border-border disabled:text-muted-foreground"
           data-testid="clear-schedule-button"
           title={
             currentSections.length === 0
@@ -444,56 +614,6 @@ export function PlanWorkspace({
 
   return (
     <div className="mx-auto max-w-7xl px-4 py-6 sm:px-6 lg:px-8 space-y-6">
-      {/* Plan Scoping Banner — Always visible on every screen that operates on it */}
-      <div className="rounded-panel border border-border bg-card p-panel">
-        <div className="flex flex-col md:flex-row md:items-center md:justify-between gap-4">
-          <div>
-            <h2 className="text-2xl font-bold tracking-tight text-foreground">
-              {planSummary.name}
-            </h2>
-            <div className="flex flex-wrap items-center gap-2 mt-2">
-              <span className="text-micro font-semibold text-muted-foreground uppercase tracking-wider">
-                Plan Scope:
-              </span>
-              <Badge variant="campus">{planSummary.campusName}</Badge>
-              <Badge variant="session">{planSummary.sessionName}</Badge>
-            </div>
-          </div>
-
-          {/* Persistent stats and conflict indicator (SPEC §4, ADR-0009).
-              Export lives beside the schedule it exports, in the Weekly
-              Schedule header — one control, not two, and one off-screen
-              export canvas rather than two (ticket 40). */}
-          <div className="flex flex-wrap items-center gap-3">
-            <div className="flex flex-wrap items-center gap-4 text-sm text-muted-foreground bg-muted/60 rounded-card p-3 border border-border">
-              <span className="font-semibold text-foreground">
-                {formatSectionCount(currentSections.length || planSummary.sectionCount)}
-              </span>
-
-              <div className="h-4 w-px bg-border" />
-
-              {/* Persistent conflict count (ADR-0009). The glyph stays: this
-                  is the one thing on the header a student scans for. */}
-              {conflicts.length > 0 ? (
-                <span className="flex items-center gap-1.5 text-red-600 font-semibold">
-                  <AlertTriangle className="h-4 w-4" aria-hidden="true" />
-                  <span>
-                    {conflicts.length} {conflicts.length === 1 ? "conflict" : "conflicts"}
-                  </span>
-                </span>
-              ) : (
-                <span>No conflicts</span>
-              )}
-
-              <div className="h-4 w-px bg-border" />
-
-              <span>Created {new Date(planSummary.createdAt).toLocaleDateString()}</span>
-            </div>
-
-          </div>
-        </div>
-      </div>
-
       {/* Clear Schedule Confirmation Dialog (Ticket 36) */}
       <Dialog open={isConfirmingClear} onOpenChange={setIsConfirmingClear}>
         <DialogContent className="max-w-md p-6" data-testid="clear-schedule-dialog">
@@ -567,8 +687,6 @@ export function PlanWorkspace({
         render="notices"
         campusId={planSummary.campusId}
         sessionId={planSummary.sessionId}
-        campusName={planSummary.campusName}
-        sessionName={planSummary.sessionName}
         summary={captureSummary}
         isLoading={isCaptureLoading}
         error={captureError}
@@ -682,6 +800,16 @@ export function PlanWorkspace({
         onRemoveMissingSection={handleRemoveMissingSection}
       />
 
+      {/* A section already in the plan has acquired an avoided professor on a
+          refresh (ticket 49). Same family as the banner above it, same
+          restraint: it names the section and changes nothing. It belongs out
+          here with the global notices, not inside Capture — a student on
+          Pick needs to see it too (ticket 46). */}
+      <AvoidedProfessorNotice
+        advisories={avoidedProfessorAdvisories}
+        onOpenRanking={openRanking}
+      />
+
       {error && (
         <Alert variant="destructive">
           <AlertTitle className="flex items-center justify-between">
@@ -714,6 +842,40 @@ export function PlanWorkspace({
           positioned `fixed`, and every one of those properties would make an
           ancestor its containing block and silently mis-place it
           (tickets 41, 45). */}
+      {/* The professor ranking drill-down (ticket 49).
+          Ranking is not a fourth tool acting on the grid — it is a place you
+          go and come back from — so it takes the entire workspace width
+          rather than displacing the grid, and ticket 46's rule that the grid
+          sits in the same place on every *tab* survives untouched. */}
+      {rankingCourseId !== null ? (
+        <div
+          data-testid="ranking-drilldown"
+          data-course-id={rankingCourseId}
+          className="w-full min-w-0"
+        >
+          <ProfessorRanking
+            courseCode={rankingCourse?.code ?? `Course ${rankingCourseId}`}
+            courseTitle={rankingCourse?.title ?? ""}
+            entries={ranking.entries}
+            sectionCodesById={ranking.sectionCodesById}
+            isLoading={ranking.isLoading}
+            isSaving={ranking.isSaving}
+            error={ranking.error}
+            onMove={ranking.move}
+            onBack={closeRanking}
+          />
+        </div>
+      ) : (
+      /* One Tabs root spanning the bar and the columns: the strip lives in
+         the bar, the panels in the column, and Radix requires them to share
+         a root to stay wired together. */
+      <Tabs
+        value={activeTab}
+        onValueChange={handleTabChange}
+        className="space-y-6"
+      >
+      {renderWorkspaceBar()}
+
       <div
         data-testid="workspace-columns"
         className="flex flex-col lg:flex-row items-start gap-6"
@@ -725,8 +887,6 @@ export function PlanWorkspace({
             isToolsOpen ? "lg:flex-1 lg:order-2 lg:sticky lg:top-20" : ""
           }`}
         >
-          {renderScheduleHeader()}
-
           {isLoading && !plan && !error ? (
             /* The shape of a week is known, so the skeleton draws it. */
             <WeekGrid sections={[]} isLoading interactive={false} />
@@ -764,56 +924,24 @@ export function PlanWorkspace({
           data-testid="tool-panel"
           className="w-full lg:w-[400px] xl:w-[480px] lg:shrink-0 min-w-0 order-2 lg:order-1 flex flex-col lg:max-h-[calc(100vh-14rem)]"
         >
-          <Tabs
-            value={activeTab}
-            onValueChange={handleTabChange}
+          <div
             /* `flex-1 min-h-0` is what actually makes the bound bite: without
-               it the tabs size to their content and overflow the panel
+               it the panels size to their content and overflow the panel
                instead of handing the overflow to the scroll region below. */
             className="flex min-h-0 flex-1 flex-col"
           >
-            {/* Tab strip and the fold control share a row: folding is a
-                property of the panel, so it sits on the panel's own chrome. */}
-            <div className="flex shrink-0 items-center gap-2">
-            <TabsList className="min-w-0 flex-1">
-              {TOOL_TABS.map((info) => (
-                <TabsTrigger
-                  key={info.tab}
-                  value={info.tab}
-                  title={info.description}
-                  data-empty-catalog={
-                    info.tab === "capture" && emptyCatalogSignal ? "true" : undefined
-                  }
-                >
-                  {info.label}
-                  {info.tab === "capture" && emptyCatalogSignal && (
-                    /* The cost of tabs, paid deliberately: a student on Solve
-                       or Pick can see that the catalog behind Capture is
-                       empty without switching to find out. */
-                    <span className="rounded-pill bg-amber-100 px-1.5 py-0.5 text-nano font-bold uppercase tracking-wider text-amber-900">
-                      {emptyCatalogSignal}
-                    </span>
-                  )}
-                </TabsTrigger>
-              ))}
-            </TabsList>
-
-            <Button
-              type="button"
-              variant="ghost"
-              size="sm"
-              onClick={() => setIsToolsOpen(false)}
-              className="h-9 shrink-0 px-2 text-xs text-muted-foreground hover:text-foreground"
-              data-testid="hide-tools"
-              title="Hide the tools and give the schedule the whole window"
-            >
-              Hide
-            </Button>
-            </div>
-
             <div
               data-testid="tool-panel-scroll"
-              className="min-h-0 flex-1 lg:overflow-y-auto lg:pr-1"
+              ref={(node) => {
+                toolScrollRef.current = node;
+                if (node && savedToolScrollRef.current > 0) {
+                  node.scrollTop = savedToolScrollRef.current;
+                }
+                if (node && savedWindowScrollRef.current > 0 && typeof window !== "undefined") {
+                  window.scrollTo(0, savedWindowScrollRef.current);
+                }
+              }}
+              className="min-h-0 flex-1 lg:overflow-y-auto"
             >
             {/* Capture: the arrival surface. The way in, and what came in. */}
             <TabsContent value="capture" className="space-y-4">
@@ -821,8 +949,6 @@ export function PlanWorkspace({
                 render="controls"
                 campusId={planSummary.campusId}
                 sessionId={planSummary.sessionId}
-                campusName={planSummary.campusName}
-                sessionName={planSummary.sessionName}
                 summary={captureSummary}
                 isLoading={isCaptureLoading}
                 error={captureError}
@@ -843,6 +969,7 @@ export function PlanWorkspace({
                 isLoading={isLoadingCourses}
                 isMutating={isMutating}
                 onBrowseCourse={browseCourse}
+                onRankProfessors={openRanking}
                 onSetIncluded={handleSetCourseIncluded}
                 onRemoveCourse={handleRemoveCourse}
               />
@@ -856,6 +983,11 @@ export function PlanWorkspace({
                 onTogglePin={handleTogglePin}
                 selectedSolutionId={previewSelection?.solution.id ?? null}
                 onSelectSolution={setPreviewSelection}
+                preferenceSummary={preferenceSummary}
+                onOpenPreferences={() => {
+                  setActiveTab("capture");
+                  setIsToolsOpen(true);
+                }}
                 onPlanUpdated={(updatedPlan) => {
                   onPlanUpdated?.(updatedPlan);
                   onRetry();
@@ -888,10 +1020,12 @@ export function PlanWorkspace({
               />
             </TabsContent>
             </div>
-          </Tabs>
+          </div>
         </div>
         )}
       </div>
+      </Tabs>
+      )}
     </div>
   );
 }

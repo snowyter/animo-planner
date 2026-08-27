@@ -30,6 +30,12 @@ export interface CapturedCatalogProps {
   now?: Date;
   isMutating?: boolean;
   onBrowseCourse?: (courseId: number) => void;
+  /**
+   * Opens the professor ranking for this course (ticket 49). It is entered
+   * from here because this is where the per-course data already lives, and
+   * where the professor names come from.
+   */
+  onRankProfessors?: (courseId: number) => void;
   onSetIncluded?: (courseId: number, included: boolean) => void;
   onRemoveCourse?: (courseId: number) => void;
 }
@@ -40,6 +46,7 @@ export function CapturedCatalog({
   now,
   isMutating = false,
   onBrowseCourse,
+  onRankProfessors,
   onSetIncluded,
   onRemoveCourse,
 }: CapturedCatalogProps) {
@@ -143,6 +150,20 @@ export function CapturedCatalog({
                     title={`Browse ${course.code} in the Pick tab`}
                   >
                     Browse
+                  </Button>
+                )}
+
+                {onRankProfessors && (
+                  <Button
+                    type="button"
+                    variant="ghost"
+                    size="sm"
+                    onClick={() => onRankProfessors(course.courseId)}
+                    className="h-7 px-2 text-micro text-muted-foreground hover:text-foreground"
+                    data-testid={`rank-professors-${course.courseId}`}
+                    title={`Rank the professors of ${course.code}`}
+                  >
+                    Professors
                   </Button>
                 )}
 

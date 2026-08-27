@@ -26,6 +26,9 @@ vi.mock("../adapters/ipc/client", () => ({
   applySolution: vi.fn(),
   onCaptureUpdated: vi.fn().mockResolvedValue(() => {}),
   onCaptureFailed: vi.fn().mockResolvedValue(() => {}),
+  listRankableProfessors: vi.fn().mockResolvedValue([]),
+  getCoursePreferences: vi.fn().mockResolvedValue([]),
+  writeCoursePreferences: vi.fn().mockResolvedValue([]),
 }));
 
 describe("PlanWorkspace", () => {
@@ -101,12 +104,12 @@ describe("PlanWorkspace", () => {
     latestSnapshot: {
       capturedAt: "2026-08-22T00:00:00Z",
       enrolled: 42,
-      teacher: "Prof X",
+      professor: "Prof X",
       remark: null,
     },
   });
 
-  it("always visibly displays the plan's campus and session", () => {
+  it("does not repeat the identity the app header already carries", () => {
     const html = renderToStaticMarkup(
       React.createElement(PlanWorkspace, {
         planSummary: mockPlanSummary,
@@ -118,9 +121,11 @@ describe("PlanWorkspace", () => {
       })
     );
 
-    expect(html).toContain("Manila");
-    expect(html).toContain("AY2026-27 T1");
-    expect(html).toContain("T1 Target Schedule");
+    // The plan banner used to restate the name and scope directly under the
+    // app header, which shows both on every screen. Two cards saying the
+    // same thing pushed the grid below the fold to pay for it.
+    expect(html).not.toContain("Plan Scope:");
+    expect(html).not.toContain("T1 Target Schedule");
   });
 
   it("surfaces identifiable error state when getPlan fails with unimplemented", () => {
@@ -204,7 +209,7 @@ describe("PlanWorkspace", () => {
     expect(html).toContain("1 conflict");
   });
 
-  it("displays 0 conflicts or clear status when plan sections have no conflicts", () => {
+  it("shows a conflict-free plan without claiming a conflict anywhere", () => {
     const sectionA = makeSection(
       2923,
       384,
@@ -231,7 +236,13 @@ describe("PlanWorkspace", () => {
     );
 
     expect(html).toContain("GEARTAP");
-    expect(html).toContain("No conflicts");
+    // The persistent "No conflicts" chip is gone from the bar. Conflict is
+    // still computed and displayed, on the artifact itself (ADR-0009): the
+    // grid hatches overlapping blocks and rings them red, and nothing here
+    // may report a conflict that does not exist.
+    expect(html).not.toContain("No conflicts");
+    expect(html).toContain('data-conflicting="false"');
+    expect(html).not.toContain('data-conflicting="true"');
   });
 
   it("renders the capture bar with open Archer's Hub button and credential disclaimer", () => {
@@ -912,7 +923,7 @@ describe("PlanWorkspace persistent week grid layout (ticket 28)", () => {
       latestSnapshot: {
         capturedAt: "2026-08-22T00:00:00Z",
         enrolled: 42,
-        teacher: "Prof X",
+        professor: "Prof X",
         remark: null,
       },
     };
@@ -1009,7 +1020,7 @@ describe("PlanWorkspace persistent week grid layout (ticket 28)", () => {
       latestSnapshot: {
         capturedAt: "2026-08-22T00:00:00Z",
         enrolled: 42,
-        teacher: "Prof X",
+        professor: "Prof X",
         remark: null,
       },
     };
@@ -1035,7 +1046,7 @@ describe("PlanWorkspace persistent week grid layout (ticket 28)", () => {
       latestSnapshot: {
         capturedAt: "2026-08-22T00:00:00Z",
         enrolled: 30,
-        teacher: "Prof Y",
+        professor: "Prof Y",
         remark: null,
       },
     };
@@ -1096,7 +1107,7 @@ describe("the tool panel and the permanent week grid", () => {
     latestSnapshot: {
       capturedAt: "2026-08-22T00:00:00Z",
       enrolled: 42,
-      teacher: "Prof X",
+      professor: "Prof X",
       remark: null,
     },
   };
@@ -1260,13 +1271,122 @@ describe("the tool panel and the permanent week grid", () => {
       }
     });
 
-    it("keeps the plan header above both regions, untabbed", () => {
+    it("leads the row with the tool cluster, fold control first inside it", () => {
       const html = render();
-      const header = html.indexOf("T1 Target Schedule");
+      const bar = html.slice(
+        html.indexOf('data-testid="workspace-bar"'),
+        html.indexOf('data-testid="workspace-columns"')
+      );
+
+      const cluster = bar.indexOf('data-testid="tool-cluster"');
+      const fold = bar.indexOf('data-testid="hide-tools"');
+      const tabs = bar.indexOf('data-testid="tool-tabs"');
+      const title = bar.indexOf("Weekly Schedule");
+
+      // Eyes travel left to right, so the control that opens the tools is
+      // the first thing on the row. It sits *inside* the cluster, which is
+      // what lets it be first without costing the tabs their alignment:
+      // anything before the cluster offsets it by exactly its own width.
+      expect(cluster).toBeGreaterThan(-1);
+      expect(fold).toBeGreaterThan(cluster);
+      expect(tabs).toBeGreaterThan(fold);
+      expect(title).toBeGreaterThan(tabs);
+    });
+
+    it("puts nothing before the cluster, so its left edge is the panel's", () => {
+      const html = render();
+      const bar = html.slice(
+        html.indexOf('data-testid="workspace-bar"'),
+        html.indexOf('data-testid="workspace-columns"')
+      );
+      const opening = /<div[^>]*data-testid="workspace-bar"[^>]*>/.exec(html);
+
+      // The tool panel starts at the column's left edge. Anything rendered
+      // between the bar's own opening tag and the cluster pushes the cluster
+      // out of line with it — which is the bug this guards.
+      const between = bar.slice(
+        opening![0].length,
+        bar.indexOf('data-testid="tool-cluster"')
+      );
+      expect(between).not.toMatch(/<(div|button|span|h3)\b/);
+    });
+
+    it("gives the bar no padding of its own, so the strip can sit flush", () => {
+      const html = render();
+      const bar = /<div[^>]*data-testid="workspace-bar"[^>]*>/.exec(html);
+
+      expect(bar, "the bar must render").not.toBeNull();
+      // A card's padding is the offset that broke the alignment once.
+      expect(bar![0]).not.toMatch(/\bp-\d|\bpx-\d|\bpl-\d/);
+    });
+
+    it("sizes the tool cluster to the panel it sits over", () => {
+      // `TabsList` is `w-full` by default. Left at that it stretched across
+      // the whole bar and pushed the title onto a row of its own, which is
+      // the opposite of sitting over the column it drives. The width now
+      // lives on the cluster, which is the thing that has to line up.
+      const html = render();
+      const cluster = /<div[^>]*data-testid="tool-cluster"[^>]*>/.exec(html);
+      const panel = /<div[^>]*data-testid="tool-panel"[^>]*>/.exec(html);
+
+      expect(cluster, "the tool cluster must render").not.toBeNull();
+      expect(panel, "the tool panel must render").not.toBeNull();
+
+      const width = /lg:w-\[(\d+)px\]/.exec(panel![0]);
+      expect(width, "the panel must have a fixed column width").not.toBeNull();
+      expect(cluster![0]).toContain(`lg:w-[${width![1]}px]`);
+    });
+
+    it("aligns Weekly Schedule to the grid column when tools are open", () => {
+      const openHtml = render({ initialToolsOpen: true });
+      const openBar = /<div[^>]*data-testid="workspace-bar"[^>]*>/.exec(openHtml);
+      expect(openBar![0]).toContain("gap-x-6");
+
+      const closedHtml = render({ initialToolsOpen: false });
+      const closedBar = /<div[^>]*data-testid="workspace-bar"[^>]*>/.exec(closedHtml);
+      expect(closedBar![0]).toContain("gap-x-4");
+    });
+
+    it("keeps panel scroll area flush so cards align with the tool cluster", () => {
+      const html = render({ initialToolsOpen: true });
+      const scrollArea = /<div[^>]*data-testid="tool-panel-scroll"[^>]*>/.exec(html);
+      expect(scrollArea, "tool-panel-scroll must render").not.toBeNull();
+      expect(scrollArea![0]).not.toContain("lg:pr-1");
+    });
+
+    it("shows no tab strip while the tools are folded away", () => {
+      // A tab strip selecting a panel that is not on screen is a control
+      // that controls nothing.
+      const html = render({ initialToolsOpen: false });
+
+      expect(html).toContain('data-testid="show-tools"');
+      expect(html).not.toContain('data-testid="tool-tabs"');
+      expect(html).not.toContain('role="tablist"');
+    });
+
+    it("carries no counts, no conflict chip, and no creation date", () => {
+      const html = render();
+
+      // Asked for directly: the bar is for acting on the schedule, and the
+      // status line it used to carry was read once and then ignored. The
+      // grid still shows conflicts where they happen (ADR-0009).
+      expect(html.match(/No sections added yet/g)).toBeNull();
+      expect(html).not.toContain("No conflicts");
+      expect(html).not.toContain("Created ");
+    });
+
+  it("keeps one bar above both regions, carrying the tabs", () => {
+      const html = render();
+      const bar = html.indexOf('data-testid="workspace-bar"');
+      const columns = html.indexOf('data-testid="workspace-columns"');
       const tablist = html.indexOf('role="tablist"');
 
-      expect(header).toBeGreaterThan(-1);
-      expect(tablist).toBeGreaterThan(header);
+      expect(bar).toBeGreaterThan(-1);
+      // One bar, above the workspace, holding the tabs — not a tab strip
+      // buried in the panel with a redundant plan card stacked over it.
+      expect(columns).toBeGreaterThan(bar);
+      expect(tablist).toBeGreaterThan(bar);
+      expect(tablist).toBeLessThan(columns);
     });
 
     it("gives the grid the larger share of a two-column row from lg", () => {
@@ -1590,7 +1710,10 @@ describe("the tool panel and the permanent week grid", () => {
         html
       );
       expect(show, "a folded panel must say how to unfold it").not.toBeNull();
-      expect(show![0]).toMatch(/Tools/);
+      // The control is a hamburger, so the name it is announced by has to
+      // live in text rather than in the glyph.
+      expect(show![0]).toMatch(/Show tools/);
+      expect(show![0]).toMatch(/aria-expanded="false"/);
     });
 
     it("offers the way to fold them again once they are open", () => {
@@ -1665,15 +1788,16 @@ describe("the tool panel and the permanent week grid", () => {
       expect(html.match(/data-testid="export-wrapper"/g)).toHaveLength(1);
     });
 
-    it("keeps it in the schedule header, not up in the plan banner", () => {
+    it("sits in the workspace bar, beside the schedule it exports", () => {
       const html = render();
-      const planBanner = html.slice(0, html.indexOf('data-testid="workspace-columns"'));
-
-      expect(planBanner).toContain("Plan Scope:");
-      expect(planBanner, "the plan banner carries identity and counts, not actions").not.toContain(
-        "Export"
+      const bar = html.slice(
+        html.indexOf('data-testid="workspace-bar"'),
+        html.indexOf('data-testid="workspace-columns"')
       );
-      expect(html.indexOf("Export")).toBeGreaterThan(html.indexOf("Weekly Schedule"));
+
+      expect(bar).toContain("Weekly Schedule");
+      expect(bar).toContain("Export");
+      expect(bar.indexOf("Export")).toBeGreaterThan(bar.indexOf("Weekly Schedule"));
     });
   });
 
@@ -1732,3 +1856,160 @@ describe("PlanWorkspace plan-mutating handlers reload the plan", () => {
   });
 });
 
+/**
+ * Ticket 49 — ranking the professors of a course.
+ *
+ * The suite renders to static markup, so the drill-down and the preferences
+ * behind it are drivable from props, the way `initialTab` and
+ * `initialToolsOpen` already are.
+ */
+describe("PlanWorkspace professor preferences", () => {
+  const planSummary: PlanSummary = {
+    id: "p1",
+    name: "T1 Target Schedule",
+    campusId: 7,
+    campusName: "Manila",
+    sessionId: 155,
+    sessionName: "AY2026-27 T1",
+    createdAt: "2026-08-22T00:00:00Z",
+    sectionCount: 1,
+  };
+
+  const avoidedSection: PlanSection = {
+    courseId: 2923,
+    courseCode: "GEARTAP",
+    courseTitle: "Art Appreciation",
+    sectionId: 384,
+    sectionCode: "S17",
+    pinned: false,
+    missing: false,
+    modality: "F2F",
+    blocks: [
+      { day: "MON", startMin: 450, endMin: 540, modality: "F2F", location: "L226" },
+    ],
+    latestSnapshot: {
+      capturedAt: "2026-08-27T00:00:00Z",
+      enrolled: 40,
+      professor: "Bryant Lee",
+      remark: null,
+    },
+  };
+
+  const avoidedPreferences = new Map([
+    [
+      2923,
+      [
+        {
+          professorKey: "bryant lee",
+          displayName: "Bryant Lee",
+          rank: null,
+          avoid: true,
+          active: true,
+        },
+      ],
+    ],
+  ]);
+
+  const render = (props: Record<string, unknown> = {}) =>
+    renderToStaticMarkup(
+      React.createElement(PlanWorkspace, {
+        planSummary,
+        plan: { ...planSummary, sections: [avoidedSection] },
+        isLoading: false,
+        error: null,
+        initialToolsOpen: true,
+        onBack: vi.fn(),
+        onRetry: vi.fn(),
+        ...props,
+      })
+    );
+
+  beforeEach(() => {
+    vi.clearAllMocks();
+    vi.mocked(client.getCaptureSummary).mockResolvedValue({
+      campusId: 7,
+      sessionId: 155,
+      sectionCount: 42,
+      courseCount: 8,
+    });
+    vi.mocked(client.onCaptureUpdated).mockResolvedValue(() => {});
+    vi.mocked(client.onCaptureFailed).mockResolvedValue(() => {});
+  });
+
+  describe("the drill-down", () => {
+    it("takes the entire workspace width, and the two-column region gives way to it", () => {
+      const html = render({ initialRankingCourseId: 2923 });
+
+      expect(html).toContain('data-testid="ranking-drilldown"');
+      expect(html).toContain('data-testid="professor-ranking"');
+      expect(html).not.toContain('data-testid="workspace-columns"');
+    });
+
+    it("is inline in the workspace, not a screen and not a dialog", () => {
+      const html = render({ initialRankingCourseId: 2923 });
+
+      expect(html).toContain('data-testid="ranking-drilldown"');
+      expect(html).not.toContain('role="dialog"');
+      // The schedule's own controls do not follow you into the ranking:
+      // Clear schedule and Export act on the week grid, which is not on
+      // screen. The app header still says which plan you are inside.
+      expect(html).not.toContain('data-testid="workspace-bar"');
+      expect(html).not.toContain('data-testid="clear-schedule-button"');
+    });
+
+    it("offers the explicit way back to the Capture tab", () => {
+      const html = render({ initialRankingCourseId: 2923 });
+
+      expect(html).toContain('data-testid="professor-ranking-back"');
+    });
+
+    it("is not open unless it was drilled into", () => {
+      const html = render();
+
+      expect(html).not.toContain('data-testid="ranking-drilldown"');
+      expect(html).toContain('data-testid="workspace-columns"');
+    });
+  });
+
+  describe("the advisory notice", () => {
+    it("names the section and the professor it has acquired, from any tab", () => {
+      for (const initialTab of ["capture", "solve", "pick"]) {
+        const html = render({
+          initialTab,
+          initialPreferencesByCourse: avoidedPreferences,
+        });
+
+        expect(
+          html,
+          `the advisory must be visible from the ${initialTab} tab`
+        ).toContain('data-testid="avoided-professor-notice"');
+        expect(html).toContain("GEARTAP S17");
+        expect(html).toContain("Bryant Lee");
+      }
+    });
+
+    it("sits outside the tabs, above the two regions", () => {
+      const html = render({ initialPreferencesByCourse: avoidedPreferences });
+
+      expect(html.indexOf('data-testid="avoided-professor-notice"')).toBeLessThan(
+        html.indexOf('data-testid="workspace-columns"')
+      );
+    });
+
+    it("stays silent when no plan section carries an avoided professor", () => {
+      expect(render()).not.toContain('data-testid="avoided-professor-notice"');
+    });
+  });
+
+  describe("the Priority control", () => {
+    it("reaches the Solve panel with the summary of what has been said", () => {
+      const html = render({
+        initialTab: "solve",
+        initialPreferencesByCourse: avoidedPreferences,
+      });
+
+      expect(html).toContain('data-testid="solve-priority"');
+      expect(html).toContain("0 courses ranked · 1 professor avoided");
+    });
+  });
+});

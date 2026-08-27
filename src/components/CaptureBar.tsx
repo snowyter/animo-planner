@@ -3,7 +3,6 @@ import { ExternalLink } from "lucide-react";
 // `motion/react-m` carries only `m`, so the feature bundle stays splittable.
 import * as m from "motion/react-m";
 import { Button } from "./ui/button";
-import { Badge } from "./ui/badge";
 import { Alert, AlertTitle, AlertDescription } from "./ui/alert";
 import type { CaptureSummary } from "../adapters/ipc/types";
 import { formatCaptureCounter } from "../core/capture";
@@ -11,8 +10,6 @@ import { formatCaptureCounter } from "../core/capture";
 export interface CaptureBarProps {
   campusId: number;
   sessionId: number;
-  campusName: string;
-  sessionName: string;
   summary: CaptureSummary | null;
   isLoading: boolean;
   error: string | null;
@@ -59,8 +56,6 @@ function CaptureCounter({ text }: { text: string }) {
 }
 
 export function CaptureBar({
-  campusName,
-  sessionName,
   summary,
   isLoading,
   error,
@@ -144,14 +139,10 @@ export function CaptureBar({
       <div className="rounded-panel border border-border bg-card p-4 space-y-4">
         {/* Scope & plain privacy disclaimer (ADR-0002) */}
         <div className="space-y-1.5 min-w-0">
-          <div className="flex flex-wrap items-center gap-2">
-            <span className="text-sm font-bold text-foreground">
-              Capture Sections
-            </span>
-            <Badge variant="outline" className="font-normal text-muted-foreground">
-              {campusName} • {sessionName}
-            </Badge>
-          </div>
+          {/* No scope chip: the app header names the campus and the term on
+              every screen, and repeating them here crowded the heading of
+              the panel a student spends the most time in. */}
+          <span className="text-sm font-bold text-foreground">Capture Sections</span>
           <p className="text-xs text-muted-foreground leading-relaxed">
             You will sign in directly on De La Salle University&#39;s Archer&#39;s Hub portal.
             Animo Plan never stores your credentials. Captures update silently.

@@ -40,14 +40,14 @@ export interface SectionRef {
 }
 
 /**
- * Point-in-time reading of a section's mutable values. `teacher: null` means
+ * Point-in-time reading of a section's mutable values. `professor: null` means
  * *unknown* — never "not this professor"; no filter may treat it as a
  * mismatch. `remark` is opaque and never parsed or branched on.
  */
 export interface Snapshot {
   capturedAt: string;
   enrolled: number;
-  teacher: string | null;
+  professor: string | null;
   remark: string | null;
 }
 
@@ -284,6 +284,29 @@ export interface CaptureReport {
   title: string;
   body: string;
   issueUrl: string;
+}
+
+/**
+ * A professor who can be ranked for a course: keyed, de-duplicated, with the
+ * sections they appear on in the latest snapshots.
+ */
+export interface RankableProfessor {
+  key: string;
+  displayName: string;
+  sectionIds: number[];
+}
+
+/**
+ * A stored professor preference for a course: either a rank or an avoid,
+ * never both (enforced by CHECK in the schema).
+ */
+export interface ProfessorPreference {
+  professorKey: string;
+  displayName: string;
+  rank: number | null;
+  avoid: boolean;
+  /** Whether this professor still appears on the latest snapshots. */
+  active: boolean;
 }
 
 export type UpdateCheckStatus =

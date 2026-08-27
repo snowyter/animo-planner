@@ -16,4 +16,5 @@ pub mod scoring;
 pub mod scrub;
 pub mod selector_config;
 pub mod solver;
+pub mod professors;
 pub mod update_check;

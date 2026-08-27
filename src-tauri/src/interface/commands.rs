@@ -207,6 +207,35 @@ pub struct BuildCaptureReportArgs {
     pub error: String,
 }
 
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ProfessorPreferencesArgs {
+    pub campus_id: i64,
+    pub session_id: i64,
+    pub course_id: i64,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct WriteProfessorPreferencesArgs {
+    pub campus_id: i64,
+    pub session_id: i64,
+    pub course_id: i64,
+    pub ranked: Vec<ProfessorEntry>,
+    pub avoided: Vec<ProfessorEntry>,
+}
+
+/// One professor named in a preference write, ranked or avoided alike: the
+/// normalized key the preference is stored under, and the verbatim name the
+/// student sees. Both lists carry the name — the key is case-folded, so it
+/// is never fit to display.
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ProfessorEntry {
+    pub key: String,
+    pub display_name: String,
+}
+
 /// Shared cancellation flag for the solve commands: `cancel_solve` sets it,
 /// a starting solve clears it, and a finishing chunk reports
 /// [`SolveStatus::Cancelled`] when it saw the flag set.
@@ -710,6 +739,7 @@ fn begin_solve(store: &Store, args: &SolvePlanArgs) -> Result<(Solver, Option<St
             section_code: section.section_code.clone(),
             blocks: section.blocks.clone(),
             pinned: section.pinned,
+            professor: section.latest_snapshot.professor.clone(),
         })
         .collect();
     let catalog = store.solver_courses(&scope).map_err(|err| err.to_string())?;
@@ -762,6 +792,7 @@ fn finish_outcome(
         resume_token,
         unsatisfiable_courses: outcome.unsatisfiable_courses,
         excluded_full_count: outcome.excluded_full_count,
+        excluded_avoided_count: outcome.excluded_avoided_count,
         snapshot_taken_at,
     }
 }
@@ -1017,6 +1048,73 @@ pub fn build_capture_report(
     )
 }
 
+// ---------- commands: professor preferences (ticket 47) ----------
+
+#[tauri::command]
+pub fn list_rankable_professors(
+    args: ProfessorPreferencesArgs,
+    store: tauri::State<'_, StoreHandle>,
+) -> Result<Vec<RankableProfessor>, String> {
+    let store = store.lock().unwrap_or_else(|poisoned| poisoned.into_inner());
+    store
+        .rankable_professors(
+            &CaptureScope {
+                campus_id: args.campus_id,
+                session_id: args.session_id,
+            },
+            args.course_id,
+        )
+        .map_err(|err| err.to_string())
+}
+
+#[tauri::command]
+pub fn get_course_preferences(
+    args: ProfessorPreferencesArgs,
+    store: tauri::State<'_, StoreHandle>,
+) -> Result<Vec<ProfessorPreference>, String> {
+    let store = store.lock().unwrap_or_else(|poisoned| poisoned.into_inner());
+    store
+        .course_preferences(
+            &CaptureScope {
+                campus_id: args.campus_id,
+                session_id: args.session_id,
+            },
+            args.course_id,
+        )
+        .map_err(|err| err.to_string())
+}
+
+#[tauri::command]
+pub fn write_course_preferences(
+    args: WriteProfessorPreferencesArgs,
+    store: tauri::State<'_, StoreHandle>,
+) -> Result<Vec<ProfessorPreference>, String> {
+    let mut store = store.lock().unwrap_or_else(|poisoned| poisoned.into_inner());
+    let scope = CaptureScope {
+        campus_id: args.campus_id,
+        session_id: args.session_id,
+    };
+    let ranked: Vec<(String, String)> = args
+        .ranked
+        .iter()
+        .map(|r| (r.key.clone(), r.display_name.clone()))
+        .collect();
+    // Avoided professors carry a display name for the same reason ranked ones
+    // do: the key is case-folded, and the student must see the name they
+    // avoided, not its normalization.
+    let avoided: Vec<(String, String)> = args
+        .avoided
+        .iter()
+        .map(|r| (r.key.clone(), r.display_name.clone()))
+        .collect();
+    store
+        .write_course_preferences(&scope, args.course_id, &ranked, &avoided)
+        .map_err(|err| err.to_string())?;
+    store
+        .course_preferences(&scope, args.course_id)
+        .map_err(|err| err.to_string())
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -1049,7 +1147,7 @@ mod tests {
             credits: Some(3.0),
             enroll_cap: Some(45),
             enrolled: Some(20),
-            teacher: None,
+            professor: None,
             remark: None,
             start_date: None,
             end_date: None,
@@ -1333,8 +1431,8 @@ mod tests {
         assert_eq!(sections[0].blocks.len(), 1);
         assert_eq!(sections[0].blocks[0].modality, BlockModality::Online);
         assert_eq!(
-            sections[0].latest_snapshot.teacher, None,
-            "a blank teacher crosses the seam as unknown"
+            sections[0].latest_snapshot.professor, None,
+            "a blank professor crosses the seam as unknown"
         );
 
         let other_term = list_captured_courses_impl(
@@ -1420,6 +1518,8 @@ mod tests {
             latest_end_min: None,
             exclude_full: true,
             result_limit: 12,
+            priority: Priority::default(),
+            professor_preferences: vec![],
         }
     }
 
@@ -1706,6 +1806,8 @@ mod tests {
             latest_end_min: None,
             exclude_full: false,
             result_limit: 12,
+            priority: Priority::default(),
+            professor_preferences: vec![],
         }
     }
 
@@ -1892,7 +1994,7 @@ mod tests {
                             }],
                             enrolled: None,
                             enroll_cap: None,
-                            teacher: None,
+                            professor: None,
                         })
                         .collect(),
                 }
@@ -1946,5 +2048,75 @@ mod tests {
         let complete = fresh.run();
         let result = finish_outcome(complete, "p1", false, None);
         assert_eq!(result.status, SolveStatus::Complete);
+    }
+
+    // ---------- professor preferences seam (ticket 47) ----------
+
+    #[test]
+    fn list_rankable_professors_crosses_the_seam_with_keyed_and_deduplicated_professors() {
+        let mut store = seeded_store();
+        // Add professors to the captured sections.
+        store.record_capture(
+            &CaptureScope { campus_id: 7, session_id: 155 },
+            &[
+                {
+                    let mut s = parsed_section(2923, 384, "S01", vec![block(Day::Mon, 450)]);
+                    s.professor = Some("Bryant Lee".into());
+                    s
+                },
+                {
+                    let mut s = parsed_section(2923, 385, "S02", vec![block(Day::Tue, 570)]);
+                    s.professor = Some("BRYANT LEE".into());
+                    s
+                },
+            ],
+            T1,
+        ).expect("capture with professors");
+
+        let professors = store.rankable_professors(
+            &CaptureScope { campus_id: 7, session_id: 155 },
+            2923,
+        ).expect("rankable");
+        assert_eq!(professors.len(), 1, "same key deduplicates");
+        assert_eq!(professors[0].key, "bryant lee");
+        assert_eq!(professors[0].display_name, "Bryant Lee");
+        assert_eq!(professors[0].section_ids, vec![384, 385]);
+    }
+
+    #[test]
+    fn write_and_read_course_preferences_round_trip_through_the_store() {
+        let mut store = seeded_store();
+        store.record_capture(
+            &CaptureScope { campus_id: 7, session_id: 155 },
+            &[
+                {
+                    let mut s = parsed_section(2923, 384, "S01", vec![block(Day::Mon, 450)]);
+                    s.professor = Some("Bryant Lee".into());
+                    s
+                },
+                {
+                    let mut s = parsed_section(2923, 385, "S02", vec![block(Day::Tue, 570)]);
+                    s.professor = Some("Other Professor".into());
+                    s
+                },
+            ],
+            T1,
+        ).expect("capture with professors");
+
+        let scope = CaptureScope { campus_id: 7, session_id: 155 };
+        store.write_course_preferences(
+            &scope, 2923,
+            &[("bryant lee".into(), "Bryant Lee".into())],
+            &[("other professor".into(), "Other Professor".into())],
+        ).expect("write prefs");
+
+        let prefs = store.course_preferences(&scope, 2923).expect("read prefs");
+        assert_eq!(prefs.len(), 2);
+        let ranked = prefs.iter().find(|p| p.professor_key == "bryant lee").expect("ranked");
+        assert_eq!(ranked.rank, Some(1));
+        assert!(!ranked.avoid);
+        let avoided = prefs.iter().find(|p| p.professor_key == "other professor").expect("avoided");
+        assert_eq!(avoided.rank, None);
+        assert!(avoided.avoid);
     }
 }

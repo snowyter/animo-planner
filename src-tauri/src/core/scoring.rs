@@ -24,9 +24,10 @@
 //!   derivable and differ — an underivable building is never "different".
 
 use crate::core::ipc_types::{
-    BlockModality, Day, Preset, ScoreComponent, SectionRef, SolutionSection, TransitionWarning,
-    WarningKind,
+    BlockModality, Day, Preset, Priority, ScoreComponent, SectionRef, SolutionSection,
+    ProfessorPreferenceEntry, TransitionWarning, WarningKind,
 };
+use crate::core::professors::professor_key;
 use serde::{Deserialize, Serialize};
 
 /// The result of one evaluation pass: a total score, the components that sum
@@ -37,6 +38,9 @@ pub struct Evaluation {
     pub score: f64,
     pub breakdown: Vec<ScoreComponent>,
     pub warnings: Vec<TransitionWarning>,
+    /// Professor preference score, used for sorting under Professors and Hybrid
+    /// priorities. Zero under Schedule priority or when no preferences exist.
+    pub professor_score: f64,
 }
 
 /// The gap, in minutes, at or below which two consecutive blocks on the same
@@ -51,6 +55,13 @@ const CLASS_LENGTH_MIN: i64 = 90;
 /// Weight of the lone-F2F-day penalty, applied under every preset. Small
 /// enough that no preset's primary objective is ever overturned by it.
 const LONE_F2F_DAY_WEIGHT: f64 = 0.1;
+
+/// Weight of the professor preference term in Hybrid priority mode.
+/// Calibrated so that one course's rank-1 professor (1.0 points) is worth
+/// roughly one campus day (1.0 points under FewestCampusDays). A student
+/// who ranks one professor per course and takes four courses on campus gets
+/// about the same benefit from Professors as from one fewer campus day.
+const HYBRID_PROFESSOR_WEIGHT: f64 = 1.0;
 
 /// Index of a day within the Mon–Sat week, for ordering and tallies.
 pub(crate) fn day_index(day: Day) -> usize {
@@ -263,15 +274,130 @@ fn score_components(stats: &Stats, preset: Preset) -> (f64, Vec<ScoreComponent>)
     (score, components)
 }
 
+/// The professor preference score for one section, on a 1/rank curve.
+/// Unranked scores 0. Blank scores 0. (ticket 48, ADR-0021).
+fn professor_score_for_section(
+    course_id: i64,
+    professor: &Option<String>,
+    preferences: &[ProfessorPreferenceEntry],
+) -> f64 {
+    let Some(ref professor_name) = professor else {
+        return 0.0; // blank professor scores 0
+    };
+    // One normalization for the whole app: a second copy here could drift
+    // from the one the store keys preferences on, and that failure would be
+    // silent — a preference that quietly stops matching.
+    let Some(key) = professor_key(professor_name) else {
+        return 0.0; // whitespace-only is blank, and blank scores 0
+    };
+    // Find the rank for this professor in this course's preferences.
+    let rank = preferences.iter().find_map(|pref| {
+        if pref.course_id == course_id && !pref.avoid && pref.professor_key == key {
+            pref.rank
+        } else {
+            None
+        }
+    });
+    match rank {
+        Some(r) if r > 0 => 1.0 / r as f64,
+        _ => 0.0, // unranked scores 0
+    }
+}
+
+/// Total professor preference score across all courses, capped at 1.0 per
+/// course. A course contributes at most one professor's points (the section
+/// that was actually chosen), because a student takes one section of it.
+/// `display_weight` scales the *component*, never the returned score: the
+/// score is the raw per-course total that the lexicographic sort key reads,
+/// and the component is what the student sees in the breakdown, which must
+/// equal what actually entered `Evaluation::score`.
+fn professor_score_total(
+    sections: &[SolutionSection],
+    preferences: &[ProfessorPreferenceEntry],
+    display_weight: f64,
+) -> (f64, Vec<ScoreComponent>) {
+    if preferences.is_empty() {
+        return (0.0, vec![]);
+    }
+    // Per course, take the max professor score (there's only one section
+    // per course in a solution, but we cap at 1.0 per course anyway).
+    let mut course_scores: std::collections::HashMap<i64, f64> = std::collections::HashMap::new();
+    for section in sections {
+        let score = professor_score_for_section(
+            section.course_id,
+            &section.professor,
+            preferences,
+        );
+        course_scores
+            .entry(section.course_id)
+            .and_modify(|e| *e = (*e).max(score))
+            .or_insert(score);
+    }
+    let total: f64 = course_scores.values().sum();
+    let components = if total > 0.0 {
+        vec![component("Professor preference", total * display_weight)]
+    } else {
+        vec![]
+    };
+    (total, components)
+}
+
 /// Scores one complete plan under a preset and finds its advisory warnings,
 /// both in a single pass over the sorted schedule blocks.
 pub fn evaluate(sections: &[SolutionSection], preset: Preset) -> Evaluation {
+    evaluate_with_professor_prefs(sections, preset, Priority::Schedule, &[])
+}
+
+/// Scores one complete plan under a preset and priority with professor
+/// preferences, finding advisory warnings in a single pass.
+pub fn evaluate_with_professor_prefs(
+    sections: &[SolutionSection],
+    preset: Preset,
+    priority: Priority,
+    professor_preferences: &[ProfessorPreferenceEntry],
+) -> Evaluation {
     let (stats, warnings) = analyze(sections);
-    let (score, breakdown) = score_components(&stats, preset);
+    let (preset_score, mut breakdown) = score_components(&stats, preset);
+
+    let (professor_score, professor_components) = match priority {
+        Priority::Schedule => {
+            // Schedule is bit-for-bit today's behaviour: professor
+            // preferences are completely invisible (ADR-0021).
+            (0.0, vec![])
+        }
+        Priority::Professors => professor_score_total(sections, professor_preferences, 1.0),
+        // Under Hybrid the professor term enters `score` weighted, so the
+        // component has to carry the weighted points or the breakdown
+        // would stop summing to the score the moment the weight is tuned
+        // away from 1.0.
+        Priority::Hybrid => {
+            professor_score_total(sections, professor_preferences, HYBRID_PROFESSOR_WEIGHT)
+        }
+    };
+    breakdown.extend(professor_components);
+
+    let score = match priority {
+        Priority::Schedule => preset_score,
+        Priority::Professors => {
+            // Under Professors priority, the professor score is the primary
+            // key and the preset score is only a tiebreak. The heap key
+            // handles the sorting; the score field carries the preset
+            // for the tiebreak.
+            preset_score
+        }
+        Priority::Hybrid => {
+            // Hybrid: weighted sum of preset and professor scores.
+            // HYBRID_PROFESSOR_WEIGHT is calibrated so one course's rank-1
+            // professor is worth roughly one campus day.
+            preset_score + professor_score * HYBRID_PROFESSOR_WEIGHT
+        }
+    };
+
     Evaluation {
         score,
         breakdown,
         warnings,
+        professor_score,
     }
 }
 
@@ -319,6 +445,7 @@ mod tests {
             section_code: format!("S{section_id}"),
             pinned: false,
             blocks,
+            professor: None,
         }
     }
 
@@ -498,6 +625,95 @@ mod tests {
                 "the breakdown must sum to the score under {preset:?}: {evaluation:?}"
             );
         }
+    }
+
+    #[test]
+    fn the_breakdown_sums_to_the_score_under_hybrid_priority() {
+        // Hybrid adds `professor_score * HYBRID_PROFESSOR_WEIGHT` to the score,
+        // so the component must carry the *weighted* points. With the weight
+        // at 1.0 an unweighted component would pass by coincidence; this
+        // asserts the relationship, not the current constant.
+        let mut taught = section(1, 1, vec![f2f(Day::Mon, 450, 540, "L226")]);
+        taught.professor = Some("Bryant Lee".into());
+        let sections = vec![taught, section(2, 2, vec![online(Day::Tue, 450, 540)])];
+        let prefs = vec![ProfessorPreferenceEntry {
+            course_id: 1,
+            professor_key: "bryant lee".into(),
+            rank: Some(1),
+            avoid: false,
+        }];
+
+        for preset in [
+            Preset::FewestCampusDays,
+            Preset::NoEarlyMornings,
+            Preset::MostOnline,
+        ] {
+            let evaluation =
+                evaluate_with_professor_prefs(&sections, preset, Priority::Hybrid, &prefs);
+            let sum: f64 = evaluation.breakdown.iter().map(|c| c.points).sum();
+            assert!(
+                (evaluation.score - sum).abs() < 1e-9,
+                "the breakdown must sum to the score under Hybrid/{preset:?}: {evaluation:?}"
+            );
+            assert_eq!(
+                points(&evaluation.breakdown, "Professor preference"),
+                evaluation.professor_score * HYBRID_PROFESSOR_WEIGHT,
+                "the component must be the weighted contribution"
+            );
+        }
+    }
+
+    #[test]
+    fn under_professors_priority_the_score_stays_the_preset_total() {
+        // Professors is lexicographic (ADR-0021): the professor score is the
+        // primary sort key, carried on `professor_score`, and `score` remains
+        // the preset total that breaks ties. The professor component is still
+        // shown, so this is the one priority where the breakdown is not a
+        // sum of the score — deliberately, and pinned here so nobody
+        // "fixes" it into a weighted total and silently breaks the sort.
+        let mut taught = section(1, 1, vec![f2f(Day::Mon, 450, 540, "L226")]);
+        taught.professor = Some("Bryant Lee".into());
+        let sections = vec![taught];
+        let prefs = vec![ProfessorPreferenceEntry {
+            course_id: 1,
+            professor_key: "bryant lee".into(),
+            rank: Some(1),
+            avoid: false,
+        }];
+
+        let with_professors = evaluate_with_professor_prefs(
+            &sections,
+            Preset::FewestCampusDays,
+            Priority::Professors,
+            &prefs,
+        );
+        let baseline = evaluate(&sections, Preset::FewestCampusDays);
+
+        assert_eq!(with_professors.score, baseline.score, "score is the preset total");
+        assert_eq!(with_professors.professor_score, 1.0, "rank 1 scores 1.0");
+        assert_eq!(points(&with_professors.breakdown, "Professor preference"), 1.0);
+    }
+
+    #[test]
+    fn a_whitespace_only_professor_scores_zero_like_a_blank_one() {
+        // `core::professors::professor_key` has no key for a whitespace-only
+        // name, and unknown is never a demerit (CONTEXT.md).
+        let mut blank = section(1, 1, vec![f2f(Day::Mon, 450, 540, "L226")]);
+        blank.professor = Some("   ".into());
+        let prefs = vec![ProfessorPreferenceEntry {
+            course_id: 1,
+            professor_key: "bryant lee".into(),
+            rank: Some(1),
+            avoid: false,
+        }];
+
+        let evaluation = evaluate_with_professor_prefs(
+            &[blank],
+            Preset::FewestCampusDays,
+            Priority::Professors,
+            &prefs,
+        );
+        assert_eq!(evaluation.professor_score, 0.0);
     }
 
     #[test]

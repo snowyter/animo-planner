@@ -205,7 +205,7 @@ describe("core/solver", () => {
       latestSnapshot: {
         capturedAt: "2026-08-22T00:00:00Z",
         enrolled: 30,
-        teacher: null,
+        professor: null,
         remark: null,
       },
     });
@@ -367,7 +367,7 @@ describe("previewing a solution on the week grid", () => {
     latestSnapshot: {
       capturedAt: "2026-08-22T00:00:00Z",
       enrolled: 42,
-      teacher: "Prof X",
+      professor: "Prof X",
       remark: null,
     },
   };

@@ -89,7 +89,7 @@ const planSection: PlanSection = {
   latestSnapshot: {
     capturedAt: "2026-08-22T00:00:00Z",
     enrolled: 42,
-    teacher: "",
+    professor: "",
     remark: null,
   },
 };
@@ -542,7 +542,7 @@ describe("Clear schedule sits with the thing it clears", () => {
     })
   );
 
-  it("lives in the Weekly Schedule header, not in the plan banner", () => {
+  it("lives in the workspace bar, beside the schedule it clears", () => {
     const scheduleHeading = html.indexOf("Weekly Schedule");
     const clearButton = html.indexOf('data-testid="clear-schedule-button"');
 
@@ -551,12 +551,16 @@ describe("Clear schedule sits with the thing it clears", () => {
     // A destructive action belongs beside the artifact it destroys, where the
     // student can see what they are about to lose.
     expect(clearButton).toBeGreaterThan(scheduleHeading);
+  });
 
-    // And no longer up in the plan-scope banner, which now carries only the
-    // plan's identity, its counts, and Export.
-    const planBanner = html.indexOf("Plan Scope:");
-    expect(planBanner).toBeGreaterThan(-1);
-    expect(clearButton).toBeGreaterThan(planBanner);
+  it("reads as destructive rather than as a ghost", () => {
+    // It was quiet enough that students could not find it. A control nobody
+    // can find is not restraint.
+    const button = /<button[^>]*data-testid="clear-schedule-button"[^>]*>/.exec(html);
+
+    expect(button, "the clear control must render").not.toBeNull();
+    expect(button![0]).toMatch(/text-red-700/);
+    expect(button![0]).toMatch(/border-red-200/);
   });
 
   it("appears exactly once", () => {
@@ -616,7 +620,7 @@ describe("the section row says what it collides with", () => {
     latestSnapshot: {
       capturedAt: "2026-08-22T00:00:00Z",
       enrolled: 45,
-      teacher: null,
+      professor: null,
       remark: null,
     },
   });
@@ -640,7 +644,7 @@ describe("the section row says what it collides with", () => {
     latestSnapshot: {
       capturedAt: "2026-08-22T00:00:00Z",
       enrolled: 45,
-      teacher: null,
+      professor: null,
       remark: null,
     },
   });

@@ -6,14 +6,14 @@ import type { PlanSection, ScheduleBlock } from "../adapters/ipc/types";
 import { findConflicts } from "../core/conflicts";
 
 describe("WeekGrid component", () => {
-  // The teacher lives on the latest snapshot and appeared nowhere on the grid,
+  // The professor lives on the latest snapshot and appeared nowhere on the grid,
   // so choosing between two sections of one course meant leaving it.
-  it("names the teacher in a block's hover tooltip", () => {
+  it("names the professor in a block's hover tooltip", () => {
     const tip = blockTooltip(
       {
         courseCode: "CSOPESY",
         sectionCode: "S01",
-        latestSnapshot: { capturedAt: "", enrolled: 37, teacher: "Gregory Cu", remark: null },
+        latestSnapshot: { capturedAt: "", enrolled: 37, professor: "Gregory Cu", remark: null },
       } as never,
       { day: "TUE", startMin: 555, endMin: 645, location: "G207", modality: "F2F" } as never,
       { isF2F: true, isGhost: false, isMissing: false }
@@ -24,19 +24,19 @@ describe("WeekGrid component", () => {
     expect(tip).toContain("37");
   });
 
-  // A blank teacher is unknown, never absent and never a dash (CONTEXT.md).
-  it("reads a blank teacher as unknown rather than omitting it", () => {
+  // A blank professor is unknown, never absent and never a dash (CONTEXT.md).
+  it("reads a blank professor as unknown rather than omitting it", () => {
     const tip = blockTooltip(
       {
         courseCode: "CSOPESY",
         sectionCode: "S01",
-        latestSnapshot: { capturedAt: "", enrolled: 0, teacher: null, remark: null },
+        latestSnapshot: { capturedAt: "", enrolled: 0, professor: null, remark: null },
       } as never,
       { day: "TUE", startMin: 555, endMin: 645, location: null, modality: "ONLINE" } as never,
       { isF2F: false, isGhost: false, isMissing: false }
     );
 
-    expect(tip).toContain("Teacher: Unknown");
+    expect(tip).toContain("Professor: Unknown");
   });
 
   const makeBlock = (
@@ -90,7 +90,7 @@ describe("WeekGrid component", () => {
     latestSnapshot: {
       capturedAt: "2026-08-22T00:00:00Z",
       enrolled,
-      teacher: "Prof X",
+      professor: "Prof X",
       remark: null,
     },
     enrollCap,
@@ -750,7 +750,7 @@ describe("WeekGrid component", () => {
       expect(html).not.toContain('data-testid="grid-context-menu"');
     });
 
-    it("renders Section Details modal with course code, title, section code, blocks, teacher, enrolment, remark and capture age", () => {
+    it("renders Section Details modal with course code, title, section code, blocks, professor, enrolment, remark and capture age", () => {
       const section = makeSection(
         2923,
         384,
@@ -767,7 +767,7 @@ describe("WeekGrid component", () => {
       section.latestSnapshot = {
         capturedAt: "2026-08-22T00:00:00Z",
         enrolled: 42,
-        teacher: "Prof Gregory Cu",
+        professor: "Prof Gregory Cu",
         remark: "Room subject to change",
       };
 
@@ -790,7 +790,7 @@ describe("WeekGrid component", () => {
       expect(html).toContain("Captured");
     });
 
-    it("renders Section Details modal with blank teacher as 'Unknown' (never absent or a dash)", () => {
+    it("renders Section Details modal with blank professor as 'Unknown' (never absent or a dash)", () => {
       const section = makeSection(
         564,
         737,
@@ -804,7 +804,7 @@ describe("WeekGrid component", () => {
       section.latestSnapshot = {
         capturedAt: "2026-08-22T00:00:00Z",
         enrolled: 30,
-        teacher: null,
+        professor: null,
         remark: null,
       };
 
@@ -816,9 +816,9 @@ describe("WeekGrid component", () => {
       );
 
       expect(html).toContain('data-testid="section-details-dialog"');
-      expect(html).toContain("Teacher:");
+      expect(html).toContain("Professor:");
       expect(html).toContain("Unknown");
-      expect(html).not.toContain("Teacher: -");
+      expect(html).not.toContain("Professor: -");
     });
 
     it("renders Conflict Explanation modal describing conflicting section and overlap window", () => {
@@ -897,7 +897,10 @@ describe("WeekGrid component", () => {
       expect(html).toContain('data-testid="grid-context-menu"');
 
       // The menu must render after the grid canvas and day columns, outside the clipping subtree
-      const overflowStartIndex = html.indexOf('class="overflow-x-auto"');
+      // Anchored on the testid, not on an exact class string: the lattice
+      // also fades when the grid is empty, and matching the className meant
+      // this guard broke on a styling change rather than on a real one.
+      const overflowStartIndex = html.indexOf('data-testid="week-grid-lattice"');
       const menuIndex = html.indexOf('data-testid="grid-context-menu"');
       expect(overflowStartIndex).toBeGreaterThan(-1);
       expect(menuIndex).toBeGreaterThan(-1);
@@ -983,6 +986,37 @@ describe("WeekGrid component", () => {
       expect(html).toContain("right-0");
     });
   });
+  describe("the empty grid (ticket 50)", () => {
+    it("fades the lattice back so the empty message carries the screen", () => {
+      const html = renderToStaticMarkup(React.createElement(WeekGrid, { sections: [] }));
+
+      const lattice = /<div[^>]*data-testid="week-grid-lattice"[^>]*>/.exec(html);
+      expect(lattice, "the lattice must render").not.toBeNull();
+      expect(lattice![0]).toMatch(/opacity-40/);
+      expect(html).toContain('data-testid="week-grid-empty"');
+    });
+
+    it("keeps the message itself at full strength, outside the fade", () => {
+      const html = renderToStaticMarkup(React.createElement(WeekGrid, { sections: [] }));
+
+      // Dimming the root would dim the message along with the lattice.
+      const lattice = html.indexOf('data-testid="week-grid-lattice"');
+      const empty = html.indexOf('data-testid="week-grid-empty"');
+      expect(empty).toBeGreaterThan(lattice);
+      expect(html.slice(lattice, empty)).not.toContain("No sections yet");
+    });
+
+    it("does not fade a grid that has sections in it", () => {
+      const section = makeSection(1, 1, "GEARTAP", "S01", [makeBlock("MON", 450, 540)]);
+      const html = renderToStaticMarkup(
+        React.createElement(WeekGrid, { sections: [section] })
+      );
+
+      const lattice = /<div[^>]*data-testid="week-grid-lattice"[^>]*>/.exec(html);
+      expect(lattice![0]).not.toMatch(/opacity-/);
+    });
+  });
+
 });
 
 

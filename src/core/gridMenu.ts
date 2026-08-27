@@ -4,21 +4,21 @@
  */
 
 import type { Conflict, Day, PlanSection, ScheduleBlock, Section } from "../adapters/ipc/types";
-import { formatTeacher } from "./section";
+import { formatProfessor } from "./section";
 import { formatMinutesToTime12 } from "./grid";
 
 /**
  * Formats full section details as clean plain text for pasting into group chat.
  */
 export function formatSectionCopyText(section: PlanSection | Section): string {
-  const teacher = formatTeacher(section.latestSnapshot?.teacher);
+  const professor = formatProfessor(section.latestSnapshot?.professor);
   const enrolled = section.latestSnapshot?.enrolled;
   const enrollCap = "enrollCap" in section ? (section.enrollCap as number | undefined) : undefined;
   const remark = section.latestSnapshot?.remark;
 
   const lines: string[] = [
     `${section.courseCode} ${section.sectionCode} — ${section.courseTitle}`,
-    `Teacher: ${teacher}`,
+    `Professor: ${professor}`,
     "Schedule:",
   ];
 
