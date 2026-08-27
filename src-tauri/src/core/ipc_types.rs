@@ -413,6 +413,31 @@ pub struct CaptureReport {
     pub issue_url: String,
 }
 
+/// A teacher who can be ranked for a course: keyed, de-duplicated, with the
+/// sections they appear on in the latest snapshots.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct RankableTeacher {
+    pub key: String,
+    pub display_name: String,
+    pub section_ids: Vec<i64>,
+}
+
+/// A stored teacher preference for a course: either a rank or an avoid,
+/// never both (enforced by CHECK in the schema).
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct TeacherPreference {
+    pub teacher_key: String,
+    pub display_name: String,
+    pub rank: Option<i64>,
+    pub avoid: bool,
+    /// Whether this teacher still appears on the latest snapshots of the
+    /// course's sections. An inactive preference is kept and shown, but
+    /// scores nothing.
+    pub active: bool,
+}
+
 #[cfg(test)]
 mod tests {
 

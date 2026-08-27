@@ -33,12 +33,14 @@ import type {
   Plan,
   PlanSummary,
   Preset,
+  RankableTeacher,
   RefreshOutcome,
   RefreshProgress,
   Section,
   SectionRef,
   SessionOption,
   SolveResult,
+  TeacherPreference,
   UpdateCheck,
 } from "./types";
 
@@ -242,6 +244,49 @@ export function exportPlanIcs(args: { planId: string }): Promise<IcsExport> {
  */
 export function buildCaptureReport(args: { error: string }): Promise<CaptureReport> {
   return invoke("build_capture_report", { args });
+}
+
+// Teacher preferences (ticket 47)
+
+/**
+ * Returns the distinct teachers on the latest snapshot of each of a course's
+ * sections, keyed and de-duplicated. A blank teacher has no key and never
+ * appears.
+ */
+export function listRankableTeachers(args: {
+  campusId: number;
+  sessionId: number;
+  courseId: number;
+}): Promise<RankableTeacher[]> {
+  return invoke("list_rankable_teachers", { args });
+}
+
+/**
+ * Returns a course's stored preferences, including entries whose teacher no
+ * longer appears in the latest-snapshot set. Those are inactive: kept,
+ * returned, flagged (`active: false`), and scoring nothing.
+ */
+export function getCoursePreferences(args: {
+  campusId: number;
+  sessionId: number;
+  courseId: number;
+}): Promise<TeacherPreference[]> {
+  return invoke("get_course_preferences", { args });
+}
+
+/**
+ * Replaces a course's preferences in one call. `ranked` is an ordered list
+ * of `{ key, displayName }`; `avoided` is a list of teacher keys. Returns
+ * the updated preferences.
+ */
+export function writeCoursePreferences(args: {
+  campusId: number;
+  sessionId: number;
+  courseId: number;
+  ranked: { key: string; displayName: string }[];
+  avoided: string[];
+}): Promise<TeacherPreference[]> {
+  return invoke("write_course_preferences", { args });
 }
 
 // Updates (ticket 38 — headless; the student decides, nothing installs itself)
