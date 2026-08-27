@@ -29,6 +29,7 @@ The scaffold shipped React + Vite only. `SPEC.md` §7 calls for **Tailwind + sha
 | Radix primitives behind individual shadcn components | `@radix-ui/react-*`, as each copied component requires | 06+ |
 | PNG export of the week grid | `html-to-image` | 22 |
 | Animation for the visual revision | `motion` | 33 |
+| Drag-and-drop for the teacher ranking | `@dnd-kit/core`, `@dnd-kit/sortable` | 49 |
 
 **`motion` is approved for ticket 33 and only there** — decided by a human, who asked for an app that
 feels modern *and* lightweight. Both halves are the decision. It must be used as `LazyMotion` plus the
@@ -36,6 +37,19 @@ feels modern *and* lightweight. Both halves are the decision. It must be used as
 a fade; `MotionConfig reducedMotion="user"` is the single reduced-motion pattern; and it must not put a
 per-element animation on repeated elements — the week grid holds ~40 blocks and the section list ~42
 cards. A later ticket wanting it elsewhere is a new question, not a precedent.
+
+**`@dnd-kit/core` + `@dnd-kit/sortable` are approved for ticket 49 and only there.** The teacher
+ranking is one list read in three zones, and dragging between them is the whole gesture vocabulary of
+the surface — including demoting an avoided teacher back to neutral, which has to cost one move.
+dnd-kit animates with its own CSS transforms, which is what makes the drag both smooth and cheap, so
+**`motion` must not be used here**: it is approved for ticket 33 alone. Three conditions come with the
+approval. The **keyboard sensor is wired and is a first-class path**, not a fallback, with correct
+list roles and a live region announcing every move. **Reduced motion stays handled once at the root**
+— dnd-kit's inline transition is a `transition-duration`, which `App.css` already overrides, and no
+component may reach for `prefers-reduced-motion` itself. And the **drag transform stays on the row**:
+a `transform` on an ancestor of the workspace becomes the containing block for the week grid's
+`position: fixed` context menu, which is the bug tickets 41 and 45 both were. A later ticket wanting
+dnd-kit elsewhere is a new question, not a precedent.
 
 **shadcn components are copied into the repo, not pulled at runtime** (`SPEC.md` §7). Ticket 06 sets up Tailwind and the shadcn init; later UI tickets copy in only the components they use.
 
