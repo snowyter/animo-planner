@@ -204,6 +204,29 @@ pub enum Preset {
     MostOnline,
 }
 
+/// How heavily teacher preferences weigh against the schedule preset.
+/// Orthogonal to `Preset`: every priority composes with every preset.
+/// `Schedule` is bit-for-bit today's behaviour (ADR-0021).
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum Priority {
+    #[default]
+    Schedule,
+    Teachers,
+    Hybrid,
+}
+
+/// A teacher preference for one course, passed into the solver.
+/// Either a rank (1-based, lower is better) or an avoid flag, never both.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct TeacherPreferenceEntry {
+    pub course_id: i64,
+    pub teacher_key: String,
+    pub rank: Option<i64>,
+    pub avoid: bool,
+}
+
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct SolveOptions {
@@ -218,6 +241,10 @@ pub struct SolveOptions {
     pub exclude_full: bool,
     #[serde(default = "default_result_limit")]
     pub result_limit: usize,
+    #[serde(default)]
+    pub priority: Priority,
+    #[serde(default)]
+    pub teacher_preferences: Vec<TeacherPreferenceEntry>,
 }
 
 fn default_result_limit() -> usize {
@@ -240,6 +267,11 @@ pub struct SolutionSection {
     pub section_code: String,
     pub pinned: bool,
     pub blocks: Vec<ScheduleBlock>,
+    /// The teacher on this section's latest snapshot, if known.
+    /// Carried so scoring can compute teacher preference points.
+    /// `None` means unknown — never a demerit (ticket 48).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub teacher: Option<String>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -303,6 +335,7 @@ pub enum SolveStatus {
 pub enum UnsatisfiableReason {
     NoValidSection,
     AllSectionsFull,
+    AllSectionsAvoided,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -326,6 +359,9 @@ pub struct SolveResult {
     /// Surfaced so the student can see the constraint working and turn it
     /// off when the numbers look stale.
     pub excluded_full_count: usize,
+    /// How many sections the avoid-teacher constraint removed (ticket 48).
+    /// Surfaced so the student can see the constraint working.
+    pub excluded_avoided_count: usize,
     /// The latest snapshot timestamp of the plan's scope (ticket 34) — how
     /// old the enrolment numbers behind any exclusion are. `None` when
     /// nothing is captured in the scope yet.
@@ -539,6 +575,7 @@ mod tests {
             resume_token: Some("tok".into()),
             unsatisfiable_courses: vec![],
             excluded_full_count: 3,
+            excluded_avoided_count: 2,
             snapshot_taken_at: Some("2026-08-22T10:00:00Z".into()),
         };
         let json = serde_json::to_value(&result).unwrap();

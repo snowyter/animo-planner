@@ -1065,6 +1065,7 @@ impl Store {
                 section_code,
                 blocks: read_wire_blocks(&self.conn, section_fk)?,
                 pinned,
+                teacher: None, // teacher is read from snapshots, not the plan
             });
         }
         Ok(fixed)
