@@ -128,9 +128,6 @@ export function CapturedCatalog({
                   >
                     {course.code}
                   </span>
-                  <span className="text-xs text-muted-foreground truncate">
-                    {course.title}
-                  </span>
                 </div>
                 <div className="text-nano text-muted-foreground mt-0.5">
                   {course.sectionCount}{" "}

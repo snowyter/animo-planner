@@ -36,9 +36,10 @@ describe("CapturedCatalog", () => {
     );
 
     expect(html).toContain("GEARTAP");
-    expect(html).toContain("Art Appreciation");
+    expect(html).not.toContain("Art Appreciation");
     expect(html).toContain("42 sections");
     expect(html).toContain("CSINTSY");
+    expect(html).not.toContain("Introduction to Intelligent Systems");
     expect(html).toContain("5 sections");
   });
 
