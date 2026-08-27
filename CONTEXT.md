@@ -48,6 +48,13 @@ Two acts write a course. A **capture** is the student searching it in Course Fin
 **Snapshot**:
 A point-in-time reading of a section's mutable values — enrolment count, teacher, remark. Appended on every capture, never overwritten, because the change over time is itself information.
 
+**Teacher**:
+The person named in a section's Teacher column. Lives on the snapshot, not the section, because it is mutable and often blank at capture time. The app's only word for this: never *professor*, *prof*, *instructor*, or *faculty*.
+_Avoid_: professor, prof, instructor, faculty
+
+**Teacher key**:
+The normalized form of a teacher name — trimmed, case-folded, inner whitespace collapsed — and the only thing a ranking is ever keyed on. The verbatim name is what gets displayed; the key is what gets compared, so a change in the site's capitalisation never splits one teacher into two.
+
 **Time lattice**:
 The seven observed 90-minute start times (07:30, 09:15, 11:00, 12:45, 14:30, 16:15, 18:00). A layout convenience for the week grid, never a parsing assumption.
 
@@ -75,6 +82,18 @@ A day carrying at least one F2F block. The unit that `minimize-campus-days` coun
 **Preset**:
 One of the three named ranking strategies — fewest campus days, no early mornings, most online — that scores and sorts solve results.
 
+**Teacher ranking**:
+A student's ordered preference among the teachers of **one course** — rank 1 is most wanted. Always per course, because the preference is a comparison between the teachers competing for the same slot, and a student takes exactly one section of a course. A teacher absent from the ranking is neither wanted nor avoided. An entry whose teacher has stopped appearing on the course's latest snapshots goes **inactive** — kept and shown, but scoring nothing — because a preference is the student's work and is never silently discarded.
+_Avoid_: professor ranking, prof list, favourites
+
+**Avoided teacher**:
+A teacher whose sections a student refuses, for one course. A hard filter on candidates, in the same family as `exclude-full`: it removes sections and must say so out loud when it empties a course. **Never applies to a blank teacher.**
+_Avoid_: blocked, banned, blacklisted (blacklist is the day constraint's word)
+
+**Priority**:
+How heavily a teacher ranking weighs against the ranking preset — schedule, teachers, or hybrid. A second axis, orthogonal to **Preset**: every priority composes with every preset, and the schedule priority is exactly today's behaviour.
+_Avoid_: mode, strategy, weight
+
 **Selector config**:
 The JSON of DOM selectors and parse rules the capture path depends on, fetched at startup with a bundled fallback.
 
@@ -93,7 +112,7 @@ Things that must always be true. Most of these are the subject of an ADR; violat
 - **Sections are never hard-deleted.** A section that stops appearing is flagged, never removed.
 - **A plan may legally hold conflicting sections.** Conflict is reported, never enforced.
 - **The solver only ever emits conflict-free sets.** Any conflict in a plan is user-authored.
-- **A blank teacher means unknown, never "not this professor".** No filter may treat it as a mismatch.
+- **A blank teacher means unknown, never "not this teacher".** No filter may treat it as a mismatch, and no ranking may treat it as a demerit: a section with an unknown teacher survives every avoid list and scores as neutral, never as worst.
 - **`remark` is stored and displayed verbatim.** Never parsed, never branched on.
 - **The week is Mon–Sat**, not Mon–Fri.
 - **Hue encodes course identity only.** Never modality.
