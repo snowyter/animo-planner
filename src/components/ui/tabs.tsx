@@ -7,9 +7,16 @@
  * for exactly this (`docs/agents/dependencies.md`).
  *
  * Styling stays inside the design system (ticket 33): tokens from `App.css`,
- * no new per-component scale. A selected tab is chrome and is drawn in the
- * neutral palette — hue on this screen encodes course identity and nothing
- * else (ADR-0012).
+ * no new per-component scale.
+ *
+ * The selected tab is filled with the app's action green, the same green as
+ * the fold control beside it and as `Open Archer's Hub` and `Add to Plan`.
+ * ADR-0012 gives the hue channel to course identity, but it is scoped to the
+ * *grid's blocks* — the four attributes it arbitrates between are all section
+ * properties. Chrome above the grid is not competing for that channel. What
+ * the rule does still demand is that a tab never read as data, so the fill is
+ * flat and saturated where a block's tint is pale: nobody will mistake this
+ * row for a course.
  */
 
 import * as React from "react";
@@ -46,7 +53,8 @@ const TabsTrigger = React.forwardRef<
       "text-xs font-semibold text-muted-foreground cursor-pointer select-none whitespace-nowrap",
       "focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-1",
       "disabled:pointer-events-none disabled:opacity-50",
-      "data-[state=active]:bg-card data-[state=active]:text-foreground data-[state=active]:shadow-flat",
+      "data-[state=active]:bg-emerald-700 data-[state=active]:text-white data-[state=active]:shadow-flat",
+      "hover:text-foreground data-[state=active]:hover:text-white",
       className
     )}
     {...props}

@@ -109,7 +109,7 @@ describe("PlanWorkspace", () => {
     },
   });
 
-  it("always visibly displays the plan's campus and session", () => {
+  it("does not repeat the identity the app header already carries", () => {
     const html = renderToStaticMarkup(
       React.createElement(PlanWorkspace, {
         planSummary: mockPlanSummary,
@@ -121,9 +121,11 @@ describe("PlanWorkspace", () => {
       })
     );
 
-    expect(html).toContain("Manila");
-    expect(html).toContain("AY2026-27 T1");
-    expect(html).toContain("T1 Target Schedule");
+    // The plan banner used to restate the name and scope directly under the
+    // app header, which shows both on every screen. Two cards saying the
+    // same thing pushed the grid below the fold to pay for it.
+    expect(html).not.toContain("Plan Scope:");
+    expect(html).not.toContain("T1 Target Schedule");
   });
 
   it("surfaces identifiable error state when getPlan fails with unimplemented", () => {
@@ -1263,13 +1265,58 @@ describe("the tool panel and the permanent week grid", () => {
       }
     });
 
-    it("keeps the plan header above both regions, untabbed", () => {
+    it("puts the fold control and the tabs over the panel, the title over the grid", () => {
       const html = render();
-      const header = html.indexOf("T1 Target Schedule");
+      const bar = html.slice(
+        html.indexOf('data-testid="workspace-bar"'),
+        html.indexOf('data-testid="workspace-columns"')
+      );
+
+      // The bar mirrors the two columns beneath it, so the controls sit over
+      // the thing they drive rather than in an arbitrary row order.
+      const fold = bar.indexOf('data-testid="hide-tools"');
+      const tabs = bar.indexOf('data-testid="tool-tabs"');
+      const title = bar.indexOf("Weekly Schedule");
+
+      expect(fold).toBeGreaterThan(-1);
+      expect(tabs).toBeGreaterThan(fold);
+      expect(title).toBeGreaterThan(tabs);
+    });
+
+    it("shows no tab strip while the tools are folded away", () => {
+      // A tab strip selecting a panel that is not on screen is a control
+      // that controls nothing.
+      const html = render({ initialToolsOpen: false });
+
+      expect(html).toContain('data-testid="show-tools"');
+      expect(html).not.toContain('data-testid="tool-tabs"');
+      expect(html).not.toContain('role="tablist"');
+    });
+
+    it("carries the plan's counts once, in the bar", () => {
+      const html = render();
+      const bar = html.slice(
+        html.indexOf('data-testid="workspace-bar"'),
+        html.indexOf('data-testid="workspace-columns"')
+      );
+
+      expect(bar).toContain("No conflicts");
+      // Merging the two bars put the section count on the same row twice.
+      expect(html.match(/No sections added yet/g)).toBeNull();
+    });
+
+  it("keeps one bar above both regions, carrying the tabs", () => {
+      const html = render();
+      const bar = html.indexOf('data-testid="workspace-bar"');
+      const columns = html.indexOf('data-testid="workspace-columns"');
       const tablist = html.indexOf('role="tablist"');
 
-      expect(header).toBeGreaterThan(-1);
-      expect(tablist).toBeGreaterThan(header);
+      expect(bar).toBeGreaterThan(-1);
+      // One bar, above the workspace, holding the tabs — not a tab strip
+      // buried in the panel with a redundant plan card stacked over it.
+      expect(columns).toBeGreaterThan(bar);
+      expect(tablist).toBeGreaterThan(bar);
+      expect(tablist).toBeLessThan(columns);
     });
 
     it("gives the grid the larger share of a two-column row from lg", () => {
@@ -1593,7 +1640,10 @@ describe("the tool panel and the permanent week grid", () => {
         html
       );
       expect(show, "a folded panel must say how to unfold it").not.toBeNull();
-      expect(show![0]).toMatch(/Tools/);
+      // The control is a hamburger, so the name it is announced by has to
+      // live in text rather than in the glyph.
+      expect(show![0]).toMatch(/Show tools/);
+      expect(show![0]).toMatch(/aria-expanded="false"/);
     });
 
     it("offers the way to fold them again once they are open", () => {
@@ -1668,15 +1718,16 @@ describe("the tool panel and the permanent week grid", () => {
       expect(html.match(/data-testid="export-wrapper"/g)).toHaveLength(1);
     });
 
-    it("keeps it in the schedule header, not up in the plan banner", () => {
+    it("sits in the workspace bar, beside the schedule it exports", () => {
       const html = render();
-      const planBanner = html.slice(0, html.indexOf('data-testid="workspace-columns"'));
-
-      expect(planBanner).toContain("Plan Scope:");
-      expect(planBanner, "the plan banner carries identity and counts, not actions").not.toContain(
-        "Export"
+      const bar = html.slice(
+        html.indexOf('data-testid="workspace-bar"'),
+        html.indexOf('data-testid="workspace-columns"')
       );
-      expect(html.indexOf("Export")).toBeGreaterThan(html.indexOf("Weekly Schedule"));
+
+      expect(bar).toContain("Weekly Schedule");
+      expect(bar).toContain("Export");
+      expect(bar.indexOf("Export")).toBeGreaterThan(bar.indexOf("Weekly Schedule"));
     });
   });
 
@@ -1824,12 +1875,16 @@ describe("PlanWorkspace professor preferences", () => {
       expect(html).not.toContain('data-testid="workspace-columns"');
     });
 
-    it("keeps the plan header put — a drill-down inside the workspace, not a screen", () => {
+    it("is inline in the workspace, not a screen and not a dialog", () => {
       const html = render({ initialRankingCourseId: 2923 });
 
-      expect(html).toContain("T1 Target Schedule");
-      expect(html).toContain("Plan Scope:");
+      expect(html).toContain('data-testid="ranking-drilldown"');
       expect(html).not.toContain('role="dialog"');
+      // The schedule's own controls do not follow you into the ranking:
+      // Clear schedule and Export act on the week grid, which is not on
+      // screen. The app header still says which plan you are inside.
+      expect(html).not.toContain('data-testid="workspace-bar"');
+      expect(html).not.toContain('data-testid="clear-schedule-button"');
     });
 
     it("offers the explicit way back to the Capture tab", () => {

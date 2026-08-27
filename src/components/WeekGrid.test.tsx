@@ -897,7 +897,10 @@ describe("WeekGrid component", () => {
       expect(html).toContain('data-testid="grid-context-menu"');
 
       // The menu must render after the grid canvas and day columns, outside the clipping subtree
-      const overflowStartIndex = html.indexOf('class="overflow-x-auto"');
+      // Anchored on the testid, not on an exact class string: the lattice
+      // also fades when the grid is empty, and matching the className meant
+      // this guard broke on a styling change rather than on a real one.
+      const overflowStartIndex = html.indexOf('data-testid="week-grid-lattice"');
       const menuIndex = html.indexOf('data-testid="grid-context-menu"');
       expect(overflowStartIndex).toBeGreaterThan(-1);
       expect(menuIndex).toBeGreaterThan(-1);
@@ -983,6 +986,37 @@ describe("WeekGrid component", () => {
       expect(html).toContain("right-0");
     });
   });
+  describe("the empty grid (ticket 50)", () => {
+    it("fades the lattice back so the empty message carries the screen", () => {
+      const html = renderToStaticMarkup(React.createElement(WeekGrid, { sections: [] }));
+
+      const lattice = /<div[^>]*data-testid="week-grid-lattice"[^>]*>/.exec(html);
+      expect(lattice, "the lattice must render").not.toBeNull();
+      expect(lattice![0]).toMatch(/opacity-40/);
+      expect(html).toContain('data-testid="week-grid-empty"');
+    });
+
+    it("keeps the message itself at full strength, outside the fade", () => {
+      const html = renderToStaticMarkup(React.createElement(WeekGrid, { sections: [] }));
+
+      // Dimming the root would dim the message along with the lattice.
+      const lattice = html.indexOf('data-testid="week-grid-lattice"');
+      const empty = html.indexOf('data-testid="week-grid-empty"');
+      expect(empty).toBeGreaterThan(lattice);
+      expect(html.slice(lattice, empty)).not.toContain("No sections yet");
+    });
+
+    it("does not fade a grid that has sections in it", () => {
+      const section = makeSection(1, 1, "GEARTAP", "S01", [makeBlock("MON", 450, 540)]);
+      const html = renderToStaticMarkup(
+        React.createElement(WeekGrid, { sections: [section] })
+      );
+
+      const lattice = /<div[^>]*data-testid="week-grid-lattice"[^>]*>/.exec(html);
+      expect(lattice![0]).not.toMatch(/opacity-/);
+    });
+  });
+
 });
 
 

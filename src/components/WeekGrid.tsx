@@ -520,8 +520,23 @@ export function WeekGrid({
         </div>
       )}
 
-      {/* Scroll container for smaller viewports */}
-      <div className="overflow-x-auto">
+      {/* Scroll container for smaller viewports.
+          An empty grid fades back so the "No sections yet" card carries the
+          screen. The fade is on the lattice, never on the root — the card
+          sits outside this element and stays at full strength, and dimming
+          the root would dim the message along with everything else.
+          Deliberately opacity and not a tint: a wash of colour would shift
+          the perceived hue of every block that lands here (ADR-0012), and
+          at zero sections there is nothing whose colour can be distorted.
+          `overflow-x-auto` also computes `overflow-y: auto`, so the fade
+          must not become a stacking context that clips the portalled
+          context menu — opacity below 1 creates one, which is why it is
+          applied only while the grid is empty and has no menu to open. */}
+      <div
+        className={isEmpty ? "overflow-x-auto opacity-40" : "overflow-x-auto"}
+        data-testid="week-grid-lattice"
+        aria-hidden={isEmpty ? true : undefined}
+      >
         <div className="min-w-[680px]">
           {/* Day Headers (Mon–Sat) */}
           <div className="grid grid-cols-[70px_repeat(6,1fr)] border-b border-border bg-muted/60 sticky top-0 z-10 text-xs font-semibold text-foreground">

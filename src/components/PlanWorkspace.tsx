@@ -4,10 +4,9 @@ import { useState, useMemo, useRef } from "react";
  * is the single thing a student scans the plan header for. Everything else
  * sat beside a word that already said it.
  */
-import { AlertTriangle } from "lucide-react";
+import { AlertTriangle, Menu } from "lucide-react";
 
 import { Button } from "./ui/button";
-import { Badge } from "./ui/badge";
 import { Alert, AlertTitle, AlertDescription } from "./ui/alert";
 import {
   Dialog,
@@ -488,120 +487,140 @@ export function PlanWorkspace({
   };
 
   /**
-   * The week grid's header, shared by both layouts so they cannot drift.
+   * The one bar above the workspace: the fold control, the tabs, the title,
+   * and the actions that operate on the schedule.
    *
-   * Clear schedule lives here rather than up in the plan banner: it destroys
-   * the schedule, so it belongs beside the schedule, where the student can see
-   * what they are about to lose. It stays visually subordinate to Export — a
-   * ghost button, not an outlined one — because emptying the plan is the rare
-   * action on this row.
+   * It used to be two stacked cards — a plan banner repeating the name and
+   * scope the app header already shows, and a separate schedule toolbar
+   * under it. Two cards, one of them redundant, and the grid pushed below
+   * the fold to pay for them.
+   *
+   * The bar mirrors the two columns beneath it: the fold control and the
+   * tabs sit over the tool panel, the title and the actions over the grid.
+   * The plan's stats ride along on the right because nothing else shows
+   * them any more.
    */
-  const renderScheduleHeader = () => (
-    <div className="flex flex-wrap items-center justify-between gap-3">
-      <div className="flex items-center gap-3">
+  const renderWorkspaceBar = () => (
+    <div
+      data-testid="workspace-bar"
+      className="rounded-panel border border-border bg-card px-4 py-3"
+    >
+      <div className="flex flex-wrap items-center gap-x-4 gap-y-3">
+        {/* The fold control. A hamburger rather than a word: it is the one
+            control on this bar that changes the shape of the workspace, and
+            it has to stay recognisable whether the tools are open or shut. */}
+        <Button
+          type="button"
+          size="sm"
+          onClick={() => setIsToolsOpen(!isToolsOpen)}
+          className="h-9 shrink-0 gap-2 bg-emerald-700 px-3 text-white hover:bg-emerald-800"
+          data-testid={isToolsOpen ? "hide-tools" : "show-tools"}
+          aria-expanded={isToolsOpen}
+          title={
+            isToolsOpen
+              ? "Hide the tools and give the schedule the whole window"
+              : "Show Capture, Solve, and Pick"
+          }
+        >
+          <Menu className="h-4 w-4" aria-hidden="true" />
+          <span className="sr-only">{isToolsOpen ? "Hide tools" : "Show tools"}</span>
+          {!isToolsOpen && emptyCatalogSignal && (
+            <span className="rounded-pill bg-amber-100 px-1.5 py-0.5 text-nano font-bold uppercase tracking-wider text-amber-900">
+              {emptyCatalogSignal}
+            </span>
+          )}
+        </Button>
+
+        {/* The tabs sit here, over the column they drive. Rendered only when
+            the panel they select is on screen — a tab strip pointing at
+            nothing would be a control that does not control anything. */}
+        {isToolsOpen && (
+          <TabsList className="min-w-0 shrink-0" data-testid="tool-tabs">
+            {TOOL_TABS.map((info) => (
+              <TabsTrigger
+                key={info.tab}
+                value={info.tab}
+                title={info.description}
+                data-empty-catalog={
+                  info.tab === "capture" && emptyCatalogSignal ? "true" : undefined
+                }
+              >
+                {info.label}
+                {info.tab === "capture" && emptyCatalogSignal && (
+                  /* The cost of tabs, paid deliberately: a student on Solve
+                     or Pick can see that the catalog behind Capture is
+                     empty without switching to find out. */
+                  <span className="rounded-pill bg-amber-100 px-1.5 py-0.5 text-nano font-bold uppercase tracking-wider text-amber-900">
+                    {emptyCatalogSignal}
+                  </span>
+                )}
+              </TabsTrigger>
+            ))}
+          </TabsList>
+        )}
+
         <h3 className="text-base font-semibold text-foreground">Weekly Schedule</h3>
 
-        {/* Unfolding the tools. Folding hides more than a tab does, so the
-            way back is a named control rather than an edge to find, and it
-            carries the empty-catalog signal the tab strip would have. */}
-        {!isToolsOpen && (
+        <div className="ml-auto flex flex-wrap items-center gap-2">
+          {/* Persistent stats and conflict indicator (SPEC §4, ADR-0009).
+              The section count is here and nowhere else: the toolbar used to
+              carry its own copy, and merging the two bars put the same fact
+              on the same row twice. */}
+          <div className="flex flex-wrap items-center gap-3 rounded-card border border-border bg-muted/60 px-3 py-1.5 text-xs text-muted-foreground">
+            <span className="font-semibold text-foreground">
+              {formatSectionCount(currentSections.length || planSummary.sectionCount)}
+            </span>
+
+            <div className="h-3 w-px bg-border" />
+
+            {/* Persistent conflict count (ADR-0009). The glyph stays: this
+                is the one thing on the bar a student scans for. */}
+            {conflicts.length > 0 ? (
+              <span className="flex items-center gap-1.5 font-semibold text-red-600">
+                <AlertTriangle className="h-3.5 w-3.5" aria-hidden="true" />
+                <span>
+                  {conflicts.length} {conflicts.length === 1 ? "conflict" : "conflicts"}
+                </span>
+              </span>
+            ) : (
+              <span>No conflicts</span>
+            )}
+
+            <div className="h-3 w-px bg-border" />
+
+            <span>Created {new Date(planSummary.createdAt).toLocaleDateString()}</span>
+          </div>
+
+          {/* Clear schedule destroys the schedule, so it belongs beside it.
+              It reads as destructive rather than as a ghost: it was quiet
+              enough that students could not find it, and a control nobody
+              can find is not restraint, it is a defect. Outlined and red
+              rather than solid — it is still the rare action on this row,
+              and Export is still the common one. */}
           <Button
             type="button"
             variant="outline"
             size="sm"
-            onClick={() => setIsToolsOpen(true)}
-            className="h-8 gap-1.5 text-xs"
-            data-testid="show-tools"
-            title="Show Capture, Solve, and Pick"
+            disabled={currentSections.length === 0 || isClearing || isLoading}
+            onClick={() => setIsConfirmingClear(true)}
+            className="h-9 border-red-200 text-xs font-semibold text-red-700 hover:border-red-300 hover:bg-red-50 hover:text-red-800 disabled:border-border disabled:text-muted-foreground"
+            data-testid="clear-schedule-button"
+            title={
+              currentSections.length === 0
+                ? "Plan is empty"
+                : "Clear all sections from schedule"
+            }
           >
-            <span>Tools</span>
-            {emptyCatalogSignal && (
-              <span className="rounded-pill bg-amber-100 px-1.5 py-0.5 text-nano font-bold uppercase tracking-wider text-amber-900">
-                {emptyCatalogSignal}
-              </span>
-            )}
+            Clear schedule
           </Button>
-        )}
-      </div>
-      <div className="flex items-center gap-2">
-        <span className="text-xs text-muted-foreground">
-          {currentSections.length === 0
-            ? "No sections added yet"
-            : formatSectionCount(currentSections.length)}
-        </span>
-        <Button
-          type="button"
-          variant="ghost"
-          size="sm"
-          disabled={currentSections.length === 0 || isClearing || isLoading}
-          onClick={() => setIsConfirmingClear(true)}
-          className="h-9 text-xs text-muted-foreground hover:text-red-700 hover:bg-red-50"
-          data-testid="clear-schedule-button"
-          title={
-            currentSections.length === 0
-              ? "Plan is empty"
-              : "Clear all sections from schedule"
-          }
-        >
-          Clear schedule
-        </Button>
-        <ExportMenu planSummary={planSummary} plan={plan} conflicts={conflicts} />
+          <ExportMenu planSummary={planSummary} plan={plan} conflicts={conflicts} />
+        </div>
       </div>
     </div>
   );
 
   return (
     <div className="mx-auto max-w-7xl px-4 py-6 sm:px-6 lg:px-8 space-y-6">
-      {/* Plan Scoping Banner — Always visible on every screen that operates on it */}
-      <div className="rounded-panel border border-border bg-card p-panel">
-        <div className="flex flex-col md:flex-row md:items-center md:justify-between gap-4">
-          <div>
-            <h2 className="text-2xl font-bold tracking-tight text-foreground">
-              {planSummary.name}
-            </h2>
-            <div className="flex flex-wrap items-center gap-2 mt-2">
-              <span className="text-micro font-semibold text-muted-foreground uppercase tracking-wider">
-                Plan Scope:
-              </span>
-              <Badge variant="campus">{planSummary.campusName}</Badge>
-              <Badge variant="session">{planSummary.sessionName}</Badge>
-            </div>
-          </div>
-
-          {/* Persistent stats and conflict indicator (SPEC §4, ADR-0009).
-              Export lives beside the schedule it exports, in the Weekly
-              Schedule header — one control, not two, and one off-screen
-              export canvas rather than two (ticket 40). */}
-          <div className="flex flex-wrap items-center gap-3">
-            <div className="flex flex-wrap items-center gap-4 text-sm text-muted-foreground bg-muted/60 rounded-card p-3 border border-border">
-              <span className="font-semibold text-foreground">
-                {formatSectionCount(currentSections.length || planSummary.sectionCount)}
-              </span>
-
-              <div className="h-4 w-px bg-border" />
-
-              {/* Persistent conflict count (ADR-0009). The glyph stays: this
-                  is the one thing on the header a student scans for. */}
-              {conflicts.length > 0 ? (
-                <span className="flex items-center gap-1.5 text-red-600 font-semibold">
-                  <AlertTriangle className="h-4 w-4" aria-hidden="true" />
-                  <span>
-                    {conflicts.length} {conflicts.length === 1 ? "conflict" : "conflicts"}
-                  </span>
-                </span>
-              ) : (
-                <span>No conflicts</span>
-              )}
-
-              <div className="h-4 w-px bg-border" />
-
-              <span>Created {new Date(planSummary.createdAt).toLocaleDateString()}</span>
-            </div>
-
-          </div>
-        </div>
-      </div>
-
       {/* Clear Schedule Confirmation Dialog (Ticket 36) */}
       <Dialog open={isConfirmingClear} onOpenChange={setIsConfirmingClear}>
         <DialogContent className="max-w-md p-6" data-testid="clear-schedule-dialog">
@@ -856,6 +875,16 @@ export function PlanWorkspace({
           />
         </div>
       ) : (
+      /* One Tabs root spanning the bar and the columns: the strip lives in
+         the bar, the panels in the column, and Radix requires them to share
+         a root to stay wired together. */
+      <Tabs
+        value={activeTab}
+        onValueChange={handleTabChange}
+        className="space-y-6"
+      >
+      {renderWorkspaceBar()}
+
       <div
         data-testid="workspace-columns"
         className="flex flex-col lg:flex-row items-start gap-6"
@@ -867,8 +896,6 @@ export function PlanWorkspace({
             isToolsOpen ? "lg:flex-1 lg:order-2 lg:sticky lg:top-20" : ""
           }`}
         >
-          {renderScheduleHeader()}
-
           {isLoading && !plan && !error ? (
             /* The shape of a week is known, so the skeleton draws it. */
             <WeekGrid sections={[]} isLoading interactive={false} />
@@ -906,53 +933,12 @@ export function PlanWorkspace({
           data-testid="tool-panel"
           className="w-full lg:w-[400px] xl:w-[480px] lg:shrink-0 min-w-0 order-2 lg:order-1 flex flex-col lg:max-h-[calc(100vh-14rem)]"
         >
-          <Tabs
-            value={activeTab}
-            onValueChange={handleTabChange}
+          <div
             /* `flex-1 min-h-0` is what actually makes the bound bite: without
-               it the tabs size to their content and overflow the panel
+               it the panels size to their content and overflow the panel
                instead of handing the overflow to the scroll region below. */
             className="flex min-h-0 flex-1 flex-col"
           >
-            {/* Tab strip and the fold control share a row: folding is a
-                property of the panel, so it sits on the panel's own chrome. */}
-            <div className="flex shrink-0 items-center gap-2">
-            <TabsList className="min-w-0 flex-1">
-              {TOOL_TABS.map((info) => (
-                <TabsTrigger
-                  key={info.tab}
-                  value={info.tab}
-                  title={info.description}
-                  data-empty-catalog={
-                    info.tab === "capture" && emptyCatalogSignal ? "true" : undefined
-                  }
-                >
-                  {info.label}
-                  {info.tab === "capture" && emptyCatalogSignal && (
-                    /* The cost of tabs, paid deliberately: a student on Solve
-                       or Pick can see that the catalog behind Capture is
-                       empty without switching to find out. */
-                    <span className="rounded-pill bg-amber-100 px-1.5 py-0.5 text-nano font-bold uppercase tracking-wider text-amber-900">
-                      {emptyCatalogSignal}
-                    </span>
-                  )}
-                </TabsTrigger>
-              ))}
-            </TabsList>
-
-            <Button
-              type="button"
-              variant="ghost"
-              size="sm"
-              onClick={() => setIsToolsOpen(false)}
-              className="h-9 shrink-0 px-2 text-xs text-muted-foreground hover:text-foreground"
-              data-testid="hide-tools"
-              title="Hide the tools and give the schedule the whole window"
-            >
-              Hide
-            </Button>
-            </div>
-
             <div
               data-testid="tool-panel-scroll"
               ref={(node) => {
@@ -1045,10 +1031,11 @@ export function PlanWorkspace({
               />
             </TabsContent>
             </div>
-          </Tabs>
+          </div>
         </div>
         )}
       </div>
+      </Tabs>
       )}
     </div>
   );
