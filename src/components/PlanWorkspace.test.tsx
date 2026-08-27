@@ -209,7 +209,7 @@ describe("PlanWorkspace", () => {
     expect(html).toContain("1 conflict");
   });
 
-  it("displays 0 conflicts or clear status when plan sections have no conflicts", () => {
+  it("shows a conflict-free plan without claiming a conflict anywhere", () => {
     const sectionA = makeSection(
       2923,
       384,
@@ -236,7 +236,13 @@ describe("PlanWorkspace", () => {
     );
 
     expect(html).toContain("GEARTAP");
-    expect(html).toContain("No conflicts");
+    // The persistent "No conflicts" chip is gone from the bar. Conflict is
+    // still computed and displayed, on the artifact itself (ADR-0009): the
+    // grid hatches overlapping blocks and rings them red, and nothing here
+    // may report a conflict that does not exist.
+    expect(html).not.toContain("No conflicts");
+    expect(html).toContain('data-conflicting="false"');
+    expect(html).not.toContain('data-conflicting="true"');
   });
 
   it("renders the capture bar with open Archer's Hub button and credential disclaimer", () => {
@@ -1265,22 +1271,33 @@ describe("the tool panel and the permanent week grid", () => {
       }
     });
 
-    it("puts the fold control and the tabs over the panel, the title over the grid", () => {
+    it("leads the row with the tabs, so they align with the panel below", () => {
       const html = render();
       const bar = html.slice(
         html.indexOf('data-testid="workspace-bar"'),
         html.indexOf('data-testid="workspace-columns"')
       );
 
-      // The bar mirrors the two columns beneath it, so the controls sit over
-      // the thing they drive rather than in an arbitrary row order.
-      const fold = bar.indexOf('data-testid="hide-tools"');
       const tabs = bar.indexOf('data-testid="tool-tabs"');
       const title = bar.indexOf("Weekly Schedule");
+      const fold = bar.indexOf('data-testid="hide-tools"');
 
-      expect(fold).toBeGreaterThan(-1);
-      expect(tabs).toBeGreaterThan(fold);
+      // Nothing may precede the tab strip in the bar: the tool panel starts
+      // at the column's left edge, so anything before the strip offsets it
+      // by exactly its own width. The fold control rides with the actions
+      // for that reason, not for a stylistic one.
+      expect(tabs).toBeGreaterThan(-1);
       expect(title).toBeGreaterThan(tabs);
+      expect(fold).toBeGreaterThan(title);
+    });
+
+    it("gives the bar no padding of its own, so the strip can sit flush", () => {
+      const html = render();
+      const bar = /<div[^>]*data-testid="workspace-bar"[^>]*>/.exec(html);
+
+      expect(bar, "the bar must render").not.toBeNull();
+      // A card's padding is the offset that broke the alignment once.
+      expect(bar![0]).not.toMatch(/\bp-\d|\bpx-\d|\bpl-\d/);
     });
 
     it("sizes the tab strip to the tool panel it sits over", () => {
@@ -1309,16 +1326,15 @@ describe("the tool panel and the permanent week grid", () => {
       expect(html).not.toContain('role="tablist"');
     });
 
-    it("carries the plan's counts once, in the bar", () => {
+    it("carries no counts, no conflict chip, and no creation date", () => {
       const html = render();
-      const bar = html.slice(
-        html.indexOf('data-testid="workspace-bar"'),
-        html.indexOf('data-testid="workspace-columns"')
-      );
 
-      expect(bar).toContain("No conflicts");
-      // Merging the two bars put the section count on the same row twice.
+      // Asked for directly: the bar is for acting on the schedule, and the
+      // status line it used to carry was read once and then ignored. The
+      // grid still shows conflicts where they happen (ADR-0009).
       expect(html.match(/No sections added yet/g)).toBeNull();
+      expect(html).not.toContain("No conflicts");
+      expect(html).not.toContain("Created ");
     });
 
   it("keeps one bar above both regions, carrying the tabs", () => {

@@ -4,7 +4,7 @@ import { useState, useMemo, useRef } from "react";
  * is the single thing a student scans the plan header for. Everything else
  * sat beside a word that already said it.
  */
-import { AlertTriangle, Menu } from "lucide-react";
+import { Menu } from "lucide-react";
 
 import { Button } from "./ui/button";
 import { Alert, AlertTitle, AlertDescription } from "./ui/alert";
@@ -38,7 +38,6 @@ import type {
   Solution,
   ProfessorPreference,
 } from "../adapters/ipc/types";
-import { formatSectionCount } from "../core/plan";
 import { findConflicts } from "../core/conflicts";
 import {
   formatRefreshProgress,
@@ -501,14 +500,74 @@ export function PlanWorkspace({
    * them any more.
    */
   const renderWorkspaceBar = () => (
-    <div
-      data-testid="workspace-bar"
-      className="rounded-panel border border-border bg-card px-4 py-3"
-    >
-      <div className="flex flex-wrap items-center gap-x-4 gap-y-3">
-        {/* The fold control. A hamburger rather than a word: it is the one
-            control on this bar that changes the shape of the workspace, and
-            it has to stay recognisable whether the tools are open or shut. */}
+    /* Not a card. The tab strip has to line up with the tool panel below it,
+       and a card's own padding is exactly the offset that stopped it: the
+       panel starts at the column's left edge, so anything that must align
+       with it has to start there too. Dropping the chrome also spends one
+       fewer box on a screen whose whole revision was about spending fewer. */
+    <div data-testid="workspace-bar" className="flex flex-wrap items-center gap-x-4 gap-y-3">
+      {/* The tabs sit over the column they drive, at exactly its width, and
+          flush with its left edge. Rendered only while that column is on
+          screen — a strip selecting a panel that is not there would be a
+          control that controls nothing. */}
+      {isToolsOpen && (
+        <TabsList
+          className="w-full shrink-0 lg:w-[400px] xl:w-[480px]"
+          data-testid="tool-tabs"
+        >
+          {TOOL_TABS.map((info) => (
+            <TabsTrigger
+              key={info.tab}
+              value={info.tab}
+              title={info.description}
+              data-empty-catalog={
+                info.tab === "capture" && emptyCatalogSignal ? "true" : undefined
+              }
+            >
+              {info.label}
+              {info.tab === "capture" && emptyCatalogSignal && (
+                /* The cost of tabs, paid deliberately: a student on Solve
+                   or Pick can see that the catalog behind Capture is
+                   empty without switching to find out. */
+                <span className="rounded-pill bg-amber-100 px-1.5 py-0.5 text-nano font-bold uppercase tracking-wider text-amber-900">
+                  {emptyCatalogSignal}
+                </span>
+              )}
+            </TabsTrigger>
+          ))}
+        </TabsList>
+      )}
+
+      <h3 className="text-base font-semibold text-foreground">Weekly Schedule</h3>
+
+      <div className="ml-auto flex flex-wrap items-center gap-2">
+        {/* Clear schedule destroys the schedule, so it belongs beside it.
+            It reads as destructive rather than as a ghost: it was quiet
+            enough that students could not find it, and a control nobody
+            can find is not restraint. Outlined and red rather than solid —
+            it is still the rare action on this row, and Export is still
+            the common one. */}
+        <Button
+          type="button"
+          variant="outline"
+          size="sm"
+          disabled={currentSections.length === 0 || isClearing || isLoading}
+          onClick={() => setIsConfirmingClear(true)}
+          className="h-9 border-red-200 text-xs font-semibold text-red-700 hover:border-red-300 hover:bg-red-50 hover:text-red-800 disabled:border-border disabled:text-muted-foreground"
+          data-testid="clear-schedule-button"
+          title={
+            currentSections.length === 0
+              ? "Plan is empty"
+              : "Clear all sections from schedule"
+          }
+        >
+          Clear schedule
+        </Button>
+        <ExportMenu planSummary={planSummary} plan={plan} conflicts={conflicts} />
+
+        {/* The fold control rides with the actions rather than leading the
+            row. It led the row until the tabs had to align with the panel,
+            and its own width was the whole of the offset that stopped them. */}
         <Button
           type="button"
           size="sm"
@@ -530,99 +589,6 @@ export function PlanWorkspace({
             </span>
           )}
         </Button>
-
-        {/* The tabs sit here, over the column they drive. Rendered only when
-            the panel they select is on screen — a tab strip pointing at
-            nothing would be a control that does not control anything. */}
-        {isToolsOpen && (
-          <TabsList
-            /* The same width as the tool panel below it, so the strip sits
-               over the column it drives. `TabsList` is `w-full` by default,
-               which is right when it owns its container and wrong here: it
-               stretched across the whole bar and pushed the title onto a
-               row of its own. */
-            className="w-full shrink-0 lg:w-[400px] xl:w-[480px]"
-            data-testid="tool-tabs"
-          >
-            {TOOL_TABS.map((info) => (
-              <TabsTrigger
-                key={info.tab}
-                value={info.tab}
-                title={info.description}
-                data-empty-catalog={
-                  info.tab === "capture" && emptyCatalogSignal ? "true" : undefined
-                }
-              >
-                {info.label}
-                {info.tab === "capture" && emptyCatalogSignal && (
-                  /* The cost of tabs, paid deliberately: a student on Solve
-                     or Pick can see that the catalog behind Capture is
-                     empty without switching to find out. */
-                  <span className="rounded-pill bg-amber-100 px-1.5 py-0.5 text-nano font-bold uppercase tracking-wider text-amber-900">
-                    {emptyCatalogSignal}
-                  </span>
-                )}
-              </TabsTrigger>
-            ))}
-          </TabsList>
-        )}
-
-        <h3 className="text-base font-semibold text-foreground">Weekly Schedule</h3>
-
-        <div className="ml-auto flex flex-wrap items-center gap-2">
-          {/* Persistent stats and conflict indicator (SPEC §4, ADR-0009).
-              The section count is here and nowhere else: the toolbar used to
-              carry its own copy, and merging the two bars put the same fact
-              on the same row twice. */}
-          <div className="flex flex-wrap items-center gap-3 rounded-card border border-border bg-muted/60 px-3 py-1.5 text-xs text-muted-foreground">
-            <span className="font-semibold text-foreground">
-              {formatSectionCount(currentSections.length || planSummary.sectionCount)}
-            </span>
-
-            <div className="h-3 w-px bg-border" />
-
-            {/* Persistent conflict count (ADR-0009). The glyph stays: this
-                is the one thing on the bar a student scans for. */}
-            {conflicts.length > 0 ? (
-              <span className="flex items-center gap-1.5 font-semibold text-red-600">
-                <AlertTriangle className="h-3.5 w-3.5" aria-hidden="true" />
-                <span>
-                  {conflicts.length} {conflicts.length === 1 ? "conflict" : "conflicts"}
-                </span>
-              </span>
-            ) : (
-              <span>No conflicts</span>
-            )}
-
-            <div className="h-3 w-px bg-border" />
-
-            <span>Created {new Date(planSummary.createdAt).toLocaleDateString()}</span>
-          </div>
-
-          {/* Clear schedule destroys the schedule, so it belongs beside it.
-              It reads as destructive rather than as a ghost: it was quiet
-              enough that students could not find it, and a control nobody
-              can find is not restraint, it is a defect. Outlined and red
-              rather than solid — it is still the rare action on this row,
-              and Export is still the common one. */}
-          <Button
-            type="button"
-            variant="outline"
-            size="sm"
-            disabled={currentSections.length === 0 || isClearing || isLoading}
-            onClick={() => setIsConfirmingClear(true)}
-            className="h-9 border-red-200 text-xs font-semibold text-red-700 hover:border-red-300 hover:bg-red-50 hover:text-red-800 disabled:border-border disabled:text-muted-foreground"
-            data-testid="clear-schedule-button"
-            title={
-              currentSections.length === 0
-                ? "Plan is empty"
-                : "Clear all sections from schedule"
-            }
-          >
-            Clear schedule
-          </Button>
-          <ExportMenu planSummary={planSummary} plan={plan} conflicts={conflicts} />
-        </div>
       </div>
     </div>
   );
