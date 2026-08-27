@@ -160,7 +160,7 @@ describe("usePlanRefreshState", () => {
             latestSnapshot: {
               capturedAt: "2026-08-24T00:00:00Z",
               enrolled: 40,
-              teacher: "Prof B",
+              professor: "Prof B",
               remark: null,
             },
           } as Section,

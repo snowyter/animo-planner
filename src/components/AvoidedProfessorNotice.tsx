@@ -1,7 +1,7 @@
 /**
- * A section in the plan has acquired an avoided teacher (ticket 49).
+ * A section in the plan has acquired an avoided professor (ticket 49).
  *
- * `Teacher` populates over the term — SPEC §2 saw it empty in 42 of 42
+ * `Professor` populates over the term — SPEC §2 saw it empty in 42 of 42
  * GEARTAP rows — so the common event is not a student choosing an avoided
  * section. It is a section they chose weeks ago acquiring a name on a
  * refresh. This says so, and does nothing else: nothing is removed, nothing
@@ -16,27 +16,27 @@
  */
 
 import { Button } from "./ui/button";
-import type { AvoidedTeacherAdvisory } from "../core/teacherRanking";
-import { formatAvoidedTeacherAdvisory } from "../core/teacherRanking";
+import type { AvoidedProfessorAdvisory } from "../core/professorRanking";
+import { formatAvoidedProfessorAdvisory } from "../core/professorRanking";
 
-export interface AvoidedTeacherNoticeProps {
-  advisories: AvoidedTeacherAdvisory[];
+export interface AvoidedProfessorNoticeProps {
+  advisories: AvoidedProfessorAdvisory[];
   /** Opens the course's ranking, which is the only thing there is to do. */
   onOpenRanking?: (courseId: number) => void;
 }
 
-export function AvoidedTeacherNotice({
+export function AvoidedProfessorNotice({
   advisories,
   onOpenRanking,
-}: AvoidedTeacherNoticeProps) {
+}: AvoidedProfessorNoticeProps) {
   if (advisories.length === 0) {
     return null;
   }
 
   return (
-    <div className="space-y-3" data-testid="avoided-teacher-notice">
+    <div className="space-y-3" data-testid="avoided-professor-notice">
       {advisories.map((advisory) => {
-        const copy = formatAvoidedTeacherAdvisory(advisory);
+        const copy = formatAvoidedProfessorAdvisory(advisory);
         return (
           <div
             key={`avoided-${advisory.courseId}-${advisory.sectionId}`}

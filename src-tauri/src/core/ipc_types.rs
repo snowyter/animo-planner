@@ -56,14 +56,14 @@ pub struct SectionRef {
     pub section_id: i64,
 }
 
-/// Point-in-time reading of a section's mutable values. `teacher: None` means
+/// Point-in-time reading of a section's mutable values. `professor: None` means
 /// *unknown* — never "not this professor".
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct Snapshot {
     pub captured_at: String,
     pub enrolled: i64,
-    pub teacher: Option<String>,
+    pub professor: Option<String>,
     pub remark: Option<String>,
 }
 
@@ -204,7 +204,7 @@ pub enum Preset {
     MostOnline,
 }
 
-/// How heavily teacher preferences weigh against the schedule preset.
+/// How heavily professor preferences weigh against the schedule preset.
 /// Orthogonal to `Preset`: every priority composes with every preset.
 /// `Schedule` is bit-for-bit today's behaviour (ADR-0021).
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
@@ -212,17 +212,17 @@ pub enum Preset {
 pub enum Priority {
     #[default]
     Schedule,
-    Teachers,
+    Professors,
     Hybrid,
 }
 
-/// A teacher preference for one course, passed into the solver.
+/// A professor preference for one course, passed into the solver.
 /// Either a rank (1-based, lower is better) or an avoid flag, never both.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
-pub struct TeacherPreferenceEntry {
+pub struct ProfessorPreferenceEntry {
     pub course_id: i64,
-    pub teacher_key: String,
+    pub professor_key: String,
     pub rank: Option<i64>,
     pub avoid: bool,
 }
@@ -244,7 +244,7 @@ pub struct SolveOptions {
     #[serde(default)]
     pub priority: Priority,
     #[serde(default)]
-    pub teacher_preferences: Vec<TeacherPreferenceEntry>,
+    pub professor_preferences: Vec<ProfessorPreferenceEntry>,
 }
 
 fn default_result_limit() -> usize {
@@ -267,11 +267,11 @@ pub struct SolutionSection {
     pub section_code: String,
     pub pinned: bool,
     pub blocks: Vec<ScheduleBlock>,
-    /// The teacher on this section's latest snapshot, if known.
-    /// Carried so scoring can compute teacher preference points.
+    /// The professor on this section's latest snapshot, if known.
+    /// Carried so scoring can compute professor preference points.
     /// `None` means unknown — never a demerit (ticket 48).
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub teacher: Option<String>,
+    pub professor: Option<String>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -359,7 +359,7 @@ pub struct SolveResult {
     /// Surfaced so the student can see the constraint working and turn it
     /// off when the numbers look stale.
     pub excluded_full_count: usize,
-    /// How many sections the avoid-teacher constraint removed (ticket 48).
+    /// How many sections the avoid-professor constraint removed (ticket 48).
     /// Surfaced so the student can see the constraint working.
     pub excluded_avoided_count: usize,
     /// The latest snapshot timestamp of the plan's scope (ticket 34) — how
@@ -449,26 +449,26 @@ pub struct CaptureReport {
     pub issue_url: String,
 }
 
-/// A teacher who can be ranked for a course: keyed, de-duplicated, with the
+/// A professor who can be ranked for a course: keyed, de-duplicated, with the
 /// sections they appear on in the latest snapshots.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
-pub struct RankableTeacher {
+pub struct RankableProfessor {
     pub key: String,
     pub display_name: String,
     pub section_ids: Vec<i64>,
 }
 
-/// A stored teacher preference for a course: either a rank or an avoid,
+/// A stored professor preference for a course: either a rank or an avoid,
 /// never both (enforced by CHECK in the schema).
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
-pub struct TeacherPreference {
-    pub teacher_key: String,
+pub struct ProfessorPreference {
+    pub professor_key: String,
     pub display_name: String,
     pub rank: Option<i64>,
     pub avoid: bool,
-    /// Whether this teacher still appears on the latest snapshots of the
+    /// Whether this professor still appears on the latest snapshots of the
     /// course's sections. An inactive preference is kept and shown, but
     /// scores nothing.
     pub active: bool,
@@ -554,17 +554,17 @@ mod tests {
     }
 
     #[test]
-    fn blank_teacher_serializes_as_null_meaning_unknown() {
+    fn blank_professor_serializes_as_null_meaning_unknown() {
         let snapshot = Snapshot {
             captured_at: "2026-08-22T00:00:00Z".into(),
             enrolled: 39,
-            teacher: None,
+            professor: None,
             remark: None,
         };
         let json = serde_json::to_value(&snapshot).unwrap();
-        assert_eq!(json["teacher"], serde_json::Value::Null);
+        assert_eq!(json["professor"], serde_json::Value::Null);
         let parsed: Snapshot = serde_json::from_value(json).unwrap();
-        assert_eq!(parsed.teacher, None);
+        assert_eq!(parsed.professor, None);
     }
 
     #[test]

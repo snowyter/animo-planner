@@ -1,5 +1,5 @@
 /**
- * Ranking the teachers of one course (ticket 49).
+ * Ranking the professors of one course (ticket 49).
  *
  * A drill-down, not a fourth tool: the student goes here from a course row in
  * the Capture tab and comes back to it. Ticket 46 settled that the week grid
@@ -7,9 +7,9 @@
  * — it takes the whole workspace width instead, which is more room than
  * displacing the grid would have given it.
  *
- * One list, read in three zones. Where a teacher sits is what they mean, so
+ * One list, read in three zones. Where a professor sits is what they mean, so
  * ranking, re-ordering, avoiding, and un-avoiding are all the same gesture:
- * a drag. In particular, an avoided teacher comes back to neutral in one
+ * a drag. In particular, an avoided professor comes back to neutral in one
  * move — "actually I do not mind them" is common, and delete-then-re-add
  * would charge the student twice for changing their mind.
  *
@@ -41,20 +41,20 @@ import { ArrowLeft, GripVertical } from "lucide-react";
 import { Button } from "./ui/button";
 import { Skeleton } from "./ui/skeleton";
 import { Alert, AlertTitle, AlertDescription } from "./ui/alert";
-import type { RankingEntry, RankingZone } from "../core/teacherRanking";
+import type { RankingEntry, RankingZone } from "../core/professorRanking";
 import {
-  INACTIVE_TEACHER_LABEL,
+  INACTIVE_PROFESSOR_LABEL,
   formatMoveAnnouncement,
-  formatNoRankableTeachers,
-  moveTeacher,
-} from "../core/teacherRanking";
+  formatNoRankableProfessors,
+  moveProfessor,
+} from "../core/professorRanking";
 
-export interface TeacherRankingProps {
+export interface ProfessorRankingProps {
   courseCode: string;
   courseTitle: string;
   /** The one list, already in zone order (`buildRankingList`). */
   entries: RankingEntry[];
-  /** Section codes for the ids a rankable teacher carries. */
+  /** Section codes for the ids a rankable professor carries. */
   sectionCodesById?: Record<number, string>;
   isLoading?: boolean;
   isSaving?: boolean;
@@ -81,25 +81,25 @@ const ZONE_INFOS: readonly ZoneInfo[] = [
     zone: "ranked",
     label: "Ranked",
     description:
-      "Rank 1 is the teacher you most want. Drag to reorder; the numbers follow.",
-    empty: "Drag a teacher here to rank them.",
+      "Rank 1 is the professor you most want. Drag to reorder; the numbers follow.",
+    empty: "Drag a professor here to rank them.",
   },
   {
     zone: "neutral",
     label: "Not ranked",
     description: "Neither wanted nor avoided. A solve treats these as neutral.",
-    empty: "Every teacher of this course is either ranked or avoided.",
+    empty: "Every professor of this course is either ranked or avoided.",
   },
   {
     zone: "avoided",
     label: "Avoided",
     description:
-      "A solve drops every section these teachers are listed on, and says so when that empties the course.",
-    empty: "Drag a teacher here to refuse their sections.",
+      "A solve drops every section these professors are listed on, and says so when that empties the course.",
+    empty: "Drag a professor here to refuse their sections.",
   },
 ] as const;
 
-export function TeacherRanking({
+export function ProfessorRanking({
   courseCode,
   courseTitle,
   entries,
@@ -110,7 +110,7 @@ export function TeacherRanking({
   initialAnnouncement = "",
   onMove,
   onBack,
-}: TeacherRankingProps) {
+}: ProfessorRankingProps) {
   const [announcement, setAnnouncement] = useState(initialAnnouncement);
 
   const sensors = useSensors(
@@ -146,20 +146,20 @@ export function TeacherRanking({
 
     // The announcement is computed from what the move *will* produce, so the
     // live region never lags a frame behind the numbers on screen.
-    setAnnouncement(formatMoveAnnouncement(moveTeacher(entries, key, zone, index), key));
+    setAnnouncement(formatMoveAnnouncement(moveProfessor(entries, key, zone, index), key));
     onMove(key, zone, index);
   };
 
   return (
-    <div data-testid="teacher-ranking" className="w-full space-y-4">
+    <div data-testid="professor-ranking" className="w-full space-y-4">
       <div className="flex flex-wrap items-start justify-between gap-3">
         <div className="min-w-0">
           <h3 className="text-base font-bold text-foreground">
-            Rank the teachers of {courseCode}
+            Rank the professors of {courseCode}
           </h3>
           <p className="text-xs text-muted-foreground mt-1 leading-relaxed">
             {courseTitle} · A ranking is per course, because a student takes one
-            section of it. Ranked teachers are wanted; avoided teachers are
+            section of it. Ranked professors are wanted; avoided professors are
             refused. Everyone else is neutral.
           </p>
         </div>
@@ -172,7 +172,7 @@ export function TeacherRanking({
           size="sm"
           onClick={onBack}
           className="h-8 shrink-0 gap-1.5 text-xs"
-          data-testid="teacher-ranking-back"
+          data-testid="professor-ranking-back"
         >
           <ArrowLeft className="h-3.5 w-3.5" aria-hidden="true" />
           <span>Back to Capture</span>
@@ -190,7 +190,7 @@ export function TeacherRanking({
 
       {/* Every move is announced, because the keyboard path is a real path. */}
       <p
-        data-testid="teacher-ranking-announcement"
+        data-testid="professor-ranking-announcement"
         role="status"
         aria-live="polite"
         className="sr-only"
@@ -199,20 +199,20 @@ export function TeacherRanking({
       </p>
 
       {isLoading ? (
-        <div className="space-y-2" data-testid="teacher-ranking-skeleton">
+        <div className="space-y-2" data-testid="professor-ranking-skeleton">
           {[0, 1, 2].map((i) => (
             <Skeleton key={i} className="h-14 w-full" />
           ))}
         </div>
       ) : entries.length === 0 ? (
         /* The normal state early in a term, not a failure: SPEC §2 recorded
-           Teacher empty in 42 of 42 GEARTAP rows. Name the cause and the fix
+           Professor empty in 42 of 42 GEARTAP rows. Name the cause and the fix
            or students report the feature as broken. */
         <p
-          data-testid="teacher-ranking-empty"
+          data-testid="professor-ranking-empty"
           className="rounded-panel border border-border bg-card p-panel text-xs leading-relaxed text-muted-foreground"
         >
-          {formatNoRankableTeachers()}
+          {formatNoRankableProfessors()}
         </p>
       ) : (
         <DndContext
@@ -256,7 +256,7 @@ function RankingZonePanel({
       className={`rounded-panel border bg-card p-4 space-y-3 ${
         isOver ? "border-primary" : "border-border"
       }`}
-      aria-label={`${info.label} teachers`}
+      aria-label={`${info.label} professors`}
     >
       <div className="space-y-1">
         <h4 className="text-micro font-bold uppercase tracking-wider text-muted-foreground">
@@ -278,7 +278,7 @@ function RankingZonePanel({
             </li>
           ) : (
             entries.map((entry) => (
-              <SortableTeacher
+              <SortableProfessor
                 key={entry.key}
                 entry={entry}
                 sectionCodesById={sectionCodesById}
@@ -292,7 +292,7 @@ function RankingZonePanel({
   );
 }
 
-function SortableTeacher({
+function SortableProfessor({
   entry,
   sectionCodesById,
   isSaving,
@@ -321,7 +321,7 @@ function SortableTeacher({
     <li
       ref={setNodeRef}
       style={style}
-      data-teacher-key={entry.key}
+      data-professor-key={entry.key}
       data-zone={entry.zone}
       data-rank={entry.rank ?? ""}
       data-active={entry.active ? "true" : "false"}
@@ -365,7 +365,7 @@ function SortableTeacher({
             /* Kept, not deleted, for the same reason ADR-0008 keeps a section
                that stopped appearing: the preference is the student's work. */
             <em data-testid={`inactive-${entry.key}`} className="not-italic">
-              {INACTIVE_TEACHER_LABEL}
+              {INACTIVE_PROFESSOR_LABEL}
             </em>
           )}
         </span>

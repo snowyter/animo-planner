@@ -104,7 +104,7 @@ fn reject_uncompilable_selectors(config: &SelectorConfig) -> Result<(), RemoteCo
         ("results_table", &config.results_table),
         ("result_row", &config.result_row),
         ("course_type_cell", &config.course_type_cell),
-        ("teacher_cell", &config.teacher_cell),
+        ("professor_cell", &config.professor_cell),
         ("credits_cell", &config.credits_cell),
         ("section_code_cell", &config.section_code_cell),
         ("schedule_cell", &config.schedule_cell),

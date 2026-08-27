@@ -11,7 +11,7 @@
 //!   +08:00 offset with no daylight saving, so weekly recurrences keep
 //!   their wall-clock time.
 //! - Event summaries carry the course code and section code; descriptions
-//!   carry the block modality and, when present, the teacher and remark.
+//!   carry the block modality and, when present, the professor and remark.
 //! - Online blocks are distinguishable from room-based ones in the event
 //!   location: online exports `Online`, rooms export the room code.
 //! - Conflicts are never prevented (ADR-0009): overlapping sections simply
@@ -39,7 +39,7 @@ pub struct ExportBlock {
 
 /// One planned section as exported.
 ///
-/// `teacher: None` and `remark: None` mean unknown — they are omitted from
+/// `professor: None` and `remark: None` mean unknown — they are omitted from
 /// the description rather than rendered as blanks.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ExportSection {
@@ -47,7 +47,7 @@ pub struct ExportSection {
     pub section_id: i64,
     pub course_code: String,
     pub section_code: String,
-    pub teacher: Option<String>,
+    pub professor: Option<String>,
     pub remark: Option<String>,
     /// First day of the term span; the recurrence starts on this week.
     pub start_date: NaiveDate,
@@ -181,15 +181,15 @@ fn location_text(block: &ExportBlock) -> String {
     }
 }
 
-/// The modality line plus, when known, the teacher and remark. Unknown
+/// The modality line plus, when known, the professor and remark. Unknown
 /// values are omitted, never rendered as blanks.
 fn event_description(section: &ExportSection, block: &ExportBlock) -> String {
     let mut lines = vec![match block.location {
         None => "Modality: Online".to_string(),
         Some(_) => "Modality: On campus".to_string(),
     }];
-    if let Some(teacher) = &section.teacher {
-        lines.push(format!("Teacher: {teacher}"));
+    if let Some(professor) = &section.professor {
+        lines.push(format!("Professor: {professor}"));
     }
     if let Some(remark) = &section.remark {
         lines.push(format!("Remark: {remark}"));
@@ -250,7 +250,7 @@ mod tests {
         section_id: i64,
         course_code: &str,
         section_code: &str,
-        teacher: Option<&str>,
+        professor: Option<&str>,
         remark: Option<&str>,
         blocks: Vec<ExportBlock>,
     ) -> ExportSection {
@@ -259,7 +259,7 @@ mod tests {
             section_id,
             course_code: course_code.to_string(),
             section_code: section_code.to_string(),
-            teacher: teacher.map(str::to_string),
+            professor: professor.map(str::to_string),
             remark: remark.map(str::to_string),
             start_date: date(TERM_START),
             end_date: date(TERM_END),
@@ -451,7 +451,7 @@ mod tests {
     }
 
     #[test]
-    fn descriptions_carry_teacher_and_remark_only_when_present() {
+    fn descriptions_carry_professor_and_remark_only_when_present() {
         let complete = section(
             2923,
             384,
@@ -462,7 +462,7 @@ mod tests {
             vec![block(Day::Mon, 450, 540, None)],
         );
         let out = export_named("T1 load", &[complete]);
-        assert!(out.contents.contains("Teacher: Bryant Lee"), "{}", out.contents);
+        assert!(out.contents.contains("Professor: Bryant Lee"), "{}", out.contents);
         assert!(out.contents.contains("Remark: Bring laptop"), "{}", out.contents);
 
         let bare = section(
@@ -475,7 +475,7 @@ mod tests {
             vec![block(Day::Mon, 450, 540, None)],
         );
         let out = export_named("T1 load", &[bare]);
-        assert!(!out.contents.contains("Teacher:"), "{}", out.contents);
+        assert!(!out.contents.contains("Professor:"), "{}", out.contents);
         assert!(!out.contents.contains("Remark:"), "{}", out.contents);
         assert!(out.contents.contains("Modality: Online"), "{}", out.contents);
     }

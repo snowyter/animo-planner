@@ -89,7 +89,7 @@ const planSection: PlanSection = {
   latestSnapshot: {
     capturedAt: "2026-08-22T00:00:00Z",
     enrolled: 42,
-    teacher: "",
+    professor: "",
     remark: null,
   },
 };
@@ -616,7 +616,7 @@ describe("the section row says what it collides with", () => {
     latestSnapshot: {
       capturedAt: "2026-08-22T00:00:00Z",
       enrolled: 45,
-      teacher: null,
+      professor: null,
       remark: null,
     },
   });
@@ -640,7 +640,7 @@ describe("the section row says what it collides with", () => {
     latestSnapshot: {
       capturedAt: "2026-08-22T00:00:00Z",
       enrolled: 45,
-      teacher: null,
+      professor: null,
       remark: null,
     },
   });

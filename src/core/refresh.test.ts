@@ -106,7 +106,7 @@ describe("core/refresh", () => {
       latestSnapshot: {
         capturedAt: "2026-08-24T00:00:00Z",
         enrolled: 40,
-        teacher: "Prof A",
+        professor: "Prof A",
         remark: null,
       },
     });

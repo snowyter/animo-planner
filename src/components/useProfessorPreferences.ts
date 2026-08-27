@@ -1,21 +1,21 @@
 /**
- * Loading and writing teacher preferences (ticket 49).
+ * Loading and writing professor preferences (ticket 49).
  *
  * Two shapes of the same data: the whole catalog's preferences, which is
  * what the Solve panel summarises and what the advisory notice is computed
  * from; and one course's ranking, which is what the drill-down edits.
  *
  * The decisions — zones, renumbering, the summary, the advisory — all live
- * in `src/core/teacherRanking.ts`. This file is plumbing: fetch, hold, save.
+ * in `src/core/professorRanking.ts`. This file is plumbing: fetch, hold, save.
  */
 
 import { useCallback, useEffect, useState } from "react";
 
 import * as client from "../adapters/ipc/client";
-import type { RankableTeacher, Section, TeacherPreference } from "../adapters/ipc/types";
+import type { RankableProfessor, Section, ProfessorPreference } from "../adapters/ipc/types";
 import { formatErrorMessage } from "../core/error";
-import type { RankingEntry, RankingZone } from "../core/teacherRanking";
-import { buildRankingList, moveTeacher, toPreferenceWrite } from "../core/teacherRanking";
+import type { RankingEntry, RankingZone } from "../core/professorRanking";
+import { buildRankingList, moveProfessor, toPreferenceWrite } from "../core/professorRanking";
 
 export interface PreferenceScope {
   campusId: number;
@@ -33,8 +33,8 @@ export interface PreferenceScope {
 export async function fetchPreferencesForCourses(
   scope: PreferenceScope,
   courseIds: readonly number[]
-): Promise<Map<number, TeacherPreference[]>> {
-  const byCourse = new Map<number, TeacherPreference[]>();
+): Promise<Map<number, ProfessorPreference[]>> {
+  const byCourse = new Map<number, ProfessorPreference[]>();
   await Promise.all(
     courseIds.map(async (courseId) => {
       try {
@@ -48,7 +48,7 @@ export async function fetchPreferencesForCourses(
 }
 
 /** The catalog-wide view: what the Solve panel and the advisory notice read. */
-export function useTeacherPreferences(
+export function useProfessorPreferences(
   scope: PreferenceScope,
   courseIds: number[],
   /**
@@ -56,10 +56,10 @@ export function useTeacherPreferences(
    * and nothing would ever be loaded — the same reason the workspace takes
    * `initialTab`.
    */
-  initialPreferencesByCourse?: Map<number, TeacherPreference[]>
+  initialPreferencesByCourse?: Map<number, ProfessorPreference[]>
 ) {
   const [preferencesByCourse, setPreferencesByCourse] = useState<
-    Map<number, TeacherPreference[]>
+    Map<number, ProfessorPreference[]>
   >(() => initialPreferencesByCourse ?? new Map());
 
   // `courseIds` is a fresh array on every render of the workspace, so the
@@ -83,7 +83,7 @@ export function useTeacherPreferences(
 
 export interface CourseRanking {
   entries: RankingEntry[];
-  /** Section codes for the ids a rankable teacher carries. */
+  /** Section codes for the ids a rankable professor carries. */
   sectionCodesById: Record<number, string>;
   isLoading: boolean;
   isSaving: boolean;
@@ -122,8 +122,8 @@ export function useCourseRanking(
     setIsLoading(true);
     setError(null);
     Promise.all([
-      client.listRankableTeachers(args) as Promise<RankableTeacher[]>,
-      client.getCoursePreferences(args) as Promise<TeacherPreference[]>,
+      client.listRankableProfessors(args) as Promise<RankableProfessor[]>,
+      client.getCoursePreferences(args) as Promise<ProfessorPreference[]>,
       client.listCapturedSections(args) as Promise<Section[]>,
     ])
       .then(([rankable, preferences, sections]) => {
@@ -156,7 +156,7 @@ export function useCourseRanking(
       if (!courseId) {
         return;
       }
-      const next = moveTeacher(entries, key, zone, index);
+      const next = moveProfessor(entries, key, zone, index);
       setEntries(next);
       setIsSaving(true);
       setError(null);

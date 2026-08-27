@@ -8,13 +8,13 @@ import { SolutionCard } from "./SolutionCard";
 import type { Day, Plan, PlanSection, Preset, Solution, SolveOptions, SolveResult } from "../adapters/ipc/types";
 import { DAY_INFOS } from "../core/grid";
 import { PRESET_INFOS, defaultSolveOptions, formatExclusionNotice, formatUnsatisfiableCoursesMessage } from "../core/solver";
-import type { PreferenceSummary, Priority } from "../core/teacherRanking";
+import type { PreferenceSummary, Priority } from "../core/professorRanking";
 import {
   DEFAULT_PRIORITY,
   PRIORITY_INFOS,
   formatPreferenceSummary,
   formatSchedulePriorityNoOp,
-} from "../core/teacherRanking";
+} from "../core/professorRanking";
 import * as client from "../adapters/ipc/client";
 import { formatErrorMessage } from "../core/error";
 import { solutionToSectionRefs } from "../core/solver";
@@ -50,7 +50,7 @@ export interface SolvePanelProps {
   selectedSolutionId?: string | null;
   onSelectSolution?: (selection: SolutionSelection | null) => void;
   /**
-   * How heavily a teacher ranking weighs against the preset (ADR-0021).
+   * How heavily a professor ranking weighs against the preset (ADR-0021).
    * A second axis, not a fourth preset. The suite renders to static markup
    * and cannot click, so the selection is drivable from props.
    */
@@ -97,7 +97,7 @@ export function SolvePanel({
   selectedSolutionId = null,
   onSelectSolution,
   initialPriority = DEFAULT_PRIORITY,
-  preferenceSummary = { rankedCourses: 0, avoidedTeachers: 0 },
+  preferenceSummary = { rankedCourses: 0, avoidedProfessors: 0 },
   onOpenPreferences,
 }: SolvePanelProps) {
   const [options, setOptions] = useState<SolveOptions>(() => defaultSolveOptions());
@@ -425,7 +425,7 @@ export function SolvePanel({
                   data-testid="solve-priority-summary-link"
                   className="cursor-pointer underline underline-offset-2 hover:text-foreground"
                 >
-                  Rank teachers in Capture
+                  Rank professors in Capture
                 </button>
               </span>
             </div>
@@ -472,11 +472,11 @@ export function SolvePanel({
                   type="button"
                   variant="outline"
                   size="sm"
-                  onClick={() => setPriority("teachers")}
+                  onClick={() => setPriority("professors")}
                   data-testid="priority-noop-switch"
                   className="h-7 border-amber-300 bg-white text-xs text-amber-900 hover:bg-amber-100/50"
                 >
-                  Switch to Teachers
+                  Switch to Professors
                 </Button>
               </div>
             )}

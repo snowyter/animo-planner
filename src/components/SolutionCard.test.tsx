@@ -147,7 +147,7 @@ describe("SolutionCard", () => {
         latestSnapshot: {
           capturedAt: "2026-08-22T00:00:00Z",
           enrolled: 30,
-          teacher: null,
+          professor: null,
           remark: null,
         },
       },
@@ -164,7 +164,7 @@ describe("SolutionCard", () => {
         latestSnapshot: {
           capturedAt: "2026-08-22T00:00:00Z",
           enrolled: 30,
-          teacher: null,
+          professor: null,
           remark: null,
         },
       },
@@ -198,7 +198,7 @@ describe("SolutionCard", () => {
         latestSnapshot: {
           capturedAt: "2026-08-22T00:00:00Z",
           enrolled: 30,
-          teacher: null,
+          professor: null,
           remark: null,
         },
       },
@@ -215,7 +215,7 @@ describe("SolutionCard", () => {
         latestSnapshot: {
           capturedAt: "2026-08-22T00:00:00Z",
           enrolled: 30,
-          teacher: null,
+          professor: null,
           remark: null,
         },
       },
@@ -252,7 +252,7 @@ describe("SolutionCard", () => {
         latestSnapshot: {
           capturedAt: "2026-08-22T00:00:00Z",
           enrolled: 30,
-          teacher: null,
+          professor: null,
           remark: null,
         },
       },
@@ -381,7 +381,7 @@ describe("SolutionCard", () => {
               latestSnapshot: {
                 capturedAt: "2026-08-22T00:00:00Z",
                 enrolled: 30,
-                teacher: null,
+                professor: null,
                 remark: null,
               },
             },

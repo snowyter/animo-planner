@@ -38,7 +38,14 @@ pub struct SelectorConfig {
     pub result_row: String,
     /// Cell selectors, each evaluated within a result row.
     pub course_type_cell: String,
-    pub teacher_cell: String,
+    /// The published `selector-config.json` shipped this as `teacherCell`
+    /// before the app settled on *professor* as its word. The alias keeps a
+    /// new build working against a config that still says `teacherCell`:
+    /// without it the whole document fails to deserialize and the fetch
+    /// falls back to the bundled copy, which is exactly the outage the
+    /// remote config exists to prevent (ADR-0013).
+    #[serde(alias = "teacherCell")]
+    pub professor_cell: String,
     pub credits_cell: String,
     pub section_code_cell: String,
     pub schedule_cell: String,
@@ -104,7 +111,7 @@ impl Default for SelectorConfig {
             results_table: "#tblCourseSelection".into(),
             result_row: "tbody tr".into(),
             course_type_cell: "td:nth-child(1)".into(),
-            teacher_cell: "td:nth-child(2)".into(),
+            professor_cell: "td:nth-child(2)".into(),
             credits_cell: "td:nth-child(3)".into(),
             section_code_cell: "td:nth-child(4)".into(),
             schedule_cell: "td:nth-child(5)".into(),
@@ -168,7 +175,7 @@ impl ParsedBlock {
 
 /// One scheduled offering of a course, as read from a single results row.
 ///
-/// `teacher: None` and `remark: None` mean *unknown* (the cell was blank),
+/// `professor: None` and `remark: None` mean *unknown* (the cell was blank),
 /// never "not this professor".
 #[derive(Debug, Clone, PartialEq)]
 pub struct ParsedSection {
@@ -181,7 +188,7 @@ pub struct ParsedSection {
     pub credits: Option<f64>,
     pub enroll_cap: Option<i64>,
     pub enrolled: Option<i64>,
-    pub teacher: Option<String>,
+    pub professor: Option<String>,
     pub remark: Option<String>,
     pub start_date: Option<NaiveDate>,
     pub end_date: Option<NaiveDate>,
@@ -284,7 +291,7 @@ impl DayNames {
 /// All cell selectors compiled once per parse, so a bad config fails fast.
 struct CompiledSelectors {
     course_type_cell: Selector,
-    teacher_cell: Selector,
+    professor_cell: Selector,
     credits_cell: Selector,
     section_code_cell: Selector,
     schedule_cell: Selector,
@@ -305,7 +312,7 @@ impl CompiledSelectors {
         }
         Ok(Self {
             course_type_cell: compile(&config.course_type_cell)?,
-            teacher_cell: compile(&config.teacher_cell)?,
+            professor_cell: compile(&config.professor_cell)?,
             credits_cell: compile(&config.credits_cell)?,
             section_code_cell: compile(&config.section_code_cell)?,
             schedule_cell: compile(&config.schedule_cell)?,
@@ -700,7 +707,7 @@ fn parse_row(
         credits,
         enroll_cap,
         enrolled,
-        teacher: blank_to_none(cell_text(&row, &selectors.teacher_cell)),
+        professor: blank_to_none(cell_text(&row, &selectors.professor_cell)),
         remark,
         start_date,
         end_date,
@@ -1084,7 +1091,7 @@ mod tests {
             .find(|s| s.section_code == "S01")
             .expect("S01");
         assert_eq!(s01.section_id, 384);
-        assert_eq!(s01.teacher, None, "blank teacher is unknown");
+        assert_eq!(s01.professor, None, "blank professor is unknown");
         assert_eq!(s01.remark, None);
         assert_eq!(s01.enrolled, Some(0));
         assert_eq!(s01.enroll_cap, Some(45));
@@ -1106,7 +1113,7 @@ mod tests {
             .iter()
             .find(|s| s.section_code == "S40A")
             .expect("S40A");
-        assert_eq!(s40a.teacher.as_deref(), Some("Bryant Lee"));
+        assert_eq!(s40a.professor.as_deref(), Some("Bryant Lee"));
         assert_eq!(s40a.blocks[0].day, Day::Mon);
         assert_eq!((s40a.blocks[0].start_min, s40a.blocks[0].end_min), (450, 540));
         assert_eq!(s40a.blocks[1].day, Day::Thu);
@@ -1123,7 +1130,7 @@ mod tests {
             .find(|s| s.section_code == "Y11")
             .expect("Y11");
         assert_eq!(y11.section_id, 737);
-        assert_eq!(y11.teacher, None);
+        assert_eq!(y11.professor, None);
         assert_eq!(y11.enrolled, Some(0));
         assert_eq!(y11.modality(), Some(SectionModality::Hybrid));
         assert_eq!(y11.blocks[0].day, Day::Tue);
@@ -1365,18 +1372,18 @@ mod tests {
         );
     }
 
-    // ---------- teacher, remark, numbers ----------
+    // ---------- professor, remark, numbers ----------
 
     #[test]
-    fn blank_teacher_and_remark_parse_as_unknown() {
+    fn blank_professor_and_remark_parse_as_unknown() {
         let row = standard_row("S01", S01_SCHEDULE);
         let result = parse_synthetic(&row);
-        assert_eq!(result.sections[0].teacher, None);
+        assert_eq!(result.sections[0].professor, None);
         assert_eq!(result.sections[0].remark, None);
     }
 
     #[test]
-    fn populated_teacher_is_trimmed_and_remark_is_verbatim() {
+    fn populated_professor_is_trimmed_and_remark_is_verbatim() {
         let row = row(
             "data-end-date=\"12/09/2026\" data-start-date=\"07/10/2026\"",
             [
@@ -1385,7 +1392,7 @@ mod tests {
             ],
         );
         let result = parse_synthetic(&row);
-        assert_eq!(result.sections[0].teacher.as_deref(), Some("Bryant Lee"));
+        assert_eq!(result.sections[0].professor.as_deref(), Some("Bryant Lee"));
         assert_eq!(
             result.sections[0].remark.as_deref(),
             Some(" See note  about  TBA "),

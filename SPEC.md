@@ -82,6 +82,7 @@ The location slot is **either** `Room - <CODE>` **or** the literal `Online`.
 - All rows shared identical start/end dates → **sections span the full term**. Date-range conflict
   logic is not implemented; a mismatch raises a diagnostic warning instead.
 - **`Teacher` was empty in 42/42 GEARTAP rows** and 3/5 CSINTSY rows. It populates over time.
+  (The site's column is labelled *Teacher*; the app calls the person a **professor** — see `CONTEXT.md`.)
 - **`Remark` was empty in all 47 rows observed.** Contents unknown → opaque passthrough.
 - Enrolled counts are live and non-zero well before enlistment (42/45, 39/45, 38/40 seen).
 - Section-code prefixes (`Y`, `Z`, `S`, `C`, `A`, `E`, `L`, `V`) may encode college eligibility.
@@ -177,8 +178,8 @@ schedule_blocks(section_fk, day, start_min, end_min, location, modality)
     modality ∈ {F2F, ONLINE}   -- derived: 'Online' literal vs 'Room - X'
     location  = room code, or NULL when online
 
-snapshots(section_fk, captured_at, enrolled, teacher, remark)
-    -- teacher and remark live HERE, not on sections: both are mutable,
+snapshots(section_fk, captured_at, enrolled, professor, remark)
+    -- professor and remark live HERE, not on sections: both are mutable,
     -- and their change over time is itself information
 
 plans(id, name, campus_id, session_id, created_at)
@@ -192,7 +193,7 @@ plan_sections(plan_id, section_fk, pinned)
 - **Sections are never hard-deleted.** If a section in a saved plan stops appearing, raise a
   persistent banner naming it and surface its alternatives. Silent removal during enlistment week is
   the worst available failure mode.
-- **Blank `teacher` means unknown, never "not-X".** A "prefer Prof X" filter that treats blank as a
+- **Blank `professor` means unknown, never "not-X".** A "prefer Prof X" filter that treats blank as a
   mismatch silently deletes 42 valid GEARTAP sections and returns an empty solve with no explanation.
 - `remark` is stored and displayed verbatim. Never parsed, never branched on.
 - **A plan may legally hold conflicting sections.** `plan_sections` carries no validity constraint;
@@ -257,7 +258,7 @@ the same `plan_sections`. There are not two schedule-building UIs.
 On starting a plan the student chooses an entry point:
 
 - **Pick my own sections** — the default. A course-by-course section browser listing every captured
-  section with its schedule blocks, modality, room, teacher, and `enrolled/cap`. Selecting one adds
+  section with its schedule blocks, modality, room, professor, and `enrolled/cap`. Selecting one adds
   it to the plan and paints it onto the grid; hovering shows it as a ghost block first.
 - **Let the solver build it** — runs §6 against the whole plan.
 

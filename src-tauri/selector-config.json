@@ -3,7 +3,7 @@
   "resultsTable": "#tblCourseSelection",
   "resultRow": "tbody tr",
   "courseTypeCell": "td:nth-child(1)",
-  "teacherCell": "td:nth-child(2)",
+  "professorCell": "td:nth-child(2)",
   "creditsCell": "td:nth-child(3)",
   "sectionCodeCell": "td:nth-child(4)",
   "scheduleCell": "td:nth-child(5)",

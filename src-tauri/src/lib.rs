@@ -114,7 +114,7 @@ pub fn run() {
             get_missing_sections,
             export_plan_ics,
             build_capture_report,
-            list_rankable_teachers,
+            list_rankable_professors,
             get_course_preferences,
             write_course_preferences,
             interface::update::check_for_update,

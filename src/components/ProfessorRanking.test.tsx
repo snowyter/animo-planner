@@ -2,22 +2,22 @@ import { describe, expect, it, vi } from "vitest";
 import React from "react";
 import { renderToStaticMarkup } from "react-dom/server";
 
-import { TeacherRanking } from "./TeacherRanking";
-import { buildRankingList } from "../core/teacherRanking";
-import type { RankableTeacher, TeacherPreference } from "../adapters/ipc/types";
+import { ProfessorRanking } from "./ProfessorRanking";
+import { buildRankingList } from "../core/professorRanking";
+import type { RankableProfessor, ProfessorPreference } from "../adapters/ipc/types";
 
-const rankable = (key: string, displayName: string, sectionIds: number[] = []): RankableTeacher => ({
+const rankable = (key: string, displayName: string, sectionIds: number[] = []): RankableProfessor => ({
   key,
   displayName,
   sectionIds,
 });
 
 const preference = (
-  teacherKey: string,
+  professorKey: string,
   displayName: string,
-  fields: Partial<TeacherPreference> = {}
-): TeacherPreference => ({
-  teacherKey,
+  fields: Partial<ProfessorPreference> = {}
+): ProfessorPreference => ({
+  professorKey,
   displayName,
   rank: null,
   avoid: false,
@@ -27,7 +27,7 @@ const preference = (
 
 const render = (props: Record<string, unknown> = {}) =>
   renderToStaticMarkup(
-    React.createElement(TeacherRanking, {
+    React.createElement(ProfessorRanking, {
       courseCode: "GEARTAP",
       courseTitle: "Art Appreciation",
       entries: buildRankingList(
@@ -48,7 +48,7 @@ const render = (props: Record<string, unknown> = {}) =>
     })
   );
 
-describe("TeacherRanking", () => {
+describe("ProfessorRanking", () => {
   it("shows a ranked region, an avoided region below it, and everyone else in between", () => {
     const html = render();
 
@@ -60,12 +60,12 @@ describe("TeacherRanking", () => {
     expect(neutral).toBeGreaterThan(ranked);
     expect(avoided).toBeGreaterThan(neutral);
 
-    expect(html).toContain('data-teacher-key="nina cruz"');
-    expect(html).toContain('data-teacher-key="bryant lee"');
-    expect(html).toContain('data-teacher-key="omar reyes"');
+    expect(html).toContain('data-professor-key="nina cruz"');
+    expect(html).toContain('data-professor-key="bryant lee"');
+    expect(html).toContain('data-professor-key="omar reyes"');
   });
 
-  it("numbers the ranked teachers 1, 2, 3 and numbers nobody else", () => {
+  it("numbers the ranked professors 1, 2, 3 and numbers nobody else", () => {
     const html = render({
       entries: buildRankingList(
         [
@@ -80,12 +80,12 @@ describe("TeacherRanking", () => {
       ),
     });
 
-    expect(html).toMatch(/data-teacher-key="bryant lee"[^>]*data-rank="1"/);
-    expect(html).toMatch(/data-teacher-key="nina cruz"[^>]*data-rank="2"/);
-    expect(html).toMatch(/data-teacher-key="omar reyes"[^>]*data-rank=""/);
+    expect(html).toMatch(/data-professor-key="bryant lee"[^>]*data-rank="1"/);
+    expect(html).toMatch(/data-professor-key="nina cruz"[^>]*data-rank="2"/);
+    expect(html).toMatch(/data-professor-key="omar reyes"[^>]*data-rank=""/);
   });
 
-  it("lists the sections each teacher is listed on, by section code", () => {
+  it("lists the sections each professor is listed on, by section code", () => {
     const html = render();
 
     expect(html).toContain("S11");
@@ -96,7 +96,7 @@ describe("TeacherRanking", () => {
   it("offers an explicit way back to the course it was entered from", () => {
     const html = render();
 
-    expect(html).toContain('data-testid="teacher-ranking-back"');
+    expect(html).toContain('data-testid="professor-ranking-back"');
     expect(html).toContain("Back to Capture");
     expect(html).toContain("GEARTAP");
   });
@@ -104,27 +104,27 @@ describe("TeacherRanking", () => {
   it("says plainly why the list is empty and what fills it", () => {
     const html = render({ entries: [] });
 
-    expect(html).toContain('data-testid="teacher-ranking-empty"');
-    expect(html).toContain("No teacher names captured yet");
+    expect(html).toContain('data-testid="professor-ranking-empty"');
+    expect(html).toContain("No professor names captured yet");
     expect(html).toContain("Refresh to check.");
     expect(html).not.toContain('data-testid="ranking-zone-ranked"');
   });
 
-  it("keeps a teacher who has left the course, de-emphasised and labelled", () => {
+  it("keeps a professor who has left the course, de-emphasised and labelled", () => {
     const html = render({
       entries: buildRankingList(
         [rankable("nina cruz", "Nina Cruz", [385])],
         [
           preference("nina cruz", "Nina Cruz", { rank: 2 }),
-          preference("gone teacher", "Gone Teacher", { rank: 1, active: false }),
+          preference("gone professor", "Gone Professor", { rank: 1, active: false }),
         ]
       ),
     });
 
-    expect(html).toContain("Gone Teacher");
-    expect(html).toMatch(/data-teacher-key="gone teacher"[^>]*data-active="false"/);
+    expect(html).toContain("Gone Professor");
+    expect(html).toMatch(/data-professor-key="gone professor"[^>]*data-active="false"/);
     expect(html).toContain("not currently listed for this course");
     // Kept means kept: it still holds a rank, and Nina renumbers around it.
-    expect(html).toMatch(/data-teacher-key="gone teacher"[^>]*data-rank="1"/);
+    expect(html).toMatch(/data-professor-key="gone professor"[^>]*data-rank="1"/);
   });
 });

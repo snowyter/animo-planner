@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import {
-  formatTeacher,
+  formatProfessor,
   formatEnrolledCap,
   isSectionInPlan,
   isSectionPinned,
@@ -43,7 +43,7 @@ describe("section core logic", () => {
     courseCode: string,
     sectionCode: string,
     blocks: ScheduleBlock[],
-    teacher: string | null = null,
+    professor: string | null = null,
     enrolled = 35,
     enrollCap = 45,
     remark: string | null = null
@@ -71,7 +71,7 @@ describe("section core logic", () => {
     latestSnapshot: {
       capturedAt: "2026-08-22T00:00:00Z",
       enrolled,
-      teacher,
+      professor,
       remark,
     },
   });
@@ -100,28 +100,28 @@ describe("section core logic", () => {
     latestSnapshot: {
       capturedAt: "2026-08-22T00:00:00Z",
       enrolled: 40,
-      teacher: "Prof X",
+      professor: "Prof X",
       remark: null,
     },
   });
 
-  describe("formatTeacher", () => {
-    it("returns 'Unknown' when teacher is null", () => {
-      expect(formatTeacher(null)).toBe("Unknown");
+  describe("formatProfessor", () => {
+    it("returns 'Unknown' when professor is null", () => {
+      expect(formatProfessor(null)).toBe("Unknown");
     });
 
-    it("returns 'Unknown' when teacher is undefined", () => {
-      expect(formatTeacher(undefined)).toBe("Unknown");
+    it("returns 'Unknown' when professor is undefined", () => {
+      expect(formatProfessor(undefined)).toBe("Unknown");
     });
 
-    it("returns 'Unknown' when teacher is empty string or only whitespace", () => {
-      expect(formatTeacher("")).toBe("Unknown");
-      expect(formatTeacher("   ")).toBe("Unknown");
+    it("returns 'Unknown' when professor is empty string or only whitespace", () => {
+      expect(formatProfessor("")).toBe("Unknown");
+      expect(formatProfessor("   ")).toBe("Unknown");
     });
 
-    it("returns trimmed teacher name when teacher is populated", () => {
-      expect(formatTeacher("DELA CRUZ, JUAN")).toBe("DELA CRUZ, JUAN");
-      expect(formatTeacher("  SANTOS, MARIA  ")).toBe("SANTOS, MARIA");
+    it("returns trimmed professor name when professor is populated", () => {
+      expect(formatProfessor("DELA CRUZ, JUAN")).toBe("DELA CRUZ, JUAN");
+      expect(formatProfessor("  SANTOS, MARIA  ")).toBe("SANTOS, MARIA");
     });
   });
 
@@ -258,7 +258,7 @@ describe("formatCandidateConflictLabel", () => {
     latestSnapshot: {
       capturedAt: "2026-08-22T00:00:00Z",
       enrolled: 40,
-      teacher: null,
+      professor: null,
       remark: null,
     },
   });
@@ -370,7 +370,7 @@ describe("toPlanSection", () => {
     latestSnapshot: {
       capturedAt: "2026-08-22T00:00:00Z",
       enrolled: 35,
-      teacher: null,
+      professor: null,
       remark: null,
     },
   };

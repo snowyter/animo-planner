@@ -126,7 +126,7 @@ separately from constraint failures).
 
 Guarantees encoded here: emitted solutions never conflict among solver placements; every
 included course appears in every result; nothing is dropped at course granularity; blank
-teacher and section-code prefixes are never read as constraints.
+professor and section-code prefixes are never read as constraints.
 
 ## Workspace layout & the solve preview (ticket 46)
 

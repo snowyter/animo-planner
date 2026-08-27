@@ -48,7 +48,7 @@ import { getCourseTheme } from "../core/palette";
 import { findConflicts, isBlockConflicting } from "../core/conflicts";
 import {
   findCandidateConflicts,
-  formatTeacher,
+  formatProfessor,
   formatEnrolledCap,
   toPlanSection,
 } from "../core/section";
@@ -143,11 +143,11 @@ interface FlattenedBlock {
 }
 
 /**
- * What a schedule block says on hover. The teacher lives on the section's
+ * What a schedule block says on hover. The professor lives on the section's
  * latest snapshot and was not shown anywhere on the grid, so choosing between
  * two sections of the same course meant going back to the picker.
  *
- * A blank teacher reads as *unknown*, never as absent and never as a dash:
+ * A blank professor reads as *unknown*, never as absent and never as a dash:
  * the value is missing, not empty (CONTEXT.md).
  */
 export function blockTooltip(
@@ -156,12 +156,12 @@ export function blockTooltip(
   flags: { isF2F: boolean; isGhost: boolean; isMissing: boolean }
 ): string {
   const where = flags.isF2F ? block.location ?? "Room" : "Online";
-  const teacher = section.latestSnapshot?.teacher?.trim();
+  const professor = section.latestSnapshot?.professor?.trim();
   const snapshot = section.latestSnapshot;
 
   const lines = [
     `${section.courseCode} ${section.sectionCode} (${formatMinutesRange(block.startMin, block.endMin)}) — ${where}`,
-    `Teacher: ${teacher ? teacher : "Unknown"}`,
+    `Professor: ${professor ? professor : "Unknown"}`,
   ];
   if (snapshot && typeof snapshot.enrolled === "number") {
     lines.push(`Enrolled: ${snapshot.enrolled}`);
@@ -1103,9 +1103,9 @@ export function WeekGrid({
             {/* Details Grid */}
             <div className="grid grid-cols-2 gap-3 rounded-panel border border-border bg-muted/40 p-3 text-xs">
               <div>
-                <span className="text-slate-500 block">Teacher:</span>
+                <span className="text-slate-500 block">Professor:</span>
                 <span className="font-medium text-slate-900">
-                  {formatTeacher(detailsSection.latestSnapshot?.teacher)}
+                  {formatProfessor(detailsSection.latestSnapshot?.professor)}
                 </span>
               </div>
 

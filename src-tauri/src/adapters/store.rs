@@ -15,9 +15,9 @@
 //! - `sections` carries a surrogate `id INTEGER PRIMARY KEY` because §5
 //!   references it with single-column `section_fk`s. The natural key
 //!   `(campus_id, session_id, course_id, section_id)` stays unique.
-//! - `teacher` and `remark` live on `snapshots`, not `sections` — their
+//! - `professor` and `remark` live on `snapshots`, not `sections` — their
 //!   change over time is itself information (ADR-0006).
-//! - A blank teacher is stored as SQL `NULL` (unknown), never as an empty
+//! - A blank professor is stored as SQL `NULL` (unknown), never as an empty
 //!   string that later reads as a value.
 //! - `schedule_blocks.location` is `NULL` exactly when the block is online;
 //!   blocks the parser could not classify keep their raw location text and
@@ -32,8 +32,8 @@ use crate::core::conflicts::{self, PlannedBlock, PlannedSection};
 use crate::core::ics::{ExportBlock, ExportPlan, ExportSection};
 use crate::core::ipc_types::{
     AffectedPlan, BlockModality, CapturedCourse, CaptureSummary, Conflict, Day,
-    ForgetCourseOutcome, MissingSection, RankableTeacher, ScheduleBlock, Section, SectionModality,
-    Snapshot, TeacherPreference,
+    ForgetCourseOutcome, MissingSection, RankableProfessor, ScheduleBlock, Section, SectionModality,
+    Snapshot, ProfessorPreference,
 };
 use crate::core::parser::{ParsedBlock, ParsedSection};
 use crate::core::refresh::RefreshCourse;
@@ -394,7 +394,7 @@ ALTER TABLE courses ADD COLUMN last_refreshed_at TEXT;
 /// identity, a table of per-course preferences, and the IPC to read and
 /// write them.
 ///
-/// One row per `(campus_id, session_id, course_id, teacher_key)` carrying
+/// One row per `(campus_id, session_id, course_id, professor_key)` carrying
 /// either a rank or an avoid, never both (enforced by CHECK). The display
 /// name is stored on the row so the student sees the name they ranked even
 /// if the snapshot it came from is later superseded.
@@ -416,6 +416,22 @@ CREATE TABLE teacher_preferences (
 ) STRICT;
 "#;
 
+/// Migration 9: the app's word for the person who teaches a section became
+/// **professor**, so the storage follows it. `snapshots.teacher` has existed
+/// since migration 1 and ships in released builds, and migration 8's table
+/// was created under the old names — both are historical records that must
+/// keep saying `teacher`, or a database already past them would never be
+/// renamed at all. This migration is what moves them.
+///
+/// `ALTER TABLE ... RENAME` preserves every row, so no snapshot history and
+/// no stored preference is lost. Renaming rather than recreating also keeps
+/// migration 8's CHECK constraints intact.
+const MIGRATION_V9: &str = r#"
+ALTER TABLE snapshots RENAME COLUMN teacher TO professor;
+ALTER TABLE teacher_preferences RENAME COLUMN teacher_key TO professor_key;
+ALTER TABLE teacher_preferences RENAME TO professor_preferences;
+"#;
+
 fn migrations() -> Vec<String> {
     vec![
         MIGRATION_V1.to_string(),
@@ -426,6 +442,7 @@ fn migrations() -> Vec<String> {
         migration_v6(),
         MIGRATION_V7.to_string(),
         MIGRATION_V8.to_string(),
+        MIGRATION_V9.to_string(),
     ]
 }
 
@@ -897,8 +914,8 @@ impl Store {
     }
 
     /// Every captured section of one course under a `(campus, session)`:
-    /// blocks, derived modality, room, and the latest snapshot's teacher,
-    /// enrolment, and remark. A blank teacher arrives as `None` (unknown),
+    /// blocks, derived modality, room, and the latest snapshot's professor,
+    /// enrolment, and remark. A blank professor arrives as `None` (unknown),
     /// and `remark` verbatim. Scoped exactly like [`Store::captured_courses`].
     pub fn captured_sections(
         &self,
@@ -1065,7 +1082,7 @@ impl Store {
                 section_code,
                 blocks: read_wire_blocks(&self.conn, section_fk)?,
                 pinned,
-                teacher: None, // teacher is read from snapshots, not the plan
+                professor: None, // professor is read from snapshots, not the plan
             });
         }
         Ok(fixed)
@@ -1250,7 +1267,7 @@ impl Store {
 
     /// Loads everything the ICS exporter needs about one plan (ticket 17):
     /// the plan name and every member section with its blocks, term dates,
-    /// and the teacher/remark of the latest snapshot.
+    /// and the professor/remark of the latest snapshot.
     ///
     /// A member without captured term dates is a loud
     /// [`StoreError::SectionDatesMissing`], never a silent skip: exporting
@@ -1270,7 +1287,7 @@ impl Store {
 
         let mut stmt = self.conn.prepare(
             "SELECT s.id, s.course_id, s.section_id, c.code, s.section_code,
-                    sn.teacher, sn.remark, s.start_date, s.end_date
+                    sn.professor, sn.remark, s.start_date, s.end_date
              FROM plan_sections ps
              JOIN sections s ON s.id = ps.section_fk
              JOIN courses c ON c.campus_id = s.campus_id AND c.session_id = s.session_id
@@ -1302,7 +1319,7 @@ impl Store {
                 section_id,
                 course_code,
                 section_code,
-                teacher,
+                professor,
                 remark,
                 start_date,
                 end_date,
@@ -1324,7 +1341,7 @@ impl Store {
                 section_id,
                 course_code,
                 section_code,
-                teacher,
+                professor,
                 remark,
                 start_date,
                 end_date,
@@ -1558,18 +1575,18 @@ impl Store {
             .collect()
     }
 
-    /// The distinct teachers on the latest snapshot of each of a course's
+    /// The distinct professors on the latest snapshot of each of a course's
     /// sections, keyed and de-duplicated, each with a display name and the
-    /// sections they are listed on. Latest only — a teacher who has been
+    /// sections they are listed on. Latest only — a professor who has been
     /// replaced cannot be assigned, so ranking them is noise.
     ///
-    /// A blank teacher has no key and never produces a rankable entry.
-    pub fn rankable_teachers(
+    /// A blank professor has no key and never produces a rankable entry.
+    pub fn rankable_professors(
         &self,
         scope: &CaptureScope,
         course_id: i64,
-    ) -> Result<Vec<RankableTeacher>, StoreError> {
-        use crate::core::teachers::teacher_key;
+    ) -> Result<Vec<RankableProfessor>, StoreError> {
+        use crate::core::professors::professor_key;
         use std::collections::BTreeMap;
 
         // Get every section of this course under the scope.
@@ -1586,21 +1603,21 @@ impl Store {
             rows.collect::<Result<Vec<_>, _>>()?
         };
 
-        // For each section, read the latest snapshot's teacher.
+        // For each section, read the latest snapshot's professor.
         let mut by_key: BTreeMap<String, (String, Vec<i64>)> = BTreeMap::new();
         for (section_fk, section_id) in section_fks {
-            let teacher: Option<String> = self
+            let professor: Option<String> = self
                 .conn
                 .query_row(
-                    "SELECT teacher FROM snapshots WHERE section_fk = ?1
+                    "SELECT professor FROM snapshots WHERE section_fk = ?1
                      ORDER BY captured_at DESC, id DESC LIMIT 1",
                     [section_fk],
                     |row| row.get(0),
                 )
                 .optional()?
                 .flatten();
-            if let Some(name) = teacher {
-                if let Some(key) = teacher_key(&name) {
+            if let Some(name) = professor {
+                if let Some(key) = professor_key(&name) {
                     by_key
                         .entry(key.clone())
                         .or_insert_with(|| (name, Vec::new()))
@@ -1612,7 +1629,7 @@ impl Store {
 
         Ok(by_key
             .into_iter()
-            .map(|(key, (display_name, section_ids))| RankableTeacher {
+            .map(|(key, (display_name, section_ids))| RankableProfessor {
                 key,
                 display_name,
                 section_ids,
@@ -1620,24 +1637,24 @@ impl Store {
             .collect())
     }
 
-    /// A course's stored preferences, including entries whose teacher no
+    /// A course's stored preferences, including entries whose professor no
     /// longer appears in the latest-snapshot set. Those are **inactive**:
     /// kept, returned, flagged, and scoring nothing.
     pub fn course_preferences(
         &self,
         scope: &CaptureScope,
         course_id: i64,
-    ) -> Result<Vec<TeacherPreference>, StoreError> {
-        // Build the set of currently-active teacher keys from latest snapshots.
-        let rankable = self.rankable_teachers(scope, course_id)?;
+    ) -> Result<Vec<ProfessorPreference>, StoreError> {
+        // Build the set of currently-active professor keys from latest snapshots.
+        let rankable = self.rankable_professors(scope, course_id)?;
         let active_keys: std::collections::HashSet<String> =
             rankable.iter().map(|t| t.key.clone()).collect();
 
         let mut stmt = self.conn.prepare(
-            "SELECT teacher_key, display_name, rank, avoid
-             FROM teacher_preferences
+            "SELECT professor_key, display_name, rank, avoid
+             FROM professor_preferences
              WHERE campus_id = ?1 AND session_id = ?2 AND course_id = ?3
-             ORDER BY rank, teacher_key",
+             ORDER BY rank, professor_key",
         )?;
         let rows = stmt.query_map(
             rusqlite::params![scope.campus_id, scope.session_id, course_id],
@@ -1653,8 +1670,8 @@ impl Store {
         let mut prefs = Vec::new();
         for row in rows {
             let (key, display_name, rank, avoid) = row?;
-            prefs.push(TeacherPreference {
-                teacher_key: key.clone(),
+            prefs.push(ProfessorPreference {
+                professor_key: key.clone(),
                 display_name,
                 rank,
                 avoid: avoid != 0,
@@ -1681,15 +1698,15 @@ impl Store {
         let tx = self.conn.transaction()?;
         // Delete existing preferences for this course under this scope.
         tx.execute(
-            "DELETE FROM teacher_preferences
+            "DELETE FROM professor_preferences
              WHERE campus_id = ?1 AND session_id = ?2 AND course_id = ?3",
             rusqlite::params![scope.campus_id, scope.session_id, course_id],
         )?;
-        // Insert ranked teachers with contiguous ranks.
+        // Insert ranked professors with contiguous ranks.
         for (rank, (key, display_name)) in ranked.iter().enumerate() {
             tx.execute(
-                "INSERT INTO teacher_preferences
-                 (campus_id, session_id, course_id, teacher_key, display_name, rank, avoid)
+                "INSERT INTO professor_preferences
+                 (campus_id, session_id, course_id, professor_key, display_name, rank, avoid)
                  VALUES (?1, ?2, ?3, ?4, ?5, ?6, 0)",
                 rusqlite::params![
                     scope.campus_id,
@@ -1701,13 +1718,13 @@ impl Store {
                 ],
             )?;
         }
-        // Insert avoided teachers. An avoided teacher carries a display
+        // Insert avoided professors. An avoided professor carries a display
         // name exactly as a ranked one does: the key is case-folded, and a
         // student who avoided "Bryant Lee" must never be shown "bryant lee".
         for (key, display_name) in avoided {
             tx.execute(
-                "INSERT INTO teacher_preferences
-                 (campus_id, session_id, course_id, teacher_key, display_name, rank, avoid)
+                "INSERT INTO professor_preferences
+                 (campus_id, session_id, course_id, professor_key, display_name, rank, avoid)
                  VALUES (?1, ?2, ?3, ?4, ?5, NULL, 1)",
                 rusqlite::params![
                     scope.campus_id,
@@ -1842,8 +1859,8 @@ fn plan_summary_row(conn: &Connection, plan_id: &str) -> Result<PlanSummaryRow, 
 
 /// One section row as solver candidate input (ticket 14): identity, blocks,
 /// and the latest snapshot's live numbers. `enrolled` / `enroll_cap` /
-/// `teacher` of `None` mean *unknown* — the solver never treats unknown
-/// data as full, and never reads teacher at all.
+/// `professor` of `None` mean *unknown* — the solver never treats unknown
+/// data as full, and never reads professor at all.
 fn solver_section_view(conn: &Connection, section_fk: i64) -> Result<SolverSection, StoreError> {
     let (section_id, section_code, enroll_cap): (i64, String, Option<i64>) = conn.query_row(
         "SELECT section_id, section_code, enroll_cap FROM sections WHERE id = ?1",
@@ -1852,20 +1869,20 @@ fn solver_section_view(conn: &Connection, section_fk: i64) -> Result<SolverSecti
     )?;
     let latest: Option<(Option<i64>, Option<String>)> = conn
         .query_row(
-            "SELECT enrolled, teacher FROM snapshots WHERE section_fk = ?1
+            "SELECT enrolled, professor FROM snapshots WHERE section_fk = ?1
              ORDER BY captured_at DESC, id DESC LIMIT 1",
             [section_fk],
             |row| Ok((row.get(0)?, row.get(1)?)),
         )
         .optional()?;
-    let (enrolled, teacher) = latest.unwrap_or((None, None));
+    let (enrolled, professor) = latest.unwrap_or((None, None));
     Ok(SolverSection {
         section_id,
         section_code,
         blocks: read_wire_blocks(conn, section_fk)?,
         enrolled,
         enroll_cap,
-        teacher,
+        professor,
     })
 }
 
@@ -2041,13 +2058,13 @@ fn append_snapshot(
     captured_at: &str,
 ) -> Result<i64, StoreError> {
     tx.execute(
-        "INSERT INTO snapshots (section_fk, captured_at, enrolled, teacher, remark)
+        "INSERT INTO snapshots (section_fk, captured_at, enrolled, professor, remark)
          VALUES (?1, ?2, ?3, ?4, ?5)",
         rusqlite::params![
             section_fk,
             captured_at,
             section.enrolled,
-            section.teacher,
+            section.professor,
             section.remark,
         ],
     )?;
@@ -2196,7 +2213,7 @@ fn derive_section_modality(blocks: &[ScheduleBlock]) -> SectionModality {
 /// a loud error rather than fabricating a snapshot.
 fn latest_snapshot(conn: &Connection, section_fk: i64) -> Result<Option<Snapshot>, StoreError> {
     conn.query_row(
-        "SELECT captured_at, enrolled, teacher, remark
+        "SELECT captured_at, enrolled, professor, remark
          FROM snapshots WHERE section_fk = ?1
          ORDER BY captured_at DESC, id DESC LIMIT 1",
         [section_fk],
@@ -2204,7 +2221,7 @@ fn latest_snapshot(conn: &Connection, section_fk: i64) -> Result<Option<Snapshot
             Ok(Snapshot {
                 captured_at: row.get(0)?,
                 enrolled: row.get::<_, Option<i64>>(1)?.unwrap_or(0),
-                teacher: row.get(2)?,
+                professor: row.get(2)?,
                 remark: row.get(3)?,
             })
         },
@@ -2240,7 +2257,7 @@ mod tests {
         course_id: i64,
         section_id: i64,
         section_code: &str,
-        teacher: Option<&str>,
+        professor: Option<&str>,
         enrolled: Option<i64>,
         blocks: Vec<ParsedBlock>,
     ) -> ParsedSection {
@@ -2254,7 +2271,7 @@ mod tests {
             credits: Some(3.0),
             enroll_cap: Some(45),
             enrolled,
-            teacher: teacher.map(str::to_string),
+            professor: professor.map(str::to_string),
             remark: None,
             start_date: None,
             end_date: None,
@@ -2339,7 +2356,7 @@ mod tests {
     fn snapshot_rows(conn: &Connection) -> Vec<SnapshotRow> {
         let mut stmt = conn
             .prepare(
-                "SELECT s.section_id, sn.captured_at, sn.enrolled, sn.teacher
+                "SELECT s.section_id, sn.captured_at, sn.enrolled, sn.professor
                  FROM snapshots sn JOIN sections s ON s.id = sn.section_fk
                  ORDER BY s.section_id, sn.captured_at, sn.id",
             )
@@ -2385,11 +2402,65 @@ mod tests {
                 "courses",
                 "plan_sections",
                 "plans",
+                "professor_preferences",
                 "schedule_blocks",
                 "sections",
                 "snapshots",
-                "teacher_preferences",
             ]
+        );
+    }
+
+    #[test]
+    fn migration_nine_renames_to_professor_and_keeps_every_row() {
+        // A database sitting at version 8 — the shape a build from before
+        // the rename left behind. Migration 9 must move the names without
+        // touching the data: a snapshot's professor and a stored preference
+        // both have to survive, or the rename would quietly cost a student
+        // their captured history and their ranking.
+        let conn = Connection::open_in_memory().expect("in-memory database");
+        for migration in migrations().iter().take(8) {
+            conn.execute_batch(migration).expect("migration must apply");
+        }
+        conn.pragma_update(None, "user_version", 8).expect("user_version");
+        conn.execute_batch(
+            "INSERT INTO courses (campus_id, session_id, course_id, code, title)
+             VALUES (7, 155, 2923, 'GEARTAP', 'Title');
+             INSERT INTO sections (campus_id, session_id, course_id, section_id, section_code,
+                                   course_type, credits, enroll_cap, first_seen_at, last_seen_at)
+             VALUES (7, 155, 2923, 384, 'S01', NULL, NULL, 40, 't', 't');
+             INSERT INTO snapshots (section_fk, captured_at, enrolled, teacher, remark)
+             VALUES (1, 't', 5, 'Bryant Lee', NULL);
+             INSERT INTO teacher_preferences
+                 (campus_id, session_id, course_id, teacher_key, display_name, rank, avoid)
+             VALUES (7, 155, 2923, 'bryant lee', 'Bryant Lee', 1, 0);",
+        )
+        .expect("seed a version-eight database");
+
+        migrate(&conn).expect("migration nine must apply");
+
+        let version: i64 = conn
+            .query_row("PRAGMA user_version", [], |row| row.get(0))
+            .expect("user_version");
+        assert_eq!(version, 9);
+
+        let professor: String = conn
+            .query_row("SELECT professor FROM snapshots", [], |row| row.get(0))
+            .expect("the snapshot survives the rename");
+        assert_eq!(professor, "Bryant Lee");
+
+        let (key, name, rank): (String, String, i64) = conn
+            .query_row(
+                "SELECT professor_key, display_name, rank FROM professor_preferences",
+                [],
+                |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)),
+            )
+            .expect("the preference survives the rename");
+        assert_eq!((key.as_str(), name.as_str(), rank), ("bryant lee", "Bryant Lee", 1));
+
+        let tables = table_names(&conn);
+        assert!(
+            !tables.iter().any(|name| name == "teacher_preferences"),
+            "the old table name must be gone: {tables:?}"
         );
     }
 
@@ -2404,7 +2475,7 @@ mod tests {
             .conn
             .query_row("PRAGMA user_version", [], |row| row.get(0))
             .expect("user_version must be readable");
-        assert_eq!(version, 8, "every migration applies exactly once");
+        assert_eq!(version, 9, "every migration applies exactly once");
     }
 
     #[test]
@@ -2473,7 +2544,7 @@ mod tests {
             ),
             (
                 "snapshots",
-                &["id", "section_fk", "captured_at", "enrolled", "teacher", "remark"],
+                &["id", "section_fk", "captured_at", "enrolled", "professor", "remark"],
             ),
             (
                 "plans",
@@ -2484,8 +2555,8 @@ mod tests {
                 &["plan_id", "section_fk", "pinned", "missing"],
             ),
             (
-                "teacher_preferences",
-                &["campus_id", "session_id", "course_id", "teacher_key",
+                "professor_preferences",
+                &["campus_id", "session_id", "course_id", "professor_key",
                   "display_name", "rank", "avoid"],
             ),
         ];
@@ -2548,29 +2619,29 @@ mod tests {
     }
 
     #[test]
-    fn unknown_teacher_round_trips_as_sql_null_never_an_empty_string() {
+    fn unknown_professor_round_trips_as_sql_null_never_an_empty_string() {
         let mut store = store();
         let unknown = parsed_section(2923, 384, "S01", None, Some(10), vec![]);
         store.record_capture(&SCOPE, &[unknown], T1).expect("capture");
 
-        let teacher_is_null: i64 = store
+        let professor_is_null: i64 = store
             .conn
             .query_row(
-                "SELECT COUNT(*) FROM snapshots WHERE teacher IS NULL",
+                "SELECT COUNT(*) FROM snapshots WHERE professor IS NULL",
                 [],
                 |row| row.get(0),
             )
-            .expect("null teacher count");
-        let teacher_is_blank: i64 = store
+            .expect("null professor count");
+        let professor_is_blank: i64 = store
             .conn
             .query_row(
-                "SELECT COUNT(*) FROM snapshots WHERE teacher = ''",
+                "SELECT COUNT(*) FROM snapshots WHERE professor = ''",
                 [],
                 |row| row.get(0),
             )
-            .expect("blank teacher count");
-        assert_eq!(teacher_is_null, 1, "blank teacher means unknown, stored as NULL");
-        assert_eq!(teacher_is_blank, 0, "an empty string would later read as a value");
+            .expect("blank professor count");
+        assert_eq!(professor_is_null, 1, "blank professor means unknown, stored as NULL");
+        assert_eq!(professor_is_blank, 0, "an empty string would later read as a value");
     }
 
     // ---------- schedule blocks ----------
@@ -2868,7 +2939,7 @@ mod tests {
             .conn
             .query_row("PRAGMA user_version", [], |row| row.get(0))
             .expect("user_version must be readable");
-        assert_eq!(version, 8, "a fresh database runs every migration");
+        assert_eq!(version, 9, "a fresh database runs every migration");
         assert!(
             column_names(&store.conn, "plans").contains(&"is_sample".to_string()),
             "plans must carry the sample-data marker"
@@ -2882,7 +2953,7 @@ mod tests {
             .conn
             .query_row("PRAGMA user_version", [], |row| row.get(0))
             .expect("user_version must be readable");
-        assert_eq!(version, 8, "a fresh database runs every migration");
+        assert_eq!(version, 9, "a fresh database runs every migration");
         assert!(
             column_names(&store.conn, "plan_sections").contains(&"missing".to_string()),
             "plan_sections must carry the missing marker"
@@ -2912,7 +2983,7 @@ mod tests {
                     (7, 155, 564, 737, 'Z01', NULL, NULL, 40, 't', 't');
              INSERT INTO schedule_blocks (section_fk, day, start_min, end_min, location)
              VALUES (1, 'MON', 450, 540, 'L226'), (2, 'TUE', 450, 540, 'L226');
-             INSERT INTO snapshots (section_fk, captured_at, enrolled, teacher, remark)
+             INSERT INTO snapshots (section_fk, captured_at, enrolled, teacher, remark)  -- v5 schema: renamed by migration 9
              VALUES (1, 't', 5, NULL, NULL), (2, 't', 5, NULL, NULL);
              INSERT INTO plans (id, name, campus_id, session_id, created_at, is_sample) VALUES
                  ('sample-plan', 'Sample data', {sample_campus}, {sample_session}, 't', 1),
@@ -2975,7 +3046,7 @@ mod tests {
         let version: i64 = conn
             .query_row("PRAGMA user_version", [], |row| row.get(0))
             .expect("user_version");
-        assert_eq!(version, 8);
+        assert_eq!(version, 9);
         let is_sample: i64 = conn
             .query_row("SELECT is_sample FROM plans WHERE id = 'p1'", [], |row| row.get(0))
             .expect("is_sample must be readable");
@@ -3009,7 +3080,7 @@ mod tests {
         let version: i64 = conn
             .query_row("PRAGMA user_version", [], |row| row.get(0))
             .expect("user_version");
-        assert_eq!(version, 8);
+        assert_eq!(version, 9);
         let missing: i64 = conn
             .query_row("SELECT missing FROM plan_sections", [], |row| row.get(0))
             .expect("missing must be readable");
@@ -3050,6 +3121,7 @@ mod tests {
                 ('sample-plan', 2, 0, 0),
                 ('p1',          2, 0, 0),
                 ('p1',          3, 0, 0);
+             -- v4 schema: the column is still `teacher`, renamed by migration 9
              INSERT INTO snapshots (section_fk, captured_at, enrolled, teacher) VALUES
                 (1, 't', 10, NULL),
                 (2, 't', 20, 'X'),
@@ -3465,10 +3537,10 @@ mod tests {
         course_id: i64,
         section_id: i64,
         section_code: &str,
-        teacher: Option<&str>,
+        professor: Option<&str>,
         blocks: Vec<ParsedBlock>,
     ) -> ParsedSection {
-        let mut section = parsed_section(course_id, section_id, section_code, teacher, Some(10), blocks);
+        let mut section = parsed_section(course_id, section_id, section_code, professor, Some(10), blocks);
         section.remark = Some("Bring laptop".into());
         section.start_date = Some(chrono::NaiveDate::from_ymd_opt(2026, 7, 10).expect("start"));
         section.end_date = Some(chrono::NaiveDate::from_ymd_opt(2026, 12, 9).expect("end"));
@@ -3555,9 +3627,9 @@ mod tests {
         assert_eq!(s01.course_id, 2923);
         assert_eq!(s01.section_id, 384);
         assert_eq!(
-            s01.teacher.as_deref(),
+            s01.professor.as_deref(),
             Some("Bryant Lee"),
-            "teacher comes from the latest snapshot"
+            "professor comes from the latest snapshot"
         );
         assert_eq!(s01.remark.as_deref(), Some("Bring laptop"));
         assert_eq!(
@@ -3588,14 +3660,14 @@ mod tests {
         let y11 = &export.sections[0];
         assert_eq!(y11.course_id, 564);
         assert_eq!(y11.section_id, 737);
-        assert_eq!(y11.teacher, None);
+        assert_eq!(y11.professor, None);
         assert_eq!(y11.blocks.len(), 1);
         assert_eq!(y11.blocks[0].day, Day::Sat);
         assert_eq!(y11.blocks[0].location, None);
     }
 
     #[test]
-    fn the_export_carries_the_teacher_from_the_latest_snapshot_not_the_first() {
+    fn the_export_carries_the_professor_from_the_latest_snapshot_not_the_first() {
         let mut store = store();
         store.create_plan("p1", "T1 load", &SCOPE, T1).expect("plan");
         store
@@ -3604,11 +3676,11 @@ mod tests {
                 &[dated_section(2923, 384, "S01", None, vec![])],
                 T1,
             )
-            .expect("first capture: no teacher yet");
+            .expect("first capture: no professor yet");
         store.add_section_to_plan("p1", 2923, 384).expect("add");
 
         let before = store.load_plan_ics_export("p1").expect("export input");
-        assert_eq!(before.sections[0].teacher, None);
+        assert_eq!(before.sections[0].professor, None);
 
         store
             .record_capture(
@@ -3616,10 +3688,10 @@ mod tests {
                 &[dated_section(2923, 384, "S01", Some("Bryant Lee"), vec![])],
                 T2,
             )
-            .expect("second capture: teacher populated");
+            .expect("second capture: professor populated");
         let after = store.load_plan_ics_export("p1").expect("export input");
         assert_eq!(
-            after.sections[0].teacher.as_deref(),
+            after.sections[0].professor.as_deref(),
             Some("Bryant Lee"),
             "the newest snapshot wins; earlier ones stay history"
         );
@@ -4177,7 +4249,7 @@ mod tests {
             "alternatives are the other sections of the same course"
         );
         assert_eq!(alternatives[0].course_code, "CSINTSY");
-        assert_eq!(alternatives[0].latest_snapshot.teacher.as_deref(), Some("Bryant Lee"));
+        assert_eq!(alternatives[0].latest_snapshot.professor.as_deref(), Some("Bryant Lee"));
         assert_eq!(alternatives[0].latest_snapshot.enrolled, 20);
         assert_eq!(alternatives[0].modality, SectionModality::Hybrid);
         assert_eq!(alternatives[0].blocks.len(), 2);
@@ -4331,7 +4403,7 @@ mod tests {
         assert_eq!(y11.blocks[0].location.as_deref(), Some("L226"));
         assert_eq!(y11.blocks[1].modality, BlockModality::Online);
         assert_eq!(y11.blocks[1].location, None);
-        assert_eq!(y11.latest_snapshot.teacher.as_deref(), Some("Bryant Lee"));
+        assert_eq!(y11.latest_snapshot.professor.as_deref(), Some("Bryant Lee"));
         assert_eq!(y11.latest_snapshot.enrolled, 39);
     }
 
@@ -4553,8 +4625,8 @@ mod tests {
         assert_eq!(s01.course_code, "CSINTSY");
         assert_eq!(s01.modality, SectionModality::Online);
         assert_eq!(
-            s01.latest_snapshot.teacher, None,
-            "a blank teacher crosses the seam as unknown, never as an empty string"
+            s01.latest_snapshot.professor, None,
+            "a blank professor crosses the seam as unknown, never as an empty string"
         );
         assert_eq!(s01.latest_snapshot.enrolled, 10);
 
@@ -4563,7 +4635,7 @@ mod tests {
         assert_eq!(s02.blocks.len(), 2);
         assert_eq!(s02.blocks[0].location.as_deref(), Some("L226"));
         assert_eq!(s02.blocks[1].modality, BlockModality::Online);
-        assert_eq!(s02.latest_snapshot.teacher.as_deref(), Some("Bryant Lee"));
+        assert_eq!(s02.latest_snapshot.professor.as_deref(), Some("Bryant Lee"));
         assert_eq!(
             s02.latest_snapshot.remark.as_deref(),
             Some(" Bring laptop "),
@@ -4888,7 +4960,7 @@ mod tests {
         assert_eq!(csintsy.code, "CSINTSY");
         assert_eq!(csintsy.sections.len(), 2, "all captured sections stay candidates");
         let s02 = csintsy.sections.iter().find(|s| s.section_id == 385).expect("S02");
-        assert_eq!(s02.teacher.as_deref(), Some("Bryant Lee"));
+        assert_eq!(s02.professor.as_deref(), Some("Bryant Lee"));
         assert_eq!(s02.enrolled, Some(20));
         assert_eq!(s02.enroll_cap, Some(45), "cap comes from the section row");
         let s01 = csintsy.sections.iter().find(|s| s.section_id == 384).expect("S01");
@@ -5134,25 +5206,25 @@ mod tests {
         );
     }
 
-    // ---------- teacher preferences (ticket 47) ----------
+    // ---------- professor preferences (ticket 47) ----------
 
     #[test]
-    fn migration_eight_creates_the_teacher_preferences_table() {
+    fn migration_eight_creates_the_professor_preferences_table() {
         let store = store();
         assert!(
-            table_names(&store.conn).contains(&"teacher_preferences".to_string()),
-            "teacher_preferences table must exist after migration"
+            table_names(&store.conn).contains(&"professor_preferences".to_string()),
+            "professor_preferences table must exist after migration"
         );
     }
 
     #[test]
-    fn teacher_preferences_columns_match_the_spec() {
+    fn professor_preferences_columns_match_the_spec() {
         let store = store();
         assert_eq!(
-            column_names(&store.conn, "teacher_preferences"),
-            vec!["campus_id", "session_id", "course_id", "teacher_key",
+            column_names(&store.conn, "professor_preferences"),
+            vec!["campus_id", "session_id", "course_id", "professor_key",
                  "display_name", "rank", "avoid"],
-            "column allowlist for teacher_preferences"
+            "column allowlist for professor_preferences"
         );
     }
 
@@ -5161,131 +5233,131 @@ mod tests {
         let store = store();
         migrate(&store.conn).expect("re-migration must not error");
         let tables = table_names(&store.conn);
-        let pref_count = tables.iter().filter(|t| *t == "teacher_preferences").count();
-        assert_eq!(pref_count, 1, "teacher_preferences must not be created twice");
+        let pref_count = tables.iter().filter(|t| *t == "professor_preferences").count();
+        assert_eq!(pref_count, 1, "professor_preferences must not be created twice");
     }
 
     #[test]
-    fn rankable_teachers_come_from_latest_snapshots_keyed_and_deduplicated() {
+    fn rankable_professors_come_from_latest_snapshots_keyed_and_deduplicated() {
         let mut store = store();
-        // Two sections with teachers that normalize to the same key.
+        // Two sections with professors that normalize to the same key.
         store.record_capture(&SCOPE, &[
             parsed_section(2923, 384, "S01", Some("Bryant Lee"), Some(10), vec![]),
             parsed_section(2923, 385, "S02", Some("BRYANT LEE"), Some(20), vec![]),
         ], T1).expect("capture");
 
-        let teachers = store.rankable_teachers(&SCOPE, 2923).expect("rankable");
-        assert_eq!(teachers.len(), 1, "same key deduplicates");
-        assert_eq!(teachers[0].key, "bryant lee");
-        assert_eq!(teachers[0].display_name, "Bryant Lee", "first seen display name");
-        assert_eq!(teachers[0].section_ids, vec![384, 385]);
+        let professors = store.rankable_professors(&SCOPE, 2923).expect("rankable");
+        assert_eq!(professors.len(), 1, "same key deduplicates");
+        assert_eq!(professors[0].key, "bryant lee");
+        assert_eq!(professors[0].display_name, "Bryant Lee", "first seen display name");
+        assert_eq!(professors[0].section_ids, vec![384, 385]);
     }
 
     #[test]
-    fn blank_teacher_never_produces_a_rankable_entry() {
+    fn blank_professor_never_produces_a_rankable_entry() {
         let mut store = store();
         store.record_capture(&SCOPE, &[
             parsed_section(2923, 384, "S01", None, Some(10), vec![]),
             parsed_section(2923, 385, "S02", Some("  "), Some(20), vec![]),
         ], T1).expect("capture");
 
-        let teachers = store.rankable_teachers(&SCOPE, 2923).expect("rankable");
-        assert!(teachers.is_empty(), "blank and whitespace-only teachers have no key");
+        let professors = store.rankable_professors(&SCOPE, 2923).expect("rankable");
+        assert!(professors.is_empty(), "blank and whitespace-only professors have no key");
     }
 
     #[test]
-    fn rankable_teachers_only_come_from_latest_snapshots() {
+    fn rankable_professors_only_come_from_latest_snapshots() {
         let mut store = store();
-        // First capture: teacher A
+        // First capture: professor A
         store.record_capture(&SCOPE, &[
-            parsed_section(2923, 384, "S01", Some("Old Teacher"), Some(10), vec![]),
+            parsed_section(2923, 384, "S01", Some("Old Professor"), Some(10), vec![]),
         ], T1).expect("first capture");
-        // Second capture: teacher B replaces A on the same section
+        // Second capture: professor B replaces A on the same section
         store.record_capture(&SCOPE, &[
-            parsed_section(2923, 384, "S01", Some("New Teacher"), Some(11), vec![]),
+            parsed_section(2923, 384, "S01", Some("New Professor"), Some(11), vec![]),
         ], T2).expect("second capture");
 
-        let teachers = store.rankable_teachers(&SCOPE, 2923).expect("rankable");
-        assert_eq!(teachers.len(), 1);
-        assert_eq!(teachers[0].key, "new teacher", "only the latest snapshot counts");
+        let professors = store.rankable_professors(&SCOPE, 2923).expect("rankable");
+        assert_eq!(professors.len(), 1);
+        assert_eq!(professors[0].key, "new professor", "only the latest snapshot counts");
     }
 
     #[test]
-    fn rankable_teachers_is_empty_for_an_uncaptured_course() {
+    fn rankable_professors_is_empty_for_an_uncaptured_course() {
         let store = store();
-        let teachers = store.rankable_teachers(&SCOPE, 9999).expect("rankable");
-        assert!(teachers.is_empty());
+        let professors = store.rankable_professors(&SCOPE, 9999).expect("rankable");
+        assert!(professors.is_empty());
     }
 
     #[test]
-    fn rankable_teachers_stays_inside_the_scope() {
+    fn rankable_professors_stays_inside_the_scope() {
         let mut store = store();
         store.record_capture(&SCOPE, &[
-            parsed_section(2923, 384, "S01", Some("Scoped Teacher"), Some(10), vec![]),
+            parsed_section(2923, 384, "S01", Some("Scoped Professor"), Some(10), vec![]),
         ], T1).expect("scope A capture");
         store.record_capture(&OTHER_SCOPE, &[
-            parsed_section(2923, 384, "S01", Some("Other Teacher"), Some(20), vec![]),
+            parsed_section(2923, 384, "S01", Some("Other Professor"), Some(20), vec![]),
         ], T1).expect("scope B capture");
 
-        let teachers = store.rankable_teachers(&SCOPE, 2923).expect("rankable");
-        assert_eq!(teachers.len(), 1);
-        assert_eq!(teachers[0].key, "scoped teacher");
+        let professors = store.rankable_professors(&SCOPE, 2923).expect("rankable");
+        assert_eq!(professors.len(), 1);
+        assert_eq!(professors[0].key, "scoped professor");
     }
 
     #[test]
-    fn write_course_preferences_stores_ranked_and_avoided_teachers() {
+    fn write_course_preferences_stores_ranked_and_avoided_professors() {
         let mut store = store();
         store.record_capture(&SCOPE, &[
             parsed_section(2923, 384, "S01", Some("Bryant Lee"), Some(10), vec![]),
-            parsed_section(2923, 385, "S02", Some("Other Teacher"), Some(20), vec![]),
+            parsed_section(2923, 385, "S02", Some("Other Professor"), Some(20), vec![]),
         ], T1).expect("capture");
 
         store.write_course_preferences(
             &SCOPE, 2923,
             &[
                 ("bryant lee".into(), "Bryant Lee".into()),
-                ("other teacher".into(), "Other Teacher".into()),
+                ("other professor".into(), "Other Professor".into()),
             ],
             &[],
         ).expect("write prefs");
 
         let prefs = store.course_preferences(&SCOPE, 2923).expect("read prefs");
         assert_eq!(prefs.len(), 2);
-        assert_eq!(prefs[0].teacher_key, "bryant lee");
+        assert_eq!(prefs[0].professor_key, "bryant lee");
         assert_eq!(prefs[0].rank, Some(1));
         assert!(!prefs[0].avoid);
-        assert_eq!(prefs[1].teacher_key, "other teacher");
+        assert_eq!(prefs[1].professor_key, "other professor");
         assert_eq!(prefs[1].rank, Some(2));
         assert!(!prefs[1].avoid);
     }
 
     #[test]
-    fn write_course_preferences_stores_avoided_teachers() {
+    fn write_course_preferences_stores_avoided_professors() {
         let mut store = store();
         store.record_capture(&SCOPE, &[
             parsed_section(2923, 384, "S01", Some("Bryant Lee"), Some(10), vec![]),
-            parsed_section(2923, 385, "S02", Some("Other Teacher"), Some(20), vec![]),
+            parsed_section(2923, 385, "S02", Some("Other Professor"), Some(20), vec![]),
         ], T1).expect("capture");
 
         store.write_course_preferences(
             &SCOPE, 2923,
             &[],
-            &[("other teacher".into(), "Other Teacher".into())],
+            &[("other professor".into(), "Other Professor".into())],
         ).expect("write prefs");
 
         let prefs = store.course_preferences(&SCOPE, 2923).expect("read prefs");
         assert_eq!(prefs.len(), 1);
-        assert_eq!(prefs[0].teacher_key, "other teacher");
+        assert_eq!(prefs[0].professor_key, "other professor");
         assert_eq!(prefs[0].rank, None);
         assert!(prefs[0].avoid);
         assert_eq!(
-            prefs[0].display_name, "Other Teacher",
-            "an avoided teacher is displayed by name, never by its case-folded key"
+            prefs[0].display_name, "Other Professor",
+            "an avoided professor is displayed by name, never by its case-folded key"
         );
     }
 
     #[test]
-    fn an_avoided_teacher_is_never_displayed_as_its_key() {
+    fn an_avoided_professor_is_never_displayed_as_its_key() {
         // The key is case-folded for matching. A student who avoided
         // "Bryant Lee" must not be shown "bryant lee" in the list they
         // dragged them into.
@@ -5303,7 +5375,7 @@ mod tests {
         let prefs = store.course_preferences(&SCOPE, 2923).expect("read prefs");
         assert_eq!(prefs[0].display_name, "Bryant Lee");
         assert_ne!(
-            prefs[0].display_name, prefs[0].teacher_key,
+            prefs[0].display_name, prefs[0].professor_key,
             "the display name must not be the normalized key"
         );
     }
@@ -5333,14 +5405,14 @@ mod tests {
 
         let prefs = store.course_preferences(&SCOPE, 2923).expect("read prefs");
         assert_eq!(prefs.len(), 2, "previous preferences are replaced");
-        let b = prefs.iter().find(|p| p.teacher_key == "b").expect("B");
+        let b = prefs.iter().find(|p| p.professor_key == "b").expect("B");
         assert_eq!(b.rank, Some(1));
         assert!(!b.avoid);
-        let c = prefs.iter().find(|p| p.teacher_key == "c").expect("C");
+        let c = prefs.iter().find(|p| p.professor_key == "c").expect("C");
         assert_eq!(c.rank, None);
         assert!(c.avoid);
         assert!(
-            prefs.iter().all(|p| p.teacher_key != "a"),
+            prefs.iter().all(|p| p.professor_key != "a"),
             "A was removed by the replacement"
         );
     }
@@ -5373,8 +5445,8 @@ mod tests {
     fn the_mutual_exclusion_check_rejects_rank_and_avoid_on_the_same_row() {
         let store = store();
         let err = store.conn.execute(
-            "INSERT INTO teacher_preferences
-             (campus_id, session_id, course_id, teacher_key, display_name, rank, avoid)
+            "INSERT INTO professor_preferences
+             (campus_id, session_id, course_id, professor_key, display_name, rank, avoid)
              VALUES (7, 155, 2923, 'key', 'Name', 1, 1)",
             [],
         );
@@ -5397,52 +5469,52 @@ mod tests {
 
         let prefs = store.course_preferences(&SCOPE, 2923).expect("prefs survive");
         assert_eq!(prefs.len(), 1, "preferences lie dormant after forget");
-        assert_eq!(prefs[0].teacher_key, "bryant lee");
+        assert_eq!(prefs[0].professor_key, "bryant lee");
     }
 
     #[test]
-    fn preferences_return_inactive_when_teacher_leaves_latest_snapshots() {
+    fn preferences_return_inactive_when_professor_leaves_latest_snapshots() {
         let mut store = store();
-        // Capture with teacher A
+        // Capture with professor A
         store.record_capture(&SCOPE, &[
-            parsed_section(2923, 384, "S01", Some("Old Teacher"), Some(10), vec![]),
+            parsed_section(2923, 384, "S01", Some("Old Professor"), Some(10), vec![]),
         ], T1).expect("first capture");
         store.write_course_preferences(
             &SCOPE, 2923,
-            &[("old teacher".into(), "Old Teacher".into())],
+            &[("old professor".into(), "Old Professor".into())],
             &[],
         ).expect("write prefs");
 
-        // Re-capture: teacher replaced
+        // Re-capture: professor replaced
         store.record_capture(&SCOPE, &[
-            parsed_section(2923, 384, "S01", Some("New Teacher"), Some(11), vec![]),
+            parsed_section(2923, 384, "S01", Some("New Professor"), Some(11), vec![]),
         ], T2).expect("second capture");
 
         let prefs = store.course_preferences(&SCOPE, 2923).expect("prefs");
         assert_eq!(prefs.len(), 1);
-        assert_eq!(prefs[0].teacher_key, "old teacher");
-        assert!(!prefs[0].active, "old teacher is no longer in latest snapshots");
+        assert_eq!(prefs[0].professor_key, "old professor");
+        assert!(!prefs[0].active, "old professor is no longer in latest snapshots");
     }
 
     #[test]
     fn two_capture_scopes_with_the_same_course_id_do_not_see_each_others_preferences() {
         let mut store = store();
         store.record_capture(&SCOPE, &[
-            parsed_section(2923, 384, "S01", Some("Teacher A"), Some(10), vec![]),
+            parsed_section(2923, 384, "S01", Some("Professor A"), Some(10), vec![]),
         ], T1).expect("scope A capture");
         store.record_capture(&OTHER_SCOPE, &[
-            parsed_section(2923, 384, "S01", Some("Teacher B"), Some(20), vec![]),
+            parsed_section(2923, 384, "S01", Some("Professor B"), Some(20), vec![]),
         ], T1).expect("scope B capture");
 
         store.write_course_preferences(
             &SCOPE, 2923,
-            &[("teacher a".into(), "Teacher A".into())],
+            &[("professor a".into(), "Professor A".into())],
             &[],
         ).expect("write scope A prefs");
 
         let prefs_a = store.course_preferences(&SCOPE, 2923).expect("scope A prefs");
         assert_eq!(prefs_a.len(), 1);
-        assert_eq!(prefs_a[0].teacher_key, "teacher a");
+        assert_eq!(prefs_a[0].professor_key, "professor a");
 
         let prefs_b = store.course_preferences(&OTHER_SCOPE, 2923).expect("scope B prefs");
         assert!(prefs_b.is_empty(), "scope B has no preferences yet");

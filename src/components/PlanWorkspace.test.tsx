@@ -26,7 +26,7 @@ vi.mock("../adapters/ipc/client", () => ({
   applySolution: vi.fn(),
   onCaptureUpdated: vi.fn().mockResolvedValue(() => {}),
   onCaptureFailed: vi.fn().mockResolvedValue(() => {}),
-  listRankableTeachers: vi.fn().mockResolvedValue([]),
+  listRankableProfessors: vi.fn().mockResolvedValue([]),
   getCoursePreferences: vi.fn().mockResolvedValue([]),
   writeCoursePreferences: vi.fn().mockResolvedValue([]),
 }));
@@ -104,7 +104,7 @@ describe("PlanWorkspace", () => {
     latestSnapshot: {
       capturedAt: "2026-08-22T00:00:00Z",
       enrolled: 42,
-      teacher: "Prof X",
+      professor: "Prof X",
       remark: null,
     },
   });
@@ -915,7 +915,7 @@ describe("PlanWorkspace persistent week grid layout (ticket 28)", () => {
       latestSnapshot: {
         capturedAt: "2026-08-22T00:00:00Z",
         enrolled: 42,
-        teacher: "Prof X",
+        professor: "Prof X",
         remark: null,
       },
     };
@@ -1012,7 +1012,7 @@ describe("PlanWorkspace persistent week grid layout (ticket 28)", () => {
       latestSnapshot: {
         capturedAt: "2026-08-22T00:00:00Z",
         enrolled: 42,
-        teacher: "Prof X",
+        professor: "Prof X",
         remark: null,
       },
     };
@@ -1038,7 +1038,7 @@ describe("PlanWorkspace persistent week grid layout (ticket 28)", () => {
       latestSnapshot: {
         capturedAt: "2026-08-22T00:00:00Z",
         enrolled: 30,
-        teacher: "Prof Y",
+        professor: "Prof Y",
         remark: null,
       },
     };
@@ -1099,7 +1099,7 @@ describe("the tool panel and the permanent week grid", () => {
     latestSnapshot: {
       capturedAt: "2026-08-22T00:00:00Z",
       enrolled: 42,
-      teacher: "Prof X",
+      professor: "Prof X",
       remark: null,
     },
   };
@@ -1736,13 +1736,13 @@ describe("PlanWorkspace plan-mutating handlers reload the plan", () => {
 });
 
 /**
- * Ticket 49 — ranking the teachers of a course.
+ * Ticket 49 — ranking the professors of a course.
  *
  * The suite renders to static markup, so the drill-down and the preferences
  * behind it are drivable from props, the way `initialTab` and
  * `initialToolsOpen` already are.
  */
-describe("PlanWorkspace teacher preferences", () => {
+describe("PlanWorkspace professor preferences", () => {
   const planSummary: PlanSummary = {
     id: "p1",
     name: "T1 Target Schedule",
@@ -1769,7 +1769,7 @@ describe("PlanWorkspace teacher preferences", () => {
     latestSnapshot: {
       capturedAt: "2026-08-27T00:00:00Z",
       enrolled: 40,
-      teacher: "Bryant Lee",
+      professor: "Bryant Lee",
       remark: null,
     },
   };
@@ -1779,7 +1779,7 @@ describe("PlanWorkspace teacher preferences", () => {
       2923,
       [
         {
-          teacherKey: "bryant lee",
+          professorKey: "bryant lee",
           displayName: "Bryant Lee",
           rank: null,
           avoid: true,
@@ -1820,7 +1820,7 @@ describe("PlanWorkspace teacher preferences", () => {
       const html = render({ initialRankingCourseId: 2923 });
 
       expect(html).toContain('data-testid="ranking-drilldown"');
-      expect(html).toContain('data-testid="teacher-ranking"');
+      expect(html).toContain('data-testid="professor-ranking"');
       expect(html).not.toContain('data-testid="workspace-columns"');
     });
 
@@ -1835,7 +1835,7 @@ describe("PlanWorkspace teacher preferences", () => {
     it("offers the explicit way back to the Capture tab", () => {
       const html = render({ initialRankingCourseId: 2923 });
 
-      expect(html).toContain('data-testid="teacher-ranking-back"');
+      expect(html).toContain('data-testid="professor-ranking-back"');
     });
 
     it("is not open unless it was drilled into", () => {
@@ -1847,7 +1847,7 @@ describe("PlanWorkspace teacher preferences", () => {
   });
 
   describe("the advisory notice", () => {
-    it("names the section and the teacher it has acquired, from any tab", () => {
+    it("names the section and the professor it has acquired, from any tab", () => {
       for (const initialTab of ["capture", "solve", "pick"]) {
         const html = render({
           initialTab,
@@ -1857,7 +1857,7 @@ describe("PlanWorkspace teacher preferences", () => {
         expect(
           html,
           `the advisory must be visible from the ${initialTab} tab`
-        ).toContain('data-testid="avoided-teacher-notice"');
+        ).toContain('data-testid="avoided-professor-notice"');
         expect(html).toContain("GEARTAP S17");
         expect(html).toContain("Bryant Lee");
       }
@@ -1866,13 +1866,13 @@ describe("PlanWorkspace teacher preferences", () => {
     it("sits outside the tabs, above the two regions", () => {
       const html = render({ initialPreferencesByCourse: avoidedPreferences });
 
-      expect(html.indexOf('data-testid="avoided-teacher-notice"')).toBeLessThan(
+      expect(html.indexOf('data-testid="avoided-professor-notice"')).toBeLessThan(
         html.indexOf('data-testid="workspace-columns"')
       );
     });
 
-    it("stays silent when no plan section carries an avoided teacher", () => {
-      expect(render()).not.toContain('data-testid="avoided-teacher-notice"');
+    it("stays silent when no plan section carries an avoided professor", () => {
+      expect(render()).not.toContain('data-testid="avoided-professor-notice"');
     });
   });
 
@@ -1884,7 +1884,7 @@ describe("PlanWorkspace teacher preferences", () => {
       });
 
       expect(html).toContain('data-testid="solve-priority"');
-      expect(html).toContain("0 courses ranked · 1 teacher avoided");
+      expect(html).toContain("0 courses ranked · 1 professor avoided");
     });
   });
 });

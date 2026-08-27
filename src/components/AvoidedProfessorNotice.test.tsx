@@ -2,30 +2,30 @@ import { describe, expect, it, vi } from "vitest";
 import React from "react";
 import { renderToStaticMarkup } from "react-dom/server";
 
-import { AvoidedTeacherNotice } from "./AvoidedTeacherNotice";
-import type { AvoidedTeacherAdvisory } from "../core/teacherRanking";
+import { AvoidedProfessorNotice } from "./AvoidedProfessorNotice";
+import type { AvoidedProfessorAdvisory } from "../core/professorRanking";
 
-const advisory: AvoidedTeacherAdvisory = {
+const advisory: AvoidedProfessorAdvisory = {
   courseId: 2923,
   courseCode: "GEARTAP",
   sectionId: 384,
   sectionCode: "S17",
-  teacherName: "Bryant Lee",
+  professorName: "Bryant Lee",
 };
 
-const render = (advisories: AvoidedTeacherAdvisory[]) =>
+const render = (advisories: AvoidedProfessorAdvisory[]) =>
   renderToStaticMarkup(
-    React.createElement(AvoidedTeacherNotice, {
+    React.createElement(AvoidedProfessorNotice, {
       advisories,
       onOpenRanking: vi.fn(),
     })
   );
 
-describe("AvoidedTeacherNotice", () => {
-  it("names the section and the teacher it has acquired", () => {
+describe("AvoidedProfessorNotice", () => {
+  it("names the section and the professor it has acquired", () => {
     const html = render([advisory]);
 
-    expect(html).toContain('data-testid="avoided-teacher-notice"');
+    expect(html).toContain('data-testid="avoided-professor-notice"');
     expect(html).toContain("GEARTAP S17");
     expect(html).toContain("Bryant Lee");
   });
@@ -44,7 +44,7 @@ describe("AvoidedTeacherNotice", () => {
     expect(html).not.toMatch(/text-red-|bg-red-|border-red-/);
   });
 
-  it("renders nothing at all when no plan section has acquired an avoided teacher", () => {
+  it("renders nothing at all when no plan section has acquired an avoided professor", () => {
     expect(render([])).toBe("");
   });
 });

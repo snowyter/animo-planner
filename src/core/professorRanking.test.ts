@@ -3,33 +3,33 @@ import { describe, expect, it } from "vitest";
 import {
   buildRankingList,
   DEFAULT_PRIORITY,
-  findAvoidedTeacherAdvisories,
-  formatAvoidedTeacherAdvisory,
+  findAvoidedProfessorAdvisories,
+  formatAvoidedProfessorAdvisory,
   formatMoveAnnouncement,
   formatPreferenceSummary,
   formatSchedulePriorityNoOp,
-  formatNoRankableTeachers,
-  INACTIVE_TEACHER_LABEL,
-  moveTeacher,
+  formatNoRankableProfessors,
+  INACTIVE_PROFESSOR_LABEL,
+  moveProfessor,
   PRIORITY_INFOS,
   summarisePreferences,
-  teacherKey,
+  professorKey,
   toPreferenceWrite,
-} from "./teacherRanking";
-import type { PlanSection, RankableTeacher, TeacherPreference } from "../adapters/ipc/types";
+} from "./professorRanking";
+import type { PlanSection, RankableProfessor, ProfessorPreference } from "../adapters/ipc/types";
 
-const rankable = (key: string, displayName: string, sectionIds: number[] = []): RankableTeacher => ({
+const rankable = (key: string, displayName: string, sectionIds: number[] = []): RankableProfessor => ({
   key,
   displayName,
   sectionIds,
 });
 
 const preference = (
-  teacherKey: string,
+  professorKey: string,
   displayName: string,
-  fields: Partial<TeacherPreference> = {}
-): TeacherPreference => ({
-  teacherKey,
+  fields: Partial<ProfessorPreference> = {}
+): ProfessorPreference => ({
+  professorKey,
   displayName,
   rank: null,
   avoid: false,
@@ -38,7 +38,7 @@ const preference = (
 });
 
 describe("buildRankingList", () => {
-  it("places a ranked teacher, an avoided teacher, and an unmentioned one in their own zones", () => {
+  it("places a ranked professor, an avoided professor, and an unmentioned one in their own zones", () => {
     const entries = buildRankingList(
       [
         rankable("bryant lee", "Bryant Lee", [384]),
@@ -65,13 +65,13 @@ describe("an inactive preference", () => {
       [rankable("nina cruz", "Nina Cruz", [385])],
       [
         preference("nina cruz", "Nina Cruz", { rank: 2 }),
-        preference("gone teacher", "Gone Teacher", { rank: 1, active: false }),
+        preference("gone professor", "Gone Professor", { rank: 1, active: false }),
         preference("left entirely", "Left Entirely", { avoid: true, active: false }),
       ]
     );
 
     expect(entries.map((e) => [e.displayName, e.zone, e.rank, e.active])).toEqual([
-      ["Gone Teacher", "ranked", 1, false],
+      ["Gone Professor", "ranked", 1, false],
       ["Nina Cruz", "ranked", 2, true],
       ["Left Entirely", "avoided", null, false],
     ]);
@@ -79,7 +79,7 @@ describe("an inactive preference", () => {
   });
 });
 
-describe("moveTeacher", () => {
+describe("moveProfessor", () => {
   const list = () =>
     buildRankingList(
       [
@@ -93,8 +93,8 @@ describe("moveTeacher", () => {
       ]
     );
 
-  it("renumbers the ranked zone the moment a teacher is dropped into it", () => {
-    const moved = moveTeacher(list(), "omar reyes", "ranked", 0);
+  it("renumbers the ranked zone the moment a professor is dropped into it", () => {
+    const moved = moveProfessor(list(), "omar reyes", "ranked", 0);
 
     expect(moved.filter((e) => e.zone === "ranked").map((e) => [e.displayName, e.rank])).toEqual([
       ["Omar Reyes", 1],
@@ -103,8 +103,8 @@ describe("moveTeacher", () => {
     ]);
   });
 
-  it("renumbers what is left behind when a ranked teacher is avoided", () => {
-    const moved = moveTeacher(list(), "nina cruz", "avoided", 0);
+  it("renumbers what is left behind when a ranked professor is avoided", () => {
+    const moved = moveProfessor(list(), "nina cruz", "avoided", 0);
 
     expect(moved.map((e) => [e.displayName, e.zone, e.rank])).toEqual([
       ["Bryant Lee", "ranked", 1],
@@ -113,9 +113,9 @@ describe("moveTeacher", () => {
     ]);
   });
 
-  it("demotes an avoided teacher back to neutral in one move", () => {
-    const avoided = moveTeacher(list(), "omar reyes", "avoided", 0);
-    const demoted = moveTeacher(avoided, "omar reyes", "neutral", 0);
+  it("demotes an avoided professor back to neutral in one move", () => {
+    const avoided = moveProfessor(list(), "omar reyes", "avoided", 0);
+    const demoted = moveProfessor(avoided, "omar reyes", "neutral", 0);
 
     expect(demoted.find((e) => e.key === "omar reyes")).toMatchObject({
       zone: "neutral",
@@ -148,32 +148,32 @@ describe("toPreferenceWrite", () => {
     });
   });
 
-  it("keeps an inactive entry in the write, so a refresh's blank Teacher cell cannot erase a ranking", () => {
+  it("keeps an inactive entry in the write, so a refresh's blank Professor cell cannot erase a ranking", () => {
     const entries = buildRankingList(
       [],
-      [preference("gone teacher", "Gone Teacher", { rank: 1, active: false })]
+      [preference("gone professor", "Gone Professor", { rank: 1, active: false })]
     );
 
     expect(toPreferenceWrite(entries).ranked).toEqual([
-      { key: "gone teacher", displayName: "Gone Teacher" },
+      { key: "gone professor", displayName: "Gone Professor" },
     ]);
   });
 });
 
 describe("the copy the list needs", () => {
   it("says why the list is empty and what fills it, naming Refresh", () => {
-    const copy = formatNoRankableTeachers();
+    const copy = formatNoRankableProfessors();
 
-    expect(copy).toContain("No teacher names captured yet");
+    expect(copy).toContain("No professor names captured yet");
     expect(copy).toContain("Archer's Hub");
     expect(copy).toContain("Refresh");
   });
 
   it("labels an inactive entry as no longer listed for the course", () => {
-    expect(INACTIVE_TEACHER_LABEL).toBe("not currently listed for this course");
+    expect(INACTIVE_PROFESSOR_LABEL).toBe("not currently listed for this course");
   });
 
-  it("announces a move by naming the teacher and where they landed", () => {
+  it("announces a move by naming the professor and where they landed", () => {
     const ranked = buildRankingList(
       [rankable("nina cruz", "Nina Cruz"), rankable("omar reyes", "Omar Reyes")],
       [preference("nina cruz", "Nina Cruz", { rank: 1 })]
@@ -182,16 +182,16 @@ describe("the copy the list needs", () => {
     expect(formatMoveAnnouncement(ranked, "nina cruz")).toBe("Nina Cruz is ranked 1 of 1.");
     expect(formatMoveAnnouncement(ranked, "omar reyes")).toBe("Omar Reyes is unranked.");
     expect(
-      formatMoveAnnouncement(moveTeacher(ranked, "omar reyes", "avoided", 0), "omar reyes")
+      formatMoveAnnouncement(moveProfessor(ranked, "omar reyes", "avoided", 0), "omar reyes")
     ).toBe("Omar Reyes is avoided.");
   });
 });
 
 describe("the Priority axis", () => {
-  it("offers Schedule, Teachers and Hybrid in that order, and defaults to Schedule", () => {
+  it("offers Schedule, Professors and Hybrid in that order, and defaults to Schedule", () => {
     expect(PRIORITY_INFOS.map((info) => info.priority)).toEqual([
       "schedule",
-      "teachers",
+      "professors",
       "hybrid",
     ]);
     expect(DEFAULT_PRIORITY).toBe("schedule");
@@ -201,30 +201,30 @@ describe("the Priority axis", () => {
     }
   });
 
-  it("summarises the preferences that exist, counting courses and avoided teachers", () => {
-    expect(formatPreferenceSummary({ rankedCourses: 3, avoidedTeachers: 2 })).toBe(
-      "3 courses ranked · 2 teachers avoided"
+  it("summarises the preferences that exist, counting courses and avoided professors", () => {
+    expect(formatPreferenceSummary({ rankedCourses: 3, avoidedProfessors: 2 })).toBe(
+      "3 courses ranked · 2 professors avoided"
     );
-    expect(formatPreferenceSummary({ rankedCourses: 1, avoidedTeachers: 1 })).toBe(
-      "1 course ranked · 1 teacher avoided"
+    expect(formatPreferenceSummary({ rankedCourses: 1, avoidedProfessors: 1 })).toBe(
+      "1 course ranked · 1 professor avoided"
     );
-    expect(formatPreferenceSummary({ rankedCourses: 0, avoidedTeachers: 0 })).toBe(
-      "No teachers ranked or avoided yet"
+    expect(formatPreferenceSummary({ rankedCourses: 0, avoidedProfessors: 0 })).toBe(
+      "No professors ranked or avoided yet"
     );
   });
 
   it("warns that a ranking does nothing under Schedule, and only then", () => {
-    const withPreferences = { rankedCourses: 2, avoidedTeachers: 0 };
+    const withPreferences = { rankedCourses: 2, avoidedProfessors: 0 };
 
     const warning = formatSchedulePriorityNoOp("schedule", withPreferences);
     expect(warning).not.toBeNull();
     expect(warning).toContain("ignored");
-    expect(warning).toContain("Teachers");
+    expect(warning).toContain("Professors");
 
-    expect(formatSchedulePriorityNoOp("teachers", withPreferences)).toBeNull();
+    expect(formatSchedulePriorityNoOp("professors", withPreferences)).toBeNull();
     expect(formatSchedulePriorityNoOp("hybrid", withPreferences)).toBeNull();
     expect(
-      formatSchedulePriorityNoOp("schedule", { rankedCourses: 0, avoidedTeachers: 0 })
+      formatSchedulePriorityNoOp("schedule", { rankedCourses: 0, avoidedProfessors: 0 })
     ).toBeNull();
   });
 
@@ -238,29 +238,29 @@ describe("the Priority axis", () => {
         ],
         [],
       ])
-    ).toEqual({ rankedCourses: 1, avoidedTeachers: 2 });
+    ).toEqual({ rankedCourses: 1, avoidedProfessors: 2 });
   });
 });
 
-describe("teacherKey", () => {
+describe("professorKey", () => {
   it("mirrors the store: trimmed, case-folded, inner whitespace collapsed", () => {
-    expect(teacherKey("  BRYANT   lee ")).toBe("bryant lee");
-    expect(teacherKey("Bryant Lee")).toBe("bryant lee");
+    expect(professorKey("  BRYANT   lee ")).toBe("bryant lee");
+    expect(professorKey("Bryant Lee")).toBe("bryant lee");
   });
 
   it("gives a blank name no key at all, because unknown is not an identity", () => {
-    expect(teacherKey("")).toBeNull();
-    expect(teacherKey("   ")).toBeNull();
-    expect(teacherKey(null)).toBeNull();
+    expect(professorKey("")).toBeNull();
+    expect(professorKey("   ")).toBeNull();
+    expect(professorKey(null)).toBeNull();
   });
 });
 
-describe("findAvoidedTeacherAdvisories", () => {
+describe("findAvoidedProfessorAdvisories", () => {
   const planSection = (
     courseId: number,
     courseCode: string,
     sectionCode: string,
-    teacher: string | null
+    professor: string | null
   ) =>
     ({
       courseId,
@@ -272,11 +272,11 @@ describe("findAvoidedTeacherAdvisories", () => {
       missing: false,
       modality: "F2F",
       blocks: [],
-      latestSnapshot: { capturedAt: "2026-08-27T00:00:00Z", enrolled: 40, teacher, remark: null },
+      latestSnapshot: { capturedAt: "2026-08-27T00:00:00Z", enrolled: 40, professor, remark: null },
     }) as unknown as PlanSection;
 
-  it("names a section in the plan that has acquired a teacher avoided for its course", () => {
-    const advisories = findAvoidedTeacherAdvisories(
+  it("names a section in the plan that has acquired a professor avoided for its course", () => {
+    const advisories = findAvoidedProfessorAdvisories(
       [
         planSection(2923, "GEARTAP", "S17", "  BRYANT  Lee "),
         planSection(3001, "CSINTSY", "S11", "Nina Cruz"),
@@ -293,14 +293,14 @@ describe("findAvoidedTeacherAdvisories", () => {
         courseCode: "GEARTAP",
         sectionId: 3823,
         sectionCode: "S17",
-        teacherName: "  BRYANT  Lee ",
+        professorName: "  BRYANT  Lee ",
       },
     ]);
   });
 
-  it("never raises one for a blank teacher, because unknown is never a match", () => {
+  it("never raises one for a blank professor, because unknown is never a match", () => {
     expect(
-      findAvoidedTeacherAdvisories(
+      findAvoidedProfessorAdvisories(
         [planSection(2923, "GEARTAP", "S17", null), planSection(2923, "GEARTAP", "S18", "  ")],
         new Map([[2923, [preference("bryant lee", "Bryant Lee", { avoid: true })]]])
       )
@@ -308,15 +308,15 @@ describe("findAvoidedTeacherAdvisories", () => {
   });
 
   it("says what happened and that nothing was changed", () => {
-    const copy = formatAvoidedTeacherAdvisory({
+    const copy = formatAvoidedProfessorAdvisory({
       courseId: 2923,
       courseCode: "GEARTAP",
       sectionId: 384,
       sectionCode: "S17",
-      teacherName: "Bryant Lee",
+      professorName: "Bryant Lee",
     });
 
-    expect(copy.title).toBe("GEARTAP S17 is now listed with Bryant Lee, a teacher you avoid");
+    expect(copy.title).toBe("GEARTAP S17 is now listed with Bryant Lee, a professor you avoid");
     expect(copy.description).toContain("Nothing has been changed");
   });
 });

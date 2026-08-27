@@ -27,28 +27,28 @@
 //!   restarting it.
 //!
 //! Constraints (ticket 15) filter candidates only: day blacklist, earliest
-//! start / latest end bounds, exclude-full, and avoid-teacher (ticket 48).
+//! start / latest end bounds, exclude-full, and avoid-professor (ticket 48).
 //! Exclude-full defaults on (ticket 34) — a section at capacity cannot be
 //! enlisted into — but the student can turn it off, so the exclusion is
 //! never quiet: the outcome reports how many sections it removed, and a
 //! course left with only full sections is named `Unsatisfiable` with that
 //! reason. A missing or unreadable count is never treated as full. Avoid-
-//! teacher is a hard filter (ADR-0020): a candidate whose latest-snapshot
-//! teacher key is avoided for that course is dropped. A blank teacher is
+//! professor is a hard filter (ADR-0020): a candidate whose latest-snapshot
+//! professor key is avoided for that course is dropped. A blank professor is
 //! never avoided — unknown is not a match (CONTEXT.md, SPEC §5). Pinned
 //! sections are never reassigned and never dropped — a pinned section that
 //! violates a constraint is user-authored and passes through untouched,
 //! exactly like a user-authored conflict (ADR-0009); being at capacity or
 //! being avoided does not change that. An *unpinned* member is a candidate
-//! like any other (ticket 42), so exclude-full and avoid-teacher may swap
-//! one. Section-code prefixes are never read, and a blank teacher is never
+//! like any other (ticket 42), so exclude-full and avoid-professor may swap
+//! one. Section-code prefixes are never read, and a blank professor is never
 //! a mismatch: no constraint branches on either.
 //!
 //! Priority (ticket 48, ADR-0021) is a second axis orthogonal to Preset:
-//! `Schedule` is bit-for-bit today's behaviour; `Teachers` sorts
-//! lexicographically (teacher score first, preset as tiebreak); `Hybrid`
+//! `Schedule` is bit-for-bit today's behaviour; `Professors` sorts
+//! lexicographically (professor score first, preset as tiebreak); `Hybrid`
 //! is a weighted sum. The bounded result heap is keyed on a
-//! `(teacher_score, preset_score)` tuple under Teachers and Hybrid
+//! `(professor_score, preset_score)` tuple under Professors and Hybrid
 //! priorities.
 //!
 //! Every run consumes at most one node budget before returning, so the
@@ -66,16 +66,16 @@
 //!   result naming that course, never a silent empty list. Validity is
 //!   judged against the pinned members only: an unpinned neighbour can
 //!   move, so it never starves another course.
-//! - A blank teacher is never avoided and never a mismatch: no constraint
+//! - A blank professor is never avoided and never a mismatch: no constraint
 //!   branches on it, and no ranking penalizes it.
 
 use crate::core::ipc_types::{
     Day, Preset, Priority, ScheduleBlock, ScoreComponent, SolutionSection, SolveOptions,
-    SolveStatus, TeacherPreferenceEntry, TransitionWarning, UnsatisfiableCourse,
+    SolveStatus, ProfessorPreferenceEntry, TransitionWarning, UnsatisfiableCourse,
     UnsatisfiableReason,
 };
 use crate::core::scoring::{self, Evaluation};
-use crate::core::teachers::teacher_key;
+use crate::core::professors::professor_key;
 use serde::{Deserialize, Serialize};
 use std::cmp::{Ordering, Reverse};
 use std::collections::BinaryHeap;
@@ -93,8 +93,8 @@ pub const DEFAULT_NODE_BUDGET: u64 = 100_000;
 /// candidate order lives inside the courses — an older token would silently
 /// revert unpinned sections to immovable halfway through a solve.
 /// Version 4 carries ticket 48's semantics: `priority` and
-/// `teacher_preferences` in the constraints — an older token would resume
-/// a solve under the wrong objective (Schedule vs Teachers vs Hybrid).
+/// `professor_preferences` in the constraints — an older token would resume
+/// a solve under the wrong objective (Schedule vs Professors vs Hybrid).
 const SOLVER_STATE_VERSION: u32 = 4;
 
 /// One course the solve must fill, with every captured section as a
@@ -111,8 +111,8 @@ pub struct SolverCourse {
 /// numbers the exclude-full constraint needs.
 ///
 /// `enrolled` / `enroll_cap` of `None` mean *unknown* — a candidate is never
-/// treated as full on unknown data. `teacher: None` means *unknown* too, and
-/// no constraint ever treats it as a match for avoidance: a blank teacher is
+/// treated as full on unknown data. `professor: None` means *unknown* too, and
+/// no constraint ever treats it as a match for avoidance: a blank professor is
 /// never avoided (ADR-0020). Section-code prefixes are likewise never read
 /// for eligibility (SPEC §2).
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -122,7 +122,7 @@ pub struct SolverSection {
     pub blocks: Vec<ScheduleBlock>,
     pub enrolled: Option<i64>,
     pub enroll_cap: Option<i64>,
-    pub teacher: Option<String>,
+    pub professor: Option<String>,
 }
 
 /// A section already chosen in the plan. When `pinned` is true the section
@@ -139,7 +139,7 @@ pub struct FixedSection {
     pub section_code: String,
     pub blocks: Vec<ScheduleBlock>,
     pub pinned: bool,
-    pub teacher: Option<String>,
+    pub professor: Option<String>,
 }
 
 /// One conflict-free way to fill the plan, ranked by the requested preset:
@@ -170,12 +170,12 @@ pub struct SolveConstraints {
     /// When set, candidates at or over capacity are dropped. On by default
     /// (ticket 34): the student can still turn it off in the constraints.
     pub exclude_full: bool,
-    /// How heavily teacher preferences weigh against the preset (ADR-0021).
+    /// How heavily professor preferences weigh against the preset (ADR-0021).
     /// `Schedule` is bit-for-bit today's behaviour.
     pub priority: Priority,
-    /// Teacher preferences keyed by course, passed from the command layer.
+    /// Professor preferences keyed by course, passed from the command layer.
     /// The solver core stays pure — no store, no I/O.
-    pub teacher_preferences: Vec<TeacherPreferenceEntry>,
+    pub professor_preferences: Vec<ProfessorPreferenceEntry>,
 }
 
 impl From<&SolveOptions> for SolveConstraints {
@@ -191,7 +191,7 @@ impl From<&SolveOptions> for SolveConstraints {
             latest_end_min: options.latest_end_min,
             exclude_full: options.exclude_full,
             priority: options.priority,
-            teacher_preferences: options.teacher_preferences.clone(),
+            professor_preferences: options.professor_preferences.clone(),
         }
     }
 }
@@ -241,22 +241,22 @@ impl SolveConstraints {
         true
     }
 
-    /// Whether a candidate's teacher is avoided for its course.
+    /// Whether a candidate's professor is avoided for its course.
     ///
-    /// A blank teacher is never avoided (ADR-0020, CONTEXT.md), and neither
+    /// A blank professor is never avoided (ADR-0020, CONTEXT.md), and neither
     /// is a whitespace-only one: both are *unknown*, and unknown is not a
-    /// match. The key comes from `core::teachers` — the one normalization
+    /// match. The key comes from `core::professors` — the one normalization
     /// the store also keys preferences on. A second copy could drift, and
     /// the failure would be silent: an avoid that quietly stops matching.
     fn is_avoided(&self, candidate: &SolverSection, course_id: i64) -> bool {
-        let Some(ref teacher) = candidate.teacher else {
-            return false; // blank teacher is never avoided
+        let Some(ref professor) = candidate.professor else {
+            return false; // blank professor is never avoided
         };
-        let Some(key) = teacher_key(teacher) else {
+        let Some(key) = professor_key(professor) else {
             return false; // whitespace-only is blank, and blank is unknown
         };
-        self.teacher_preferences.iter().any(|pref| {
-            pref.course_id == course_id && pref.avoid && pref.teacher_key == key
+        self.professor_preferences.iter().any(|pref| {
+            pref.course_id == course_id && pref.avoid && pref.professor_key == key
         })
     }
 }
@@ -297,7 +297,7 @@ fn count_excluded_as_full(
         .sum()
 }
 
-/// How many candidate sections the avoid-teacher constraint removed (ticket
+/// How many candidate sections the avoid-professor constraint removed (ticket
 /// 48): a candidate counts only when it is avoided *and* would otherwise
 /// have been placeable — conflict-free against the pinned members and
 /// within the other constraints. An avoided section that was unplaceable
@@ -346,9 +346,9 @@ pub struct SolveOutcome {
     /// can see the constraint doing something and turn it off when the
     /// numbers look stale. Zero when the constraint is off.
     pub excluded_full_count: usize,
-    /// How many candidate sections the avoid-teacher constraint removed,
+    /// How many candidate sections the avoid-professor constraint removed,
     /// across every unassigned course (ticket 48). Surfaced so the student
-    /// can see the constraint doing something. Zero when no teachers are
+    /// can see the constraint doing something. Zero when no professors are
     /// avoided.
     pub excluded_avoided_count: usize,
 }
@@ -387,7 +387,7 @@ struct CourseVar {
 ///
 /// The `sort_key` is computed from the priority:
 /// - `Schedule`: `(0.0, preset_score)` — preset only
-/// - `Teachers`: `(teacher_score, preset_score)` — teacher first, preset as tiebreak
+/// - `Professors`: `(professor_score, preset_score)` — professor first, preset as tiebreak
 /// - `Hybrid`: `(combined_score, 0.0)` — the weighted sum
 #[derive(Debug, Clone, Serialize, Deserialize)]
 struct Ranked {
@@ -431,13 +431,13 @@ struct BoundedBest {
 }
 
 /// Computes the sort key for a ranked result based on the priority.
-/// - `Schedule`: `(0.0, preset_score)` — preset only, teacher score ignored
-/// - `Teachers`: `(teacher_score, preset_score)` — teacher first, preset as tiebreak
+/// - `Schedule`: `(0.0, preset_score)` — preset only, professor score ignored
+/// - `Professors`: `(professor_score, preset_score)` — professor first, preset as tiebreak
 /// - `Hybrid`: `(combined_score, 0.0)` — the weighted sum
 fn compute_sort_key(evaluation: &Evaluation, priority: Priority) -> (f64, f64) {
     match priority {
         Priority::Schedule => (0.0, evaluation.score),
-        Priority::Teachers => (evaluation.teacher_score, evaluation.score),
+        Priority::Professors => (evaluation.professor_score, evaluation.score),
         Priority::Hybrid => (evaluation.score, 0.0),
     }
 }
@@ -514,7 +514,7 @@ pub struct Solver {
     /// the same inputs on every construction, so a resumed solver reports
     /// the same number without carrying it through the token.
     excluded_full_count: usize,
-    /// Candidate sections dropped by avoid-teacher (ticket 48). Derived
+    /// Candidate sections dropped by avoid-professor (ticket 48). Derived
     /// from the same inputs on every construction, so a resumed solver
     /// reports the same number without carrying it through the token.
     excluded_avoided_count: usize,
@@ -703,11 +703,11 @@ impl Solver {
         if self.state.courses.is_empty() {
             // No unassigned courses: the plan itself is the one result —
             // scored and warned like any other.
-            let evaluation = scoring::evaluate_with_teacher_prefs(
+            let evaluation = scoring::evaluate_with_professor_prefs(
                 &self.state.fixed,
                 self.state.constraints.preset,
                 self.state.constraints.priority,
-                &self.state.constraints.teacher_preferences,
+                &self.state.constraints.professor_preferences,
             );
             return SolveOutcome {
                 status: SolveStatus::Complete,
@@ -738,11 +738,11 @@ impl Solver {
                 // warnings in a single pass), then backtrack from the last
                 // course to keep enumerating.
                 let sections = self.build_solution();
-                let evaluation = scoring::evaluate_with_teacher_prefs(
+                let evaluation = scoring::evaluate_with_professor_prefs(
                     &sections,
                     self.state.constraints.preset,
                     self.state.constraints.priority,
-                    &self.state.constraints.teacher_preferences,
+                    &self.state.constraints.professor_preferences,
                 );
                 let sort_key = compute_sort_key(
                     &evaluation,
@@ -840,7 +840,7 @@ impl Solver {
                 section_code: candidate.section_code.clone(),
                 pinned: false,
                 blocks: candidate.blocks.clone(),
-                teacher: candidate.teacher.clone(),
+                professor: candidate.professor.clone(),
             });
         }
         sections.sort_by_key(|section| (section.course_id, section.section_id));
@@ -890,7 +890,7 @@ fn fixed_sections(plan_sections: Vec<FixedSection>) -> Vec<SolutionSection> {
             section_code: fixed.section_code,
             pinned: true,
             blocks: fixed.blocks,
-            teacher: fixed.teacher,
+            professor: fixed.professor,
         })
         .collect();
     sections.sort_by_key(|section| (section.course_id, section.section_id));
@@ -1002,7 +1002,7 @@ mod tests {
             exclude_full: false,
             result_limit,
             priority: Priority::Schedule,
-            teacher_preferences: vec![],
+            professor_preferences: vec![],
         }
     }
 
@@ -1013,18 +1013,18 @@ mod tests {
             blocks,
             enrolled: None,
             enroll_cap: None,
-            teacher: None,
+            professor: None,
         }
     }
 
     /// A candidate with explicit live numbers: `enrolled` / `enroll_cap`
-    /// (`None` = unknown) and a `teacher` (`None` = blank/unknown).
+    /// (`None` = unknown) and a `professor` (`None` = blank/unknown).
     fn candidate(
         section_id: i64,
         blocks: Vec<ScheduleBlock>,
         enrolled: Option<i64>,
         enroll_cap: Option<i64>,
-        teacher: Option<&str>,
+        professor: Option<&str>,
     ) -> SolverSection {
         SolverSection {
             section_id,
@@ -1032,7 +1032,7 @@ mod tests {
             blocks,
             enrolled,
             enroll_cap,
-            teacher: teacher.map(str::to_string),
+            professor: professor.map(str::to_string),
         }
     }
 
@@ -1052,7 +1052,7 @@ mod tests {
             section_code: format!("S{section_id}"),
             blocks,
             pinned: true,
-            teacher: None,
+            professor: None,
         }
     }
 
@@ -1066,7 +1066,7 @@ mod tests {
             section_code: format!("S{section_id}"),
             blocks,
             pinned: false,
-            teacher: None,
+            professor: None,
         }
     }
 
@@ -1078,7 +1078,7 @@ mod tests {
                 score,
                 breakdown: Vec::new(),
                 warnings: Vec::new(),
-                teacher_score: 0.0,
+                professor_score: 0.0,
             },
             sort_key: (0.0, score),
         }
@@ -1156,7 +1156,7 @@ mod tests {
                         blocks: parsed.blocks.iter().map(to_schedule_block).collect(),
                         enrolled: parsed.enrolled,
                         enroll_cap: parsed.enroll_cap,
-                        teacher: parsed.teacher.clone(),
+                        professor: parsed.professor.clone(),
                     })
                     .collect(),
             })
@@ -1208,7 +1208,7 @@ mod tests {
             section_code: chosen.section_code.clone(),
             blocks: chosen.blocks.clone(),
             pinned: true,
-            teacher: chosen.teacher.clone(),
+            professor: chosen.professor.clone(),
         };
         let geartap = courses
             .iter()
@@ -2420,9 +2420,9 @@ mod tests {
     }
 
     #[test]
-    fn a_blank_teacher_is_never_treated_as_a_mismatch() {
-        // Identical catalogs; one carries a blank (unknown) teacher, the
-        // other a named one. No constraint may branch on teacher.
+    fn a_blank_professor_is_never_treated_as_a_mismatch() {
+        // Identical catalogs; one carries a blank (unknown) professor, the
+        // other a named one. No constraint may branch on professor.
         let blank = course(1, "A", vec![
             candidate(1, vec![block(Day::Mon, 450, 540)], Some(10), Some(45), None),
             candidate(2, vec![block(Day::Tue, 450, 540)], Some(10), Some(45), None),
@@ -2446,7 +2446,7 @@ mod tests {
                 .iter()
                 .map(|solution| solution.sections[0].section_id)
                 .collect::<Vec<_>>(),
-            "a blank teacher changes nothing about the solve"
+            "a blank professor changes nothing about the solve"
         );
     }
 
@@ -2491,14 +2491,14 @@ mod tests {
         assert_eq!(solver.run().solutions, full.solutions);
     }
 
-    // ---------- teacher avoidance (ticket 48) ----------
+    // ---------- professor avoidance (ticket 48) ----------
 
     #[test]
-    fn avoidance_removes_a_candidate_whose_teacher_is_avoided() {
+    fn avoidance_removes_a_candidate_whose_professor_is_avoided() {
         let mut opts = options(12);
-        opts.teacher_preferences = vec![TeacherPreferenceEntry {
+        opts.professor_preferences = vec![ProfessorPreferenceEntry {
             course_id: 1,
-            teacher_key: "bryant lee".to_string(),
+            professor_key: "bryant lee".to_string(),
             rank: None,
             avoid: true,
         }];
@@ -2522,11 +2522,11 @@ mod tests {
     }
 
     #[test]
-    fn avoidance_never_removes_a_blank_teacher_candidate() {
+    fn avoidance_never_removes_a_blank_professor_candidate() {
         let mut opts = options(12);
-        opts.teacher_preferences = vec![TeacherPreferenceEntry {
+        opts.professor_preferences = vec![ProfessorPreferenceEntry {
             course_id: 1,
-            teacher_key: "bryant lee".to_string(),
+            professor_key: "bryant lee".to_string(),
             rank: None,
             avoid: true,
         }];
@@ -2544,20 +2544,20 @@ mod tests {
         assert_eq!(
             outcome.solutions.len(),
             1,
-            "the blank-teacher section survives; the avoided one drops"
+            "the blank-professor section survives; the avoided one drops"
         );
         assert_eq!(
             outcome.solutions[0].sections[0].section_id, 1,
-            "the blank-teacher candidate is kept"
+            "the blank-professor candidate is kept"
         );
     }
 
     #[test]
     fn avoidance_emptying_a_course_names_it_with_the_new_reason() {
         let mut opts = options(12);
-        opts.teacher_preferences = vec![TeacherPreferenceEntry {
+        opts.professor_preferences = vec![ProfessorPreferenceEntry {
             course_id: 1,
-            teacher_key: "bryant lee".to_string(),
+            professor_key: "bryant lee".to_string(),
             rank: None,
             avoid: true,
         }];
@@ -2586,9 +2586,9 @@ mod tests {
     #[test]
     fn a_pinned_avoided_section_survives() {
         let mut opts = options(12);
-        opts.teacher_preferences = vec![TeacherPreferenceEntry {
+        opts.professor_preferences = vec![ProfessorPreferenceEntry {
             course_id: 10,
-            teacher_key: "bryant lee".to_string(),
+            professor_key: "bryant lee".to_string(),
             rank: None,
             avoid: true,
         }];
@@ -2621,9 +2621,9 @@ mod tests {
     #[test]
     fn an_unpinned_avoided_section_is_swapped_when_a_sibling_exists() {
         let mut opts = options(12);
-        opts.teacher_preferences = vec![TeacherPreferenceEntry {
+        opts.professor_preferences = vec![ProfessorPreferenceEntry {
             course_id: 10,
-            teacher_key: "bryant lee".to_string(),
+            professor_key: "bryant lee".to_string(),
             rank: None,
             avoid: true,
         }];
@@ -2656,19 +2656,19 @@ mod tests {
     // ---------- rank scoring (ticket 48) ----------
 
     #[test]
-    fn ranked_teacher_contributes_on_a_inverse_rank_curve() {
+    fn ranked_professor_contributes_on_a_inverse_rank_curve() {
         let mut opts = options(12);
-        opts.priority = Priority::Teachers;
-        opts.teacher_preferences = vec![
-            TeacherPreferenceEntry {
+        opts.priority = Priority::Professors;
+        opts.professor_preferences = vec![
+            ProfessorPreferenceEntry {
                 course_id: 1,
-                teacher_key: "teacher a".to_string(),
+                professor_key: "professor a".to_string(),
                 rank: Some(1),
                 avoid: false,
             },
-            TeacherPreferenceEntry {
+            ProfessorPreferenceEntry {
                 course_id: 1,
-                teacher_key: "teacher b".to_string(),
+                professor_key: "professor b".to_string(),
                 rank: Some(2),
                 avoid: false,
             },
@@ -2677,29 +2677,29 @@ mod tests {
             1,
             "A",
             vec![
-                candidate(1, vec![online_block(Day::Mon, 450, 540)], None, None, Some("Teacher A")),
-                candidate(2, vec![online_block(Day::Tue, 450, 540)], None, None, Some("Teacher B")),
+                candidate(1, vec![online_block(Day::Mon, 450, 540)], None, None, Some("Professor A")),
+                candidate(2, vec![online_block(Day::Tue, 450, 540)], None, None, Some("Professor B")),
             ],
         )];
         let mut solver = Solver::new(catalog, vec![], opts);
         let outcome = solver.run();
         assert_eq!(outcome.status, SolveStatus::Complete);
         assert_eq!(outcome.solutions.len(), 2);
-        // Under Teachers priority, rank 1 teacher must outrank rank 2
+        // Under Professors priority, rank 1 professor must outrank rank 2
         let best = &outcome.solutions[0];
         assert_eq!(
             best.sections[0].section_id, 1,
-            "rank 1 (1.0) must beat rank 2 (0.5) under Teachers priority"
+            "rank 1 (1.0) must beat rank 2 (0.5) under Professors priority"
         );
     }
 
     #[test]
-    fn unranked_and_blank_teachers_score_zero() {
+    fn unranked_and_blank_professors_score_zero() {
         let mut opts = options(12);
-        opts.priority = Priority::Teachers;
-        opts.teacher_preferences = vec![TeacherPreferenceEntry {
+        opts.priority = Priority::Professors;
+        opts.professor_preferences = vec![ProfessorPreferenceEntry {
             course_id: 1,
-            teacher_key: "teacher a".to_string(),
+            professor_key: "professor a".to_string(),
             rank: Some(1),
             avoid: false,
         }];
@@ -2707,45 +2707,45 @@ mod tests {
             1,
             "A",
             vec![
-                candidate(1, vec![online_block(Day::Mon, 450, 540)], None, None, Some("Teacher A")),
-                candidate(2, vec![online_block(Day::Tue, 450, 540)], None, None, Some("Unranked Teacher")),
+                candidate(1, vec![online_block(Day::Mon, 450, 540)], None, None, Some("Professor A")),
+                candidate(2, vec![online_block(Day::Tue, 450, 540)], None, None, Some("Unranked Professor")),
                 candidate(3, vec![online_block(Day::Wed, 450, 540)], None, None, None),
             ],
         )];
         let mut solver = Solver::new(catalog, vec![], opts);
         let outcome = solver.run();
         assert_eq!(outcome.status, SolveStatus::Complete);
-        // Under Teachers priority, the ranked teacher must come first
+        // Under Professors priority, the ranked professor must come first
         let best = &outcome.solutions[0];
         assert_eq!(
             best.sections[0].section_id, 1,
-            "ranked teacher must come first under Teachers priority"
+            "ranked professor must come first under Professors priority"
         );
-        // Unranked and blank both have teacher_score 0, so they tie
-        // on the teacher axis and are ordered by preset score (equal)
+        // Unranked and blank both have professor_score 0, so they tie
+        // on the professor axis and are ordered by preset score (equal)
         // and then seq (first-found wins).
     }
 
     #[test]
-    fn teacher_score_is_capped_at_one_per_course() {
+    fn professor_score_is_capped_at_one_per_course() {
         let mut opts = options(12);
-        opts.priority = Priority::Teachers;
-        opts.teacher_preferences = vec![
-            TeacherPreferenceEntry {
+        opts.priority = Priority::Professors;
+        opts.professor_preferences = vec![
+            ProfessorPreferenceEntry {
                 course_id: 1,
-                teacher_key: "t1".to_string(),
+                professor_key: "t1".to_string(),
                 rank: Some(1),
                 avoid: false,
             },
-            TeacherPreferenceEntry {
+            ProfessorPreferenceEntry {
                 course_id: 1,
-                teacher_key: "t2".to_string(),
+                professor_key: "t2".to_string(),
                 rank: Some(2),
                 avoid: false,
             },
-            TeacherPreferenceEntry {
+            ProfessorPreferenceEntry {
                 course_id: 1,
-                teacher_key: "t3".to_string(),
+                professor_key: "t3".to_string(),
                 rank: Some(3),
                 avoid: false,
             },
@@ -2761,11 +2761,11 @@ mod tests {
         let outcome = solver.run();
         assert_eq!(outcome.status, SolveStatus::Complete);
         let solution = &outcome.solutions[0];
-        let teacher_component = solution.breakdown.iter().find(|c| c.label == "Teacher preference");
-        assert!(teacher_component.is_some(), "breakdown must include teacher component");
+        let professor_component = solution.breakdown.iter().find(|c| c.label == "Professor preference");
+        assert!(professor_component.is_some(), "breakdown must include professor component");
         assert!(
-            teacher_component.unwrap().points <= 1.0,
-            "teacher score capped at 1.0 per course"
+            professor_component.unwrap().points <= 1.0,
+            "professor score capped at 1.0 per course"
         );
     }
 
@@ -2796,10 +2796,10 @@ mod tests {
         // Solve with Priority::Schedule and some rankings
         let mut schedule_opts = options(12);
         schedule_opts.priority = Priority::Schedule;
-        schedule_opts.teacher_preferences = vec![
-            TeacherPreferenceEntry {
+        schedule_opts.professor_preferences = vec![
+            ProfessorPreferenceEntry {
                 course_id: 1,
-                teacher_key: "t1".to_string(),
+                professor_key: "t1".to_string(),
                 rank: Some(1),
                 avoid: false,
             },
@@ -2812,25 +2812,25 @@ mod tests {
     }
 
     #[test]
-    fn priority_teachers_sorts_lexicographically_teacher_score_first() {
+    fn priority_professors_sorts_lexicographically_professor_score_first() {
         let mut opts = options(12);
-        opts.priority = Priority::Teachers;
-        opts.teacher_preferences = vec![TeacherPreferenceEntry {
+        opts.priority = Priority::Professors;
+        opts.professor_preferences = vec![ProfessorPreferenceEntry {
             course_id: 1,
-            teacher_key: "preferred".to_string(),
+            professor_key: "preferred".to_string(),
             rank: Some(1),
             avoid: false,
         }];
-        // Course 1: preferred teacher on a "worse" day, unranked on a "better" day
+        // Course 1: preferred professor on a "worse" day, unranked on a "better" day
         // Course 2: one section only
         let catalog = vec![
             course(
                 1,
                 "A",
                 vec![
-                    // Preferred teacher, early morning (worse under NoEarlyMornings)
+                    // Preferred professor, early morning (worse under NoEarlyMornings)
                     candidate(1, vec![f2f_block(Day::Mon, 450, 540, "L226")], None, None, Some("Preferred")),
-                    // Unranked teacher, late (better under NoEarlyMornings)
+                    // Unranked professor, late (better under NoEarlyMornings)
                     candidate(2, vec![online_block(Day::Mon, 870, 960)], None, None, Some("Other")),
                 ],
             ),
@@ -2843,51 +2843,51 @@ mod tests {
         let mut solver = Solver::new(catalog, vec![], opts);
         let outcome = solver.run();
         assert_eq!(outcome.status, SolveStatus::Complete);
-        // Under Teachers priority, the rank-1 teacher must win even if the
+        // Under Professors priority, the rank-1 professor must win even if the
         // schedule is "worse" under the preset
         let best = &outcome.solutions[0];
         let c1 = best.sections.iter().find(|s| s.course_id == 1).unwrap();
         assert_eq!(
             c1.section_id, 1,
-            "under Priority::Teachers, rank-1 teacher wins over a better schedule without one"
+            "under Priority::Professors, rank-1 professor wins over a better schedule without one"
         );
     }
 
     #[test]
-    fn the_preset_still_orders_results_that_tie_on_teachers() {
-        // Two courses, each with two sections. Both teachers in each course
-        // are ranked 1, so every pairing has teacher_score = 2.0. The preset
+    fn the_preset_still_orders_results_that_tie_on_professors() {
+        // Two courses, each with two sections. Both professors in each course
+        // are ranked 1, so every pairing has professor_score = 2.0. The preset
         // (FewestCampusDays) must be the tiebreak.
         let mut opts = options(12);
-        opts.priority = Priority::Teachers;
-        opts.teacher_preferences = vec![
-            TeacherPreferenceEntry {
+        opts.priority = Priority::Professors;
+        opts.professor_preferences = vec![
+            ProfessorPreferenceEntry {
                 course_id: 1,
-                teacher_key: "t1a".to_string(),
+                professor_key: "t1a".to_string(),
                 rank: Some(1),
                 avoid: false,
             },
-            TeacherPreferenceEntry {
+            ProfessorPreferenceEntry {
                 course_id: 1,
-                teacher_key: "t1b".to_string(),
+                professor_key: "t1b".to_string(),
                 rank: Some(1),
                 avoid: false,
             },
-            TeacherPreferenceEntry {
+            ProfessorPreferenceEntry {
                 course_id: 2,
-                teacher_key: "t2a".to_string(),
+                professor_key: "t2a".to_string(),
                 rank: Some(1),
                 avoid: false,
             },
-            TeacherPreferenceEntry {
+            ProfessorPreferenceEntry {
                 course_id: 2,
-                teacher_key: "t2b".to_string(),
+                professor_key: "t2b".to_string(),
                 rank: Some(1),
                 avoid: false,
             },
         ];
-        // Course 1: F2F Monday OR online Monday — same teacher score
-        // Course 2: F2F Monday OR online Tuesday — same teacher score
+        // Course 1: F2F Monday OR online Monday — same professor score
+        // Course 2: F2F Monday OR online Tuesday — same professor score
         // Pairing (online+online) has fewer campus days than (F2F+F2F)
         let catalog = vec![
             course(
@@ -2910,7 +2910,7 @@ mod tests {
         let mut solver = Solver::new(catalog, vec![], opts);
         let outcome = solver.run();
         assert_eq!(outcome.status, SolveStatus::Complete);
-        // All pairings have teacher_score = 2.0, so the preset orders them.
+        // All pairings have professor_score = 2.0, so the preset orders them.
         // The online+online pairing has 0 campus days (best), so it wins.
         let best = &outcome.solutions[0];
         let c1 = best.sections.iter().find(|s| s.course_id == 1).unwrap();
@@ -2920,12 +2920,12 @@ mod tests {
     }
 
     #[test]
-    fn the_breakdown_sums_to_the_score_with_teacher_component() {
+    fn the_breakdown_sums_to_the_score_with_professor_component() {
         let mut opts = options(12);
         opts.priority = Priority::Hybrid;
-        opts.teacher_preferences = vec![TeacherPreferenceEntry {
+        opts.professor_preferences = vec![ProfessorPreferenceEntry {
             course_id: 1,
-            teacher_key: "t1".to_string(),
+            professor_key: "t1".to_string(),
             rank: Some(1),
             avoid: false,
         }];
@@ -2953,8 +2953,8 @@ mod tests {
             solution.breakdown
         );
         assert!(
-            solution.breakdown.iter().any(|c| c.label == "Teacher preference"),
-            "breakdown must include teacher component"
+            solution.breakdown.iter().any(|c| c.label == "Professor preference"),
+            "breakdown must include professor component"
         );
     }
 
@@ -2969,7 +2969,7 @@ mod tests {
         let token = outcome.resume_token.expect("partial carries a token");
         // The current token should work
         assert!(Solver::from_token(&token).is_ok());
-        // A version 3 token (without priority/teacher_preferences) should be rejected
+        // A version 3 token (without priority/professor_preferences) should be rejected
         // by tampering the version field
         let mut state: serde_json::Value = serde_json::from_str(&token).unwrap();
         state["version"] = serde_json::json!(3);

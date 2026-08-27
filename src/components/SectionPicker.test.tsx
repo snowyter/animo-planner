@@ -59,7 +59,7 @@ describe("SectionPicker", () => {
     courseCode: string,
     sectionCode: string,
     blocks: ScheduleBlock[],
-    teacher: string | null = null,
+    professor: string | null = null,
     enrolled = 35,
     enrollCap = 45,
     remark: string | null = null
@@ -87,7 +87,7 @@ describe("SectionPicker", () => {
     latestSnapshot: {
       capturedAt: "2026-08-22T00:00:00Z",
       enrolled,
-      teacher,
+      professor,
       remark,
     },
   });
@@ -116,7 +116,7 @@ describe("SectionPicker", () => {
     latestSnapshot: {
       capturedAt: "2026-08-22T00:00:00Z",
       enrolled: 40,
-      teacher: "Prof X",
+      professor: "Prof X",
       remark: null,
     },
   });
@@ -131,7 +131,7 @@ describe("SectionPicker", () => {
         makeBlock("TUE", 870, 960, "F2F", "L226"),
         makeBlock("FRI", 870, 960, "ONLINE"),
       ],
-      null, // Blank teacher
+      null, // Blank professor
       42,
       45,
       "Special section for CLA"
@@ -174,7 +174,7 @@ describe("SectionPicker", () => {
     expect(html).toContain("S12");
   });
 
-  it("displays schedule blocks, modality, room, teacher, and enrolled/cap for each section", () => {
+  it("displays schedule blocks, modality, room, professor, and enrolled/cap for each section", () => {
     const html = renderToStaticMarkup(
       React.createElement(SectionPicker, {
         courses: mockCourses,
@@ -201,7 +201,7 @@ describe("SectionPicker", () => {
     expect(html).toContain("30/45");
   });
 
-  it("displays blank teacher as 'Unknown', never as empty or a dash", () => {
+  it("displays blank professor as 'Unknown', never as empty or a dash", () => {
     const html = renderToStaticMarkup(
       React.createElement(SectionPicker, {
         courses: mockCourses,
@@ -220,7 +220,7 @@ describe("SectionPicker", () => {
       })
     );
 
-    // S11 has null teacher -> must display Unknown
+    // S11 has null professor -> must display Unknown
     expect(html).toContain("Unknown");
     // S12 has DELA CRUZ, JUAN
     expect(html).toContain("DELA CRUZ, JUAN");

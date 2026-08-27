@@ -80,8 +80,8 @@ The life story of a section (a class offering), from website to exported calenda
  course. The          the results table        into clean typed       unique section,
  table renders.       render, copies just      records: days,         plus a dated
                       the useful fields,       times, rooms, seats,   snapshot of its
-                      discards everything      teacher…               seat count /
-                      else (including any-                            teacher history
+                      discards everything      professor…               seat count /
+                      else (including any-                            professor history
                       thing identifying
                       you)
 

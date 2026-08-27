@@ -29,7 +29,7 @@ The scaffold shipped React + Vite only. `SPEC.md` §7 calls for **Tailwind + sha
 | Radix primitives behind individual shadcn components | `@radix-ui/react-*`, as each copied component requires | 06+ |
 | PNG export of the week grid | `html-to-image` | 22 |
 | Animation for the visual revision | `motion` | 33 |
-| Drag-and-drop for the teacher ranking | `@dnd-kit/core`, `@dnd-kit/sortable`, `@dnd-kit/utilities` | 49 |
+| Drag-and-drop for the professor ranking | `@dnd-kit/core`, `@dnd-kit/sortable`, `@dnd-kit/utilities` | 49 |
 
 **`motion` is approved for ticket 33 and only there** — decided by a human, who asked for an app that
 feels modern *and* lightweight. Both halves are the decision. It must be used as `LazyMotion` plus the
@@ -38,9 +38,9 @@ a fade; `MotionConfig reducedMotion="user"` is the single reduced-motion pattern
 per-element animation on repeated elements — the week grid holds ~40 blocks and the section list ~42
 cards. A later ticket wanting it elsewhere is a new question, not a precedent.
 
-**`@dnd-kit/core` + `@dnd-kit/sortable` + `@dnd-kit/utilities` are approved for ticket 49 and only there.** The teacher
+**`@dnd-kit/core` + `@dnd-kit/sortable` + `@dnd-kit/utilities` are approved for ticket 49 and only there.** The professor
 ranking is one list read in three zones, and dragging between them is the whole gesture vocabulary of
-the surface — including demoting an avoided teacher back to neutral, which has to cost one move.
+the surface — including demoting an avoided professor back to neutral, which has to cost one move.
 dnd-kit animates with its own CSS transforms, which is what makes the drag both smooth and cheap, so
 **`motion` must not be used here**: it is approved for ticket 33 alone. Three conditions come with the
 approval. The **keyboard sensor is wired and is a first-class path**, not a fallback, with correct

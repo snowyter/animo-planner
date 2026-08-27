@@ -1,9 +1,9 @@
 /**
- * The teacher ranking list (ticket 49).
+ * The professor ranking list (ticket 49).
  *
  * A ranking is per course, and it is one ordered list read in three zones:
- * the teachers you want, in order; the teachers you have said nothing about;
- * and the teachers you refuse. Where a teacher sits is what they mean, which
+ * the professors you want, in order; the professors you have said nothing about;
+ * and the professors you refuse. Where a professor sits is what they mean, which
  * is what keeps the model's "either a rank or an avoid, never both" legible
  * on screen and makes dragging the only gesture the surface needs.
  *
@@ -12,23 +12,23 @@
  * same reason `toolPanel.ts` holds the tab identities.
  */
 
-import type { PlanSection, RankableTeacher, TeacherPreference } from "../adapters/ipc/types";
+import type { PlanSection, RankableProfessor, ProfessorPreference } from "../adapters/ipc/types";
 
-/** Where a teacher sits in the one list, which is what the ranking means. */
+/** Where a professor sits in the one list, which is what the ranking means. */
 export type RankingZone = "ranked" | "neutral" | "avoided";
 
 export interface RankingEntry {
-  /** The teacher key: what a preference is keyed on, never displayed. */
+  /** The professor key: what a preference is keyed on, never displayed. */
   key: string;
   /** The verbatim name, which is what a student reads. */
   displayName: string;
-  /** The sections of this course the teacher is listed on, latest snapshot. */
+  /** The sections of this course the professor is listed on, latest snapshot. */
   sectionIds: number[];
   zone: RankingZone;
   /** 1-based and contiguous inside the ranked zone; null everywhere else. */
   rank: number | null;
   /**
-   * Whether the teacher still appears on any of the course's latest
+   * Whether the professor still appears on any of the course's latest
    * snapshots. An inactive entry is kept and shown, never dropped — a
    * preference is the student's work (ADR-0008's reasoning, one level up).
    */
@@ -40,27 +40,27 @@ export interface RankingEntry {
  * student has already said.
  *
  * Order is the reading order of the surface: ranked first, in rank order,
- * then the untouched teachers in the order the store listed them, then the
+ * then the untouched professors in the order the store listed them, then the
  * avoided. Ranks are renumbered from the ranked zone's own order rather than
  * trusted from storage — contiguity is the store's invariant, and this is the
  * second place that holds it rather than the only one.
  */
 export function buildRankingList(
-  rankable: readonly RankableTeacher[],
-  preferences: readonly TeacherPreference[]
+  rankable: readonly RankableProfessor[],
+  preferences: readonly ProfessorPreference[]
 ): RankingEntry[] {
-  const byKey = new Map(preferences.map((p) => [p.teacherKey, p]));
+  const byKey = new Map(preferences.map((p) => [p.professorKey, p]));
 
   const ranked: RankingEntry[] = [];
   const neutral: RankingEntry[] = [];
   const avoided: RankingEntry[] = [];
 
-  for (const teacher of rankable) {
-    const preference = byKey.get(teacher.key);
+  for (const professor of rankable) {
+    const preference = byKey.get(professor.key);
     const entry: RankingEntry = {
-      key: teacher.key,
-      displayName: teacher.displayName,
-      sectionIds: teacher.sectionIds,
+      key: professor.key,
+      displayName: professor.displayName,
+      sectionIds: professor.sectionIds,
       zone: preference?.avoid ? "avoided" : preference?.rank != null ? "ranked" : "neutral",
       rank: null,
       active: true,
@@ -75,15 +75,15 @@ export function buildRankingList(
     }
   }
 
-  // A preference whose teacher has left the course's latest snapshots keeps
+  // A preference whose professor has left the course's latest snapshots keeps
   // its place: it is the student's work, and deleting it would make a term's
-  // ranking evaporate every time Archer's Hub blanks a Teacher cell.
+  // ranking evaporate every time Archer's Hub blanks a Professor cell.
   for (const preference of preferences) {
-    if (byKey.has(preference.teacherKey) && rankable.some((t) => t.key === preference.teacherKey)) {
+    if (byKey.has(preference.professorKey) && rankable.some((t) => t.key === preference.professorKey)) {
       continue;
     }
     const entry: RankingEntry = {
-      key: preference.teacherKey,
+      key: preference.professorKey,
       displayName: preference.displayName,
       sectionIds: [],
       zone: preference.avoid ? "avoided" : "ranked",
@@ -110,15 +110,15 @@ export function buildRankingList(
 export const RANKING_ZONES: readonly RankingZone[] = ["ranked", "neutral", "avoided"] as const;
 
 /**
- * Moves one teacher to `index` within `zone`, and renumbers.
+ * Moves one professor to `index` within `zone`, and renumbers.
  *
  * This is the whole gesture vocabulary of the surface: ranking, re-ordering,
  * avoiding, and un-avoiding are one operation seen from four places. In
- * particular, demoting an avoided teacher back to neutral costs one move —
+ * particular, demoting an avoided professor back to neutral costs one move —
  * "actually I don't mind them" is common, and delete-then-re-add would make
  * the student pay twice for changing their mind.
  */
-export function moveTeacher(
+export function moveProfessor(
   entries: readonly RankingEntry[],
   key: string,
   zone: RankingZone,
@@ -167,16 +167,16 @@ export function toPreferenceWrite(entries: readonly RankingEntry[]): PreferenceW
  * What an empty list says.
  *
  * The empty state is the *normal* state early in a term: `SPEC.md` §2 records
- * `Teacher` empty in 42 of 42 GEARTAP rows and 3 of 5 CSINTSY rows. Anything
+ * `Professor` empty in 42 of 42 GEARTAP rows and 3 of 5 CSINTSY rows. Anything
  * vaguer than naming the cause and the fix and students report the feature as
  * broken.
  */
-export function formatNoRankableTeachers(): string {
-  return "No teacher names captured yet — Archer's Hub fills these in closer to enlistment. Refresh to check.";
+export function formatNoRankableProfessors(): string {
+  return "No professor names captured yet — Archer's Hub fills these in closer to enlistment. Refresh to check.";
 }
 
-/** What an entry whose teacher has left the course's latest snapshots says. */
-export const INACTIVE_TEACHER_LABEL = "not currently listed for this course";
+/** What an entry whose professor has left the course's latest snapshots says. */
+export const INACTIVE_PROFESSOR_LABEL = "not currently listed for this course";
 
 /**
  * What the live region says after a move.
@@ -209,7 +209,7 @@ export function formatMoveAnnouncement(
  * preset. `schedule` is exactly today's behaviour, which is why it is the
  * default — a student who ignores this feature gets an unchanged solve.
  */
-export type Priority = "schedule" | "teachers" | "hybrid";
+export type Priority = "schedule" | "professors" | "hybrid";
 
 export interface PriorityInfo {
   priority: Priority;
@@ -222,17 +222,17 @@ export const PRIORITY_INFOS: readonly PriorityInfo[] = [
   {
     priority: "schedule",
     label: "Schedule",
-    description: "Rank results by the preset alone. Teacher preferences are ignored.",
+    description: "Rank results by the preset alone. Professor preferences are ignored.",
   },
   {
-    priority: "teachers",
-    label: "Teachers",
-    description: "Rank by your teachers first; the preset only breaks ties.",
+    priority: "professors",
+    label: "Professors",
+    description: "Rank by your professors first; the preset only breaks ties.",
   },
   {
     priority: "hybrid",
     label: "Hybrid",
-    description: "Weigh a wanted teacher against the schedule they cost you.",
+    description: "Weigh a wanted professor against the schedule they cost you.",
   },
 ] as const;
 
@@ -244,25 +244,25 @@ export function isPriority(value: string): value is Priority {
 
 /** How much the student has said, across the whole plan. */
 export interface PreferenceSummary {
-  /** Courses carrying at least one ranked teacher. */
+  /** Courses carrying at least one ranked professor. */
   rankedCourses: number;
-  /** Avoided teachers, counted across every course. */
-  avoidedTeachers: number;
+  /** Avoided professors, counted across every course. */
+  avoidedProfessors: number;
 }
 
 /** Rolls up per-course preferences into the one line the Solve panel shows. */
 export function summarisePreferences(
-  perCourse: readonly (readonly TeacherPreference[])[]
+  perCourse: readonly (readonly ProfessorPreference[])[]
 ): PreferenceSummary {
   let rankedCourses = 0;
-  let avoidedTeachers = 0;
+  let avoidedProfessors = 0;
   for (const preferences of perCourse) {
     if (preferences.some((preference) => preference.rank != null)) {
       rankedCourses += 1;
     }
-    avoidedTeachers += preferences.filter((preference) => preference.avoid).length;
+    avoidedProfessors += preferences.filter((preference) => preference.avoid).length;
   }
-  return { rankedCourses, avoidedTeachers };
+  return { rankedCourses, avoidedProfessors };
 }
 
 const plural = (count: number, noun: string) =>
@@ -274,12 +274,12 @@ const plural = (count: number, noun: string) =>
  * ranking is done, so this reads and links rather than edits.
  */
 export function formatPreferenceSummary(summary: PreferenceSummary): string {
-  if (summary.rankedCourses === 0 && summary.avoidedTeachers === 0) {
-    return "No teachers ranked or avoided yet";
+  if (summary.rankedCourses === 0 && summary.avoidedProfessors === 0) {
+    return "No professors ranked or avoided yet";
   }
   return `${plural(summary.rankedCourses, "course")} ranked · ${plural(
-    summary.avoidedTeachers,
-    "teacher"
+    summary.avoidedProfessors,
+    "professor"
   )} avoided`;
 }
 
@@ -297,21 +297,21 @@ export function formatSchedulePriorityNoOp(
   if (priority !== "schedule") {
     return null;
   }
-  if (summary.rankedCourses === 0 && summary.avoidedTeachers === 0) {
+  if (summary.rankedCourses === 0 && summary.avoidedProfessors === 0) {
     return null;
   }
-  return "Your teacher preferences are being ignored: Priority is set to Schedule, which ranks on the schedule alone. Switch to Teachers or Hybrid to use them.";
+  return "Your professor preferences are being ignored: Priority is set to Schedule, which ranks on the schedule alone. Switch to Professors or Hybrid to use them.";
 }
 
 /**
- * The teacher key, mirroring `src-tauri/src/core/teachers.rs`.
+ * The professor key, mirroring `src-tauri/src/core/professors.rs`.
  *
  * Trimmed, case-folded, inner whitespace collapsed. A blank name has no key:
  * unknown is not an identity, so it can never be ranked, never avoided, and
  * never matched — the invariant that keeps a filter from silently deleting
- * the 42 GEARTAP sections whose Teacher cell was empty (`SPEC.md` §2).
+ * the 42 GEARTAP sections whose Professor cell was empty (`SPEC.md` §2).
  */
-export function teacherKey(name: string | null | undefined): string | null {
+export function professorKey(name: string | null | undefined): string | null {
   const trimmed = (name ?? "").trim();
   if (trimmed === "") {
     return null;
@@ -319,39 +319,39 @@ export function teacherKey(name: string | null | undefined): string | null {
   return trimmed.replace(/\s+/g, " ").toLowerCase();
 }
 
-/** A section already in the plan that is now listed with an avoided teacher. */
-export interface AvoidedTeacherAdvisory {
+/** A section already in the plan that is now listed with an avoided professor. */
+export interface AvoidedProfessorAdvisory {
   courseId: number;
   courseCode: string;
   sectionId: number;
   sectionCode: string;
   /** The verbatim name from the snapshot — the key is never shown. */
-  teacherName: string;
+  professorName: string;
 }
 
 /**
- * Sections in the plan whose latest snapshot names a teacher avoided for
+ * Sections in the plan whose latest snapshot names a professor avoided for
  * their own course.
  *
- * `Teacher` populates over the term, so the common event is not a student
+ * `Professor` populates over the term, so the common event is not a student
  * adding an avoided section — it is a section they chose weeks ago acquiring
  * a name on a refresh. Avoid is a filter on what the solver *offers*
  * (ADR-0020); a section the student put on the grid themselves is theirs, so
  * this only ever reports (ADR-0009).
  */
-export function findAvoidedTeacherAdvisories(
+export function findAvoidedProfessorAdvisories(
   planSections: readonly PlanSection[],
-  preferencesByCourse: ReadonlyMap<number, readonly TeacherPreference[]>
-): AvoidedTeacherAdvisory[] {
-  const advisories: AvoidedTeacherAdvisory[] = [];
+  preferencesByCourse: ReadonlyMap<number, readonly ProfessorPreference[]>
+): AvoidedProfessorAdvisory[] {
+  const advisories: AvoidedProfessorAdvisory[] = [];
   for (const section of planSections) {
-    const teacherName = section.latestSnapshot?.teacher ?? null;
-    const key = teacherKey(teacherName);
-    if (key === null || teacherName === null) {
+    const professorName = section.latestSnapshot?.professor ?? null;
+    const key = professorKey(professorName);
+    if (key === null || professorName === null) {
       continue;
     }
     const avoided = (preferencesByCourse.get(section.courseId) ?? []).some(
-      (preference) => preference.avoid && preference.teacherKey === key
+      (preference) => preference.avoid && preference.professorKey === key
     );
     if (avoided) {
       advisories.push({
@@ -359,7 +359,7 @@ export function findAvoidedTeacherAdvisories(
         courseCode: section.courseCode,
         sectionId: section.sectionId,
         sectionCode: section.sectionCode,
-        teacherName,
+        professorName,
       });
     }
   }
@@ -371,13 +371,13 @@ export function findAvoidedTeacherAdvisories(
  * family, the same restraint. Nothing is removed and nothing is re-solved, so
  * the copy has to be as calm as the behaviour.
  */
-export function formatAvoidedTeacherAdvisory(advisory: AvoidedTeacherAdvisory): {
+export function formatAvoidedProfessorAdvisory(advisory: AvoidedProfessorAdvisory): {
   title: string;
   description: string;
 } {
   return {
-    title: `${advisory.courseCode} ${advisory.sectionCode} is now listed with ${advisory.teacherName}, a teacher you avoid`,
+    title: `${advisory.courseCode} ${advisory.sectionCode} is now listed with ${advisory.professorName}, a professor you avoid`,
     description:
-      "Nothing has been changed — the section is still in your plan, and no solve has been re-run. Avoiding a teacher only filters what a solve offers you.",
+      "Nothing has been changed — the section is still in your plan, and no solve has been re-run. Avoiding a professor only filters what a solve offers you.",
   };
 }

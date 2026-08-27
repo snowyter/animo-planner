@@ -33,14 +33,14 @@ import type {
   Plan,
   PlanSummary,
   Preset,
-  RankableTeacher,
+  RankableProfessor,
   RefreshOutcome,
   RefreshProgress,
   Section,
   SectionRef,
   SessionOption,
   SolveResult,
-  TeacherPreference,
+  ProfessorPreference,
   UpdateCheck,
 } from "./types";
 
@@ -246,23 +246,23 @@ export function buildCaptureReport(args: { error: string }): Promise<CaptureRepo
   return invoke("build_capture_report", { args });
 }
 
-// Teacher preferences (ticket 47)
+// Professor preferences (ticket 47)
 
 /**
- * Returns the distinct teachers on the latest snapshot of each of a course's
- * sections, keyed and de-duplicated. A blank teacher has no key and never
+ * Returns the distinct professors on the latest snapshot of each of a course's
+ * sections, keyed and de-duplicated. A blank professor has no key and never
  * appears.
  */
-export function listRankableTeachers(args: {
+export function listRankableProfessors(args: {
   campusId: number;
   sessionId: number;
   courseId: number;
-}): Promise<RankableTeacher[]> {
-  return invoke("list_rankable_teachers", { args });
+}): Promise<RankableProfessor[]> {
+  return invoke("list_rankable_professors", { args });
 }
 
 /**
- * Returns a course's stored preferences, including entries whose teacher no
+ * Returns a course's stored preferences, including entries whose professor no
  * longer appears in the latest-snapshot set. Those are inactive: kept,
  * returned, flagged (`active: false`), and scoring nothing.
  */
@@ -270,14 +270,14 @@ export function getCoursePreferences(args: {
   campusId: number;
   sessionId: number;
   courseId: number;
-}): Promise<TeacherPreference[]> {
+}): Promise<ProfessorPreference[]> {
   return invoke("get_course_preferences", { args });
 }
 
 /**
  * Replaces a course's preferences in one call. `ranked` is an ordered list
  * of `{ key, displayName }` and `avoided` is an unordered list of the same
- * shape — an avoided teacher carries a display name too, because the key is
+ * shape — an avoided professor carries a display name too, because the key is
  * case-folded and the student must see the name they avoided. Returns the
  * updated preferences.
  */
@@ -287,7 +287,7 @@ export function writeCoursePreferences(args: {
   courseId: number;
   ranked: { key: string; displayName: string }[];
   avoided: { key: string; displayName: string }[];
-}): Promise<TeacherPreference[]> {
+}): Promise<ProfessorPreference[]> {
   return invoke("write_course_preferences", { args });
 }
 

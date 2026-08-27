@@ -15,7 +15,7 @@ import { Building2, Globe } from "lucide-react";
 import { Button } from "./ui/button";
 import { Badge } from "./ui/badge";
 import type { MissingSection, PlanSection, ScheduleBlock, Section } from "../adapters/ipc/types";
-import { formatTeacher, formatEnrolledCap } from "../core/section";
+import { formatProfessor, formatEnrolledCap } from "../core/section";
 import { formatMinutesToTime12 } from "../core/grid";
 
 export interface MissingSectionBannerProps {
@@ -86,7 +86,7 @@ export function MissingSectionBanner({
               ) : (
                 <div className="space-y-2.5">
                   {missing.alternatives.map((alt) => {
-                    const teacherDisplay = formatTeacher(alt.latestSnapshot?.teacher);
+                    const professorDisplay = formatProfessor(alt.latestSnapshot?.professor);
                     const enrolledCapDisplay = formatEnrolledCap(
                       alt.latestSnapshot?.enrolled ?? 0,
                       alt.enrollCap
@@ -150,9 +150,9 @@ export function MissingSectionBanner({
                             })}
                           </div>
 
-                          {/* Teacher & Enrolled */}
+                          {/* Professor & Enrolled */}
                           <div className="flex flex-wrap items-center gap-x-3 text-xs text-muted-foreground">
-                            <span>Teacher: <strong className="text-foreground">{teacherDisplay}</strong></span>
+                            <span>Professor: <strong className="text-foreground">{professorDisplay}</strong></span>
                             <span>Enrolled: <strong className="font-mono text-foreground">{enrolledCapDisplay}</strong></span>
                           </div>
                         </div>

@@ -1,19 +1,19 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
 import * as client from "../adapters/ipc/client";
-import { fetchPreferencesForCourses } from "./useTeacherPreferences";
-import type { TeacherPreference } from "../adapters/ipc/types";
+import { fetchPreferencesForCourses } from "./useProfessorPreferences";
+import type { ProfessorPreference } from "../adapters/ipc/types";
 
 vi.mock("../adapters/ipc/client", () => ({
   getCoursePreferences: vi.fn(),
-  listRankableTeachers: vi.fn(),
+  listRankableProfessors: vi.fn(),
   listCapturedSections: vi.fn(),
   writeCoursePreferences: vi.fn(),
 }));
 
-const preference = (teacherKey: string, fields: Partial<TeacherPreference> = {}): TeacherPreference => ({
-  teacherKey,
-  displayName: teacherKey,
+const preference = (professorKey: string, fields: Partial<ProfessorPreference> = {}): ProfessorPreference => ({
+  professorKey,
+  displayName: professorKey,
   rank: null,
   avoid: false,
   active: true,

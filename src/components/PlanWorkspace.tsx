@@ -26,9 +26,9 @@ import { useSectionPicker } from "./useSectionPicker";
 import { SolvePanel } from "./SolvePanel";
 import { usePlanRefresh } from "./usePlanRefresh";
 import { MissingSectionBanner } from "./MissingSectionBanner";
-import { AvoidedTeacherNotice } from "./AvoidedTeacherNotice";
-import { TeacherRanking } from "./TeacherRanking";
-import { useCourseRanking, useTeacherPreferences } from "./useTeacherPreferences";
+import { AvoidedProfessorNotice } from "./AvoidedProfessorNotice";
+import { ProfessorRanking } from "./ProfessorRanking";
+import { useCourseRanking, useProfessorPreferences } from "./useProfessorPreferences";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "./ui/tabs";
 import * as client from "../adapters/ipc/client";
 import type {
@@ -37,7 +37,7 @@ import type {
   PlanSummary,
   Section,
   Solution,
-  TeacherPreference,
+  ProfessorPreference,
 } from "../adapters/ipc/types";
 import { formatSectionCount } from "../core/plan";
 import { findConflicts } from "../core/conflicts";
@@ -60,9 +60,9 @@ import {
 } from "../core/solver";
 import { ExportMenu } from "./ExportMenu";
 import {
-  findAvoidedTeacherAdvisories,
+  findAvoidedProfessorAdvisories,
   summarisePreferences,
-} from "../core/teacherRanking";
+} from "../core/professorRanking";
 
 export interface PlanWorkspaceProps {
   planSummary: PlanSummary;
@@ -88,7 +88,7 @@ export interface PlanWorkspaceProps {
    */
   initialToolsOpen?: boolean;
   /**
-   * Which course's teacher ranking the drill-down opens on, if any
+   * Which course's professor ranking the drill-down opens on, if any
    * (ticket 49). The suite renders to static markup and cannot click a
    * course row, so the drill-down is drivable from props — the same seam
    * `initialTab` provides for the tool panel.
@@ -99,7 +99,7 @@ export interface PlanWorkspaceProps {
    * render, and the advisory notice and the Priority summary are both
    * computed from this.
    */
-  initialPreferencesByCourse?: Map<number, TeacherPreference[]>;
+  initialPreferencesByCourse?: Map<number, ProfessorPreference[]>;
   onBack: () => void;
   onRetry: () => void;
   onReportBrokenCapture?: (error: string) => void;
@@ -151,7 +151,7 @@ export function PlanWorkspace({
     rank: number;
   } | null>(() => (initialPreviewSolution ? { solution: initialPreviewSolution, rank: 1 } : null));
   /**
-   * Which course's teacher ranking is open, if any.
+   * Which course's professor ranking is open, if any.
    *
    * A drill-down, not a fourth tab: the workspace stays, the plan header
    * stays, and the two-column region gives way to it for as long as it is
@@ -223,13 +223,13 @@ export function PlanWorkspace({
   });
 
   /**
-   * The catalog's teacher preferences.
+   * The catalog's professor preferences.
    *
    * Read here rather than inside the Solve panel because two surfaces need
    * them and neither owns the other: the panel summarises them, and the
    * advisory notice — which lives outside the tabs — is computed from them.
    */
-  const { preferencesByCourse, reloadPreferences } = useTeacherPreferences(
+  const { preferencesByCourse, reloadPreferences } = useProfessorPreferences(
     { campusId: planSummary.campusId, sessionId: planSummary.sessionId },
     courses.map((course) => course.courseId),
     initialPreferencesByCourse
@@ -248,14 +248,14 @@ export function PlanWorkspace({
   );
 
   /**
-   * A section already in the plan that has acquired an avoided teacher.
+   * A section already in the plan that has acquired an avoided professor.
    *
    * Advisory only. Nothing is removed and nothing is re-solved — the plan is
    * the student's (ADR-0009), and avoid is a filter on what a solve offers
    * (ADR-0020).
    */
-  const avoidedTeacherAdvisories = useMemo(
-    () => findAvoidedTeacherAdvisories(currentSections, preferencesByCourse),
+  const avoidedProfessorAdvisories = useMemo(
+    () => findAvoidedProfessorAdvisories(currentSections, preferencesByCourse),
     [currentSections, preferencesByCourse]
   );
 
@@ -790,13 +790,13 @@ export function PlanWorkspace({
         onRemoveMissingSection={handleRemoveMissingSection}
       />
 
-      {/* A section already in the plan has acquired an avoided teacher on a
+      {/* A section already in the plan has acquired an avoided professor on a
           refresh (ticket 49). Same family as the banner above it, same
           restraint: it names the section and changes nothing. It belongs out
           here with the global notices, not inside Capture — a student on
           Pick needs to see it too (ticket 46). */}
-      <AvoidedTeacherNotice
-        advisories={avoidedTeacherAdvisories}
+      <AvoidedProfessorNotice
+        advisories={avoidedProfessorAdvisories}
         onOpenRanking={openRanking}
       />
 
@@ -832,7 +832,7 @@ export function PlanWorkspace({
           positioned `fixed`, and every one of those properties would make an
           ancestor its containing block and silently mis-place it
           (tickets 41, 45). */}
-      {/* The teacher ranking drill-down (ticket 49).
+      {/* The professor ranking drill-down (ticket 49).
           Ranking is not a fourth tool acting on the grid — it is a place you
           go and come back from — so it takes the entire workspace width
           rather than displacing the grid, and ticket 46's rule that the grid
@@ -843,7 +843,7 @@ export function PlanWorkspace({
           data-course-id={rankingCourseId}
           className="w-full min-w-0"
         >
-          <TeacherRanking
+          <ProfessorRanking
             courseCode={rankingCourse?.code ?? `Course ${rankingCourseId}`}
             courseTitle={rankingCourse?.title ?? ""}
             entries={ranking.entries}
@@ -994,7 +994,7 @@ export function PlanWorkspace({
                 isLoading={isLoadingCourses}
                 isMutating={isMutating}
                 onBrowseCourse={browseCourse}
-                onRankTeachers={openRanking}
+                onRankProfessors={openRanking}
                 onSetIncluded={handleSetCourseIncluded}
                 onRemoveCourse={handleRemoveCourse}
               />

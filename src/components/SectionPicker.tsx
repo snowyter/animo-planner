@@ -3,8 +3,8 @@
  *
  * SPEC §7, ADR-0007, ADR-0008, ADR-0009, ADR-0012, ADR-0014:
  * - Course-by-course browser listing every captured section for a course.
- * - Each row shows schedule blocks, per-block modality, room, teacher, and enrolled/cap.
- * - Blank teacher displays as "Unknown", never as absent or a dash.
+ * - Each row shows schedule blocks, per-block modality, room, professor, and enrolled/cap.
+ * - Blank professor displays as "Unknown", never as absent or a dash.
  * - Remark displays verbatim when present.
  * - Hovering ghosts its blocks onto the week grid; leaving clears the ghost.
  * - Clicking adds the section to the plan at full weight.
@@ -40,7 +40,7 @@ import type {
   Section,
 } from "../adapters/ipc/types";
 import {
-  formatTeacher,
+  formatProfessor,
   formatEnrolledCap,
   isSectionInPlan,
   isSectionPinned,
@@ -95,7 +95,7 @@ export interface SectionPickerProps {
 
 /**
  * The shape of the rows that are coming: identity line, block chips, and the
- * teacher/enrolment line. A spinner said none of that, and it was an animation
+ * professor/enrolment line. A spinner said none of that, and it was an animation
  * running at exactly the moment the machine was busiest.
  */
 function SectionListSkeleton() {
@@ -192,8 +192,8 @@ export function SectionPicker({
       candidateConflicts,
       planSections
     );
-    const teacherDisplay = formatTeacher(
-      section.latestSnapshot?.teacher
+    const professorDisplay = formatProfessor(
+      section.latestSnapshot?.professor
     );
     const enrolledCapDisplay = formatEnrolledCap(
       section.latestSnapshot?.enrolled ?? 0,
@@ -380,19 +380,19 @@ export function SectionPicker({
               })}
             </div>
 
-            {/* Row 3: Teacher, Enrolled / Cap, Remark */}
+            {/* Row 3: Professor, Enrolled / Cap, Remark */}
             <div className="flex flex-wrap items-center gap-y-1 gap-x-4 text-xs text-muted-foreground">
-              {/* Teacher: Blank teacher displays as Unknown (never absent or a dash) */}
+              {/* Professor: Blank professor displays as Unknown (never absent or a dash) */}
               <span>
-                Teacher:{" "}
+                Professor:{" "}
                 <span
                   className={`font-medium ${
-                    teacherDisplay === "Unknown"
+                    professorDisplay === "Unknown"
                       ? "text-muted-foreground italic"
                       : "text-foreground"
                   }`}
                 >
-                  {teacherDisplay}
+                  {professorDisplay}
                 </span>
               </span>
 
