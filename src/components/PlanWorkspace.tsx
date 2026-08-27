@@ -505,7 +505,12 @@ export function PlanWorkspace({
        panel starts at the column's left edge, so anything that must align
        with it has to start there too. Dropping the chrome also spends one
        fewer box on a screen whose whole revision was about spending fewer. */
-    <div data-testid="workspace-bar" className="flex flex-wrap items-center gap-x-4 gap-y-3">
+    <div
+      data-testid="workspace-bar"
+      className={`flex flex-wrap items-center ${
+        isToolsOpen ? "gap-x-6" : "gap-x-4"
+      } gap-y-3`}
+    >
       {/* One cluster over the column it drives, at exactly that column's
           width and flush with its left edge.
 
@@ -936,7 +941,7 @@ export function PlanWorkspace({
                   window.scrollTo(0, savedWindowScrollRef.current);
                 }
               }}
-              className="min-h-0 flex-1 lg:overflow-y-auto lg:pr-1"
+              className="min-h-0 flex-1 lg:overflow-y-auto"
             >
             {/* Capture: the arrival surface. The way in, and what came in. */}
             <TabsContent value="capture" className="space-y-4">

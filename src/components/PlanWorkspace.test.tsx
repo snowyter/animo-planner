@@ -1337,6 +1337,23 @@ describe("the tool panel and the permanent week grid", () => {
       expect(cluster![0]).toContain(`lg:w-[${width![1]}px]`);
     });
 
+    it("aligns Weekly Schedule to the grid column when tools are open", () => {
+      const openHtml = render({ initialToolsOpen: true });
+      const openBar = /<div[^>]*data-testid="workspace-bar"[^>]*>/.exec(openHtml);
+      expect(openBar![0]).toContain("gap-x-6");
+
+      const closedHtml = render({ initialToolsOpen: false });
+      const closedBar = /<div[^>]*data-testid="workspace-bar"[^>]*>/.exec(closedHtml);
+      expect(closedBar![0]).toContain("gap-x-4");
+    });
+
+    it("keeps panel scroll area flush so cards align with the tool cluster", () => {
+      const html = render({ initialToolsOpen: true });
+      const scrollArea = /<div[^>]*data-testid="tool-panel-scroll"[^>]*>/.exec(html);
+      expect(scrollArea, "tool-panel-scroll must render").not.toBeNull();
+      expect(scrollArea![0]).not.toContain("lg:pr-1");
+    });
+
     it("shows no tab strip while the tools are folded away", () => {
       // A tab strip selecting a panel that is not on screen is a control
       // that controls nothing.
