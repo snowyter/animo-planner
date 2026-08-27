@@ -1675,7 +1675,7 @@ impl Store {
         scope: &CaptureScope,
         course_id: i64,
         ranked: &[(String, String)],
-        avoided: &[String],
+        avoided: &[(String, String)],
     ) -> Result<(), StoreError> {
         let tx = self.conn.transaction()?;
         // Delete existing preferences for this course under this scope.
@@ -1700,16 +1700,21 @@ impl Store {
                 ],
             )?;
         }
-        // Insert avoided teachers.
-        for key in avoided {
-            // The display name for an avoided teacher: use the key itself
-            // since we may not have the display name. The caller should
-            // provide it if available, but the avoid set is just keys.
+        // Insert avoided teachers. An avoided teacher carries a display
+        // name exactly as a ranked one does: the key is case-folded, and a
+        // student who avoided "Bryant Lee" must never be shown "bryant lee".
+        for (key, display_name) in avoided {
             tx.execute(
                 "INSERT INTO teacher_preferences
                  (campus_id, session_id, course_id, teacher_key, display_name, rank, avoid)
-                 VALUES (?1, ?2, ?3, ?4, ?4, NULL, 1)",
-                rusqlite::params![scope.campus_id, scope.session_id, course_id, key],
+                 VALUES (?1, ?2, ?3, ?4, ?5, NULL, 1)",
+                rusqlite::params![
+                    scope.campus_id,
+                    scope.session_id,
+                    course_id,
+                    key,
+                    display_name,
+                ],
             )?;
         }
         tx.commit()?;
@@ -5264,7 +5269,7 @@ mod tests {
         store.write_course_preferences(
             &SCOPE, 2923,
             &[],
-            &["other teacher".into()],
+            &[("other teacher".into(), "Other Teacher".into())],
         ).expect("write prefs");
 
         let prefs = store.course_preferences(&SCOPE, 2923).expect("read prefs");
@@ -5272,6 +5277,34 @@ mod tests {
         assert_eq!(prefs[0].teacher_key, "other teacher");
         assert_eq!(prefs[0].rank, None);
         assert!(prefs[0].avoid);
+        assert_eq!(
+            prefs[0].display_name, "Other Teacher",
+            "an avoided teacher is displayed by name, never by its case-folded key"
+        );
+    }
+
+    #[test]
+    fn an_avoided_teacher_is_never_displayed_as_its_key() {
+        // The key is case-folded for matching. A student who avoided
+        // "Bryant Lee" must not be shown "bryant lee" in the list they
+        // dragged them into.
+        let mut store = store();
+        store.record_capture(&SCOPE, &[
+            parsed_section(2923, 384, "S01", Some("Bryant Lee"), Some(10), vec![]),
+        ], T1).expect("capture");
+
+        store.write_course_preferences(
+            &SCOPE, 2923,
+            &[],
+            &[("bryant lee".into(), "Bryant Lee".into())],
+        ).expect("write prefs");
+
+        let prefs = store.course_preferences(&SCOPE, 2923).expect("read prefs");
+        assert_eq!(prefs[0].display_name, "Bryant Lee");
+        assert_ne!(
+            prefs[0].display_name, prefs[0].teacher_key,
+            "the display name must not be the normalized key"
+        );
     }
 
     #[test]
@@ -5294,7 +5327,7 @@ mod tests {
         store.write_course_preferences(
             &SCOPE, 2923,
             &[("b".into(), "B".into())],
-            &["c".into()],
+            &[("c".into(), "C".into())],
         ).expect("second write");
 
         let prefs = store.course_preferences(&SCOPE, 2923).expect("read prefs");

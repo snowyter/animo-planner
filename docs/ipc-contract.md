@@ -158,8 +158,10 @@ no longer appears in the latest-snapshot set. Those are **inactive**: kept, retu
 (`active: false`), and scoring nothing.
 
 `write_course_preferences` replaces a course's preferences in one call. `ranked` is an ordered
-list of `{ key, displayName }`; `avoided` is a list of teacher keys. Ranks are contiguous from 1
-within a course — the store owns that invariant. The command returns the updated preferences.
+list of `{ key, displayName }`, and `avoided` is an unordered list of the same shape. Both carry
+the display name: the key is case-folded for matching and is never fit to show, so an avoided
+"Bryant Lee" must not come back as "bryant lee". Ranks are contiguous from 1 within a course —
+the store owns that invariant. The command returns the updated preferences.
 
 Preferences are **app-wide within a capture scope**, shared by every plan under that
 `(campus, session)`. They are not plan data and must not be copied into a plan.

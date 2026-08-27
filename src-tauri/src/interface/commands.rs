@@ -221,13 +221,17 @@ pub struct WriteTeacherPreferencesArgs {
     pub campus_id: i64,
     pub session_id: i64,
     pub course_id: i64,
-    pub ranked: Vec<RankedTeacher>,
-    pub avoided: Vec<String>,
+    pub ranked: Vec<TeacherEntry>,
+    pub avoided: Vec<TeacherEntry>,
 }
 
+/// One teacher named in a preference write, ranked or avoided alike: the
+/// normalized key the preference is stored under, and the verbatim name the
+/// student sees. Both lists carry the name — the key is case-folded, so it
+/// is never fit to display.
 #[derive(Debug, Deserialize)]
 #[serde(rename_all = "camelCase")]
-pub struct RankedTeacher {
+pub struct TeacherEntry {
     pub key: String,
     pub display_name: String,
 }
@@ -1093,8 +1097,16 @@ pub fn write_course_preferences(
         .iter()
         .map(|r| (r.key.clone(), r.display_name.clone()))
         .collect();
+    // Avoided teachers carry a display name for the same reason ranked ones
+    // do: the key is case-folded, and the student must see the name they
+    // avoided, not its normalization.
+    let avoided: Vec<(String, String)> = args
+        .avoided
+        .iter()
+        .map(|r| (r.key.clone(), r.display_name.clone()))
+        .collect();
     store
-        .write_course_preferences(&scope, args.course_id, &ranked, &args.avoided)
+        .write_course_preferences(&scope, args.course_id, &ranked, &avoided)
         .map_err(|err| err.to_string())?;
     store
         .course_preferences(&scope, args.course_id)
@@ -2089,7 +2101,7 @@ mod tests {
         store.write_course_preferences(
             &scope, 2923,
             &[("bryant lee".into(), "Bryant Lee".into())],
-            &["other teacher".into()],
+            &[("other teacher".into(), "Other Teacher".into())],
         ).expect("write prefs");
 
         let prefs = store.course_preferences(&scope, 2923).expect("read prefs");

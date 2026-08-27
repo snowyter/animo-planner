@@ -276,15 +276,17 @@ export function getCoursePreferences(args: {
 
 /**
  * Replaces a course's preferences in one call. `ranked` is an ordered list
- * of `{ key, displayName }`; `avoided` is a list of teacher keys. Returns
- * the updated preferences.
+ * of `{ key, displayName }` and `avoided` is an unordered list of the same
+ * shape — an avoided teacher carries a display name too, because the key is
+ * case-folded and the student must see the name they avoided. Returns the
+ * updated preferences.
  */
 export function writeCoursePreferences(args: {
   campusId: number;
   sessionId: number;
   courseId: number;
   ranked: { key: string; displayName: string }[];
-  avoided: string[];
+  avoided: { key: string; displayName: string }[];
 }): Promise<TeacherPreference[]> {
   return invoke("write_course_preferences", { args });
 }
