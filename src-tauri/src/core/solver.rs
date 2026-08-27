@@ -75,6 +75,7 @@ use crate::core::ipc_types::{
     UnsatisfiableReason,
 };
 use crate::core::scoring::{self, Evaluation};
+use crate::core::teachers::teacher_key;
 use serde::{Deserialize, Serialize};
 use std::cmp::{Ordering, Reverse};
 use std::collections::BinaryHeap;
@@ -208,9 +209,10 @@ impl SolveConstraints {
         self.candidate_allowed_except_full_and_avoid(candidate, course_id)
     }
 
-    /// Every constraint except exclude-full and avoid. The unsatisfiable-reason
-    /// attribution needs the split: a course whose sections all pass here
-    /// but fail fullness lost them to exclusion, not to anything else.
+    /// Every constraint except exclude-full — avoid *is* applied here. The
+    /// unsatisfiable-reason attribution needs the split: a course whose
+    /// sections all pass here but fail fullness lost them to exclusion, not
+    /// to anything else.
     fn candidate_allowed_except_full(&self, candidate: &SolverSection, course_id: i64) -> bool {
         if self.is_avoided(candidate, course_id) {
             return false;
@@ -240,24 +242,19 @@ impl SolveConstraints {
     }
 
     /// Whether a candidate's teacher is avoided for its course.
-    /// A blank teacher is never avoided (ADR-0020, CONTEXT.md).
+    ///
+    /// A blank teacher is never avoided (ADR-0020, CONTEXT.md), and neither
+    /// is a whitespace-only one: both are *unknown*, and unknown is not a
+    /// match. The key comes from `core::teachers` — the one normalization
+    /// the store also keys preferences on. A second copy could drift, and
+    /// the failure would be silent: an avoid that quietly stops matching.
     fn is_avoided(&self, candidate: &SolverSection, course_id: i64) -> bool {
         let Some(ref teacher) = candidate.teacher else {
             return false; // blank teacher is never avoided
         };
-        let key = teacher_key(teacher);
-        self.teacher_preferences.iter().any(|pref| {
-            pref.course_id == course_id && pref.avoid && pref.teacher_key == key
-        })
-    }
-
-    /// Whether a candidate's teacher is avoided for its course, but only
-    /// checking the avoid filter (for unsatisfiable-reason attribution).
-    fn is_only_avoided(&self, candidate: &SolverSection, course_id: i64) -> bool {
-        let Some(ref teacher) = candidate.teacher else {
-            return false;
+        let Some(key) = teacher_key(teacher) else {
+            return false; // whitespace-only is blank, and blank is unknown
         };
-        let key = teacher_key(teacher);
         self.teacher_preferences.iter().any(|pref| {
             pref.course_id == course_id && pref.avoid && pref.teacher_key == key
         })
@@ -319,7 +316,7 @@ fn count_excluded_as_avoided(
                 .filter(|candidate| {
                     constraints.candidate_allowed_except_full_and_avoid(candidate, course.course_id)
                         && !conflicts_with_fixed(fixed, candidate)
-                        && constraints.is_only_avoided(candidate, course.course_id)
+                        && constraints.is_avoided(candidate, course.course_id)
                 })
                 .count()
         })
@@ -333,26 +330,6 @@ fn is_full(candidate: &SolverSection) -> bool {
         (Some(enrolled), Some(enroll_cap)) => enrolled >= enroll_cap,
         _ => false,
     }
-}
-
-/// Normalized form of a teacher name — trimmed, case-folded, inner whitespace
-/// collapsed. The only thing a ranking or avoidance is ever keyed on
-/// (CONTEXT.md: "teacher key").
-fn teacher_key(name: &str) -> String {
-    let mut result = String::with_capacity(name.len());
-    let mut prev_was_space = false;
-    for c in name.trim().to_lowercase().chars() {
-        if c.is_whitespace() {
-            if !prev_was_space {
-                result.push(' ');
-            }
-            prev_was_space = true;
-        } else {
-            result.push(c);
-            prev_was_space = false;
-        }
-    }
-    result
 }
 
 /// The outcome of a bounded solve run.
@@ -635,7 +612,7 @@ impl Solver {
                 let lost_to_avoidance = course.candidates.iter().any(|candidate| {
                     constraints.candidate_allowed_except_full_and_avoid(candidate, course.course_id)
                         && !conflicts_with_fixed(&fixed, candidate)
-                        && constraints.is_only_avoided(candidate, course.course_id)
+                        && constraints.is_avoided(candidate, course.course_id)
                 });
                 UnsatisfiableCourse {
                     course_id: course.course_id,

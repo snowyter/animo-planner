@@ -27,6 +27,7 @@ use crate::core::ipc_types::{
     BlockModality, Day, Preset, Priority, ScoreComponent, SectionRef, SolutionSection,
     TeacherPreferenceEntry, TransitionWarning, WarningKind,
 };
+use crate::core::teachers::teacher_key;
 use serde::{Deserialize, Serialize};
 
 /// The result of one evaluation pass: a total score, the components that sum
@@ -273,25 +274,6 @@ fn score_components(stats: &Stats, preset: Preset) -> (f64, Vec<ScoreComponent>)
     (score, components)
 }
 
-/// Normalized form of a teacher name — trimmed, case-folded, inner
-/// whitespace collapsed. The only thing a ranking is ever keyed on.
-pub fn teacher_key(name: &str) -> String {
-    let mut result = String::with_capacity(name.len());
-    let mut prev_was_space = false;
-    for c in name.trim().to_lowercase().chars() {
-        if c.is_whitespace() {
-            if !prev_was_space {
-                result.push(' ');
-            }
-            prev_was_space = true;
-        } else {
-            result.push(c);
-            prev_was_space = false;
-        }
-    }
-    result
-}
-
 /// The teacher preference score for one section, on a 1/rank curve.
 /// Unranked scores 0. Blank scores 0. (ticket 48, ADR-0021).
 fn teacher_score_for_section(
@@ -302,7 +284,12 @@ fn teacher_score_for_section(
     let Some(ref teacher_name) = teacher else {
         return 0.0; // blank teacher scores 0
     };
-    let key = teacher_key(teacher_name);
+    // One normalization for the whole app: a second copy here could drift
+    // from the one the store keys preferences on, and that failure would be
+    // silent — a preference that quietly stops matching.
+    let Some(key) = teacher_key(teacher_name) else {
+        return 0.0; // whitespace-only is blank, and blank scores 0
+    };
     // Find the rank for this teacher in this course's preferences.
     let rank = preferences.iter().find_map(|pref| {
         if pref.course_id == course_id && !pref.avoid && pref.teacher_key == key {
@@ -320,9 +307,14 @@ fn teacher_score_for_section(
 /// Total teacher preference score across all courses, capped at 1.0 per
 /// course. A course contributes at most one teacher's points (the section
 /// that was actually chosen), because a student takes one section of it.
+/// `display_weight` scales the *component*, never the returned score: the
+/// score is the raw per-course total that the lexicographic sort key reads,
+/// and the component is what the student sees in the breakdown, which must
+/// equal what actually entered `Evaluation::score`.
 fn teacher_score_total(
     sections: &[SolutionSection],
     preferences: &[TeacherPreferenceEntry],
+    display_weight: f64,
 ) -> (f64, Vec<ScoreComponent>) {
     if preferences.is_empty() {
         return (0.0, vec![]);
@@ -343,7 +335,7 @@ fn teacher_score_total(
     }
     let total: f64 = course_scores.values().sum();
     let components = if total > 0.0 {
-        vec![component("Teacher preference", total)]
+        vec![component("Teacher preference", total * display_weight)]
     } else {
         vec![]
     };
@@ -373,8 +365,13 @@ pub fn evaluate_with_teacher_prefs(
             // preferences are completely invisible (ADR-0021).
             (0.0, vec![])
         }
-        Priority::Teachers | Priority::Hybrid => {
-            teacher_score_total(sections, teacher_preferences)
+        Priority::Teachers => teacher_score_total(sections, teacher_preferences, 1.0),
+        // Under Hybrid the teacher term enters `score` weighted, so the
+        // component has to carry the weighted points or the breakdown
+        // would stop summing to the score the moment the weight is tuned
+        // away from 1.0.
+        Priority::Hybrid => {
+            teacher_score_total(sections, teacher_preferences, HYBRID_TEACHER_WEIGHT)
         }
     };
     breakdown.extend(teacher_components);
@@ -628,6 +625,95 @@ mod tests {
                 "the breakdown must sum to the score under {preset:?}: {evaluation:?}"
             );
         }
+    }
+
+    #[test]
+    fn the_breakdown_sums_to_the_score_under_hybrid_priority() {
+        // Hybrid adds `teacher_score * HYBRID_TEACHER_WEIGHT` to the score,
+        // so the component must carry the *weighted* points. With the weight
+        // at 1.0 an unweighted component would pass by coincidence; this
+        // asserts the relationship, not the current constant.
+        let mut taught = section(1, 1, vec![f2f(Day::Mon, 450, 540, "L226")]);
+        taught.teacher = Some("Bryant Lee".into());
+        let sections = vec![taught, section(2, 2, vec![online(Day::Tue, 450, 540)])];
+        let prefs = vec![TeacherPreferenceEntry {
+            course_id: 1,
+            teacher_key: "bryant lee".into(),
+            rank: Some(1),
+            avoid: false,
+        }];
+
+        for preset in [
+            Preset::FewestCampusDays,
+            Preset::NoEarlyMornings,
+            Preset::MostOnline,
+        ] {
+            let evaluation =
+                evaluate_with_teacher_prefs(&sections, preset, Priority::Hybrid, &prefs);
+            let sum: f64 = evaluation.breakdown.iter().map(|c| c.points).sum();
+            assert!(
+                (evaluation.score - sum).abs() < 1e-9,
+                "the breakdown must sum to the score under Hybrid/{preset:?}: {evaluation:?}"
+            );
+            assert_eq!(
+                points(&evaluation.breakdown, "Teacher preference"),
+                evaluation.teacher_score * HYBRID_TEACHER_WEIGHT,
+                "the component must be the weighted contribution"
+            );
+        }
+    }
+
+    #[test]
+    fn under_teachers_priority_the_score_stays_the_preset_total() {
+        // Teachers is lexicographic (ADR-0021): the teacher score is the
+        // primary sort key, carried on `teacher_score`, and `score` remains
+        // the preset total that breaks ties. The teacher component is still
+        // shown, so this is the one priority where the breakdown is not a
+        // sum of the score — deliberately, and pinned here so nobody
+        // "fixes" it into a weighted total and silently breaks the sort.
+        let mut taught = section(1, 1, vec![f2f(Day::Mon, 450, 540, "L226")]);
+        taught.teacher = Some("Bryant Lee".into());
+        let sections = vec![taught];
+        let prefs = vec![TeacherPreferenceEntry {
+            course_id: 1,
+            teacher_key: "bryant lee".into(),
+            rank: Some(1),
+            avoid: false,
+        }];
+
+        let with_teachers = evaluate_with_teacher_prefs(
+            &sections,
+            Preset::FewestCampusDays,
+            Priority::Teachers,
+            &prefs,
+        );
+        let baseline = evaluate(&sections, Preset::FewestCampusDays);
+
+        assert_eq!(with_teachers.score, baseline.score, "score is the preset total");
+        assert_eq!(with_teachers.teacher_score, 1.0, "rank 1 scores 1.0");
+        assert_eq!(points(&with_teachers.breakdown, "Teacher preference"), 1.0);
+    }
+
+    #[test]
+    fn a_whitespace_only_teacher_scores_zero_like_a_blank_one() {
+        // `core::teachers::teacher_key` has no key for a whitespace-only
+        // name, and unknown is never a demerit (CONTEXT.md).
+        let mut blank = section(1, 1, vec![f2f(Day::Mon, 450, 540, "L226")]);
+        blank.teacher = Some("   ".into());
+        let prefs = vec![TeacherPreferenceEntry {
+            course_id: 1,
+            teacher_key: "bryant lee".into(),
+            rank: Some(1),
+            avoid: false,
+        }];
+
+        let evaluation = evaluate_with_teacher_prefs(
+            &[blank],
+            Preset::FewestCampusDays,
+            Priority::Teachers,
+            &prefs,
+        );
+        assert_eq!(evaluation.teacher_score, 0.0);
     }
 
     #[test]
