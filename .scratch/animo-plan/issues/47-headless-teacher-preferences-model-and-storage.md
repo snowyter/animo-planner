@@ -6,7 +6,7 @@
 
 **Gates:** 48, 49
 
-**Status:** ready-for-agent
+**Status:** done — merged to main in `5f3d7e7`
 
 ## Why
 
@@ -73,3 +73,15 @@ Migration **7** (`user_version` is at 6; migration 6 is the sample-data removal)
 ## Worth knowing before starting
 
 Read ADR-0020 and ADR-0021 first — they were written for this work and settle the questions this ticket's shape depends on. `SPEC.md` §2 records that **`Teacher` was empty in 42/42 GEARTAP rows and 3/5 CSINTSY rows**: an empty rankable list is the *normal* case early in a term, not an error, and every layer must be comfortable with it.
+
+## Comments
+
+Merged in `5f3d7e7`. One defect fixed on main in `413c3c1` before 48 and 49
+start: `write_course_preferences` stored the case-folded key in
+`display_name` for avoided teachers, so an avoided "Bryant Lee" would have
+rendered as "bryant lee". `avoided` now takes `{ key, displayName }`,
+symmetric with `ranked`, through the store, the command args, the TypeScript
+client and `docs/ipc-contract.md`; `RankedTeacher` became `TeacherEntry`.
+
+The migration is **8**, not the 7 this ticket said — ticket 46's `included`
+column had already taken 7. The implementing agent caught it.
