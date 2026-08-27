@@ -8,8 +8,6 @@ describe("CaptureBar", () => {
   const defaultProps = {
     campusId: 7,
     sessionId: 155,
-    campusName: "Manila",
-    sessionName: "AY2026-27 T1",
     summary: {
       campusId: 7,
       sessionId: 155,
@@ -116,8 +114,6 @@ describe("the capture panel in a narrow column", () => {
   const panelProps = {
     campusId: 7,
     sessionId: 155,
-    campusName: "Manila",
-    sessionName: "AY2026-27 T1",
     summary: {
       campusId: 7,
       sessionId: 155,

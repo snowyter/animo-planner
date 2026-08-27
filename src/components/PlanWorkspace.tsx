@@ -506,13 +506,51 @@ export function PlanWorkspace({
        with it has to start there too. Dropping the chrome also spends one
        fewer box on a screen whose whole revision was about spending fewer. */
     <div data-testid="workspace-bar" className="flex flex-wrap items-center gap-x-4 gap-y-3">
-      {/* The tabs sit over the column they drive, at exactly its width, and
-          flush with its left edge. Rendered only while that column is on
-          screen — a strip selecting a panel that is not there would be a
-          control that controls nothing. */}
-      {isToolsOpen && (
+      {/* One cluster over the column it drives, at exactly that column's
+          width and flush with its left edge.
+
+          The fold control sits *inside* the cluster rather than before it,
+          which is the only arrangement that satisfies both things at once:
+          eyes travel left to right, so the control that opens the tools is
+          the first thing on the row — and because it is inside, it costs the
+          strip no offset. Put it before the cluster and its own width is
+          exactly how far out of line the tabs fall. */}
+      <div
+        data-testid="tool-cluster"
+        className={
+          isToolsOpen
+            ? "flex w-full shrink-0 items-center gap-1 rounded-panel border border-border bg-muted p-1 lg:w-[400px] xl:w-[480px]"
+            : "flex shrink-0 items-center"
+        }
+      >
+        <Button
+          type="button"
+          size="sm"
+          onClick={() => setIsToolsOpen(!isToolsOpen)}
+          className="h-9 shrink-0 gap-2 bg-emerald-700 px-3 text-white hover:bg-emerald-800"
+          data-testid={isToolsOpen ? "hide-tools" : "show-tools"}
+          aria-expanded={isToolsOpen}
+          title={
+            isToolsOpen
+              ? "Hide the tools and give the schedule the whole window"
+              : "Show Capture, Solve, and Pick"
+          }
+        >
+          <Menu className="h-4 w-4" aria-hidden="true" />
+          <span className="sr-only">{isToolsOpen ? "Hide tools" : "Show tools"}</span>
+          {!isToolsOpen && emptyCatalogSignal && (
+            <span className="rounded-pill bg-amber-100 px-1.5 py-0.5 text-nano font-bold uppercase tracking-wider text-amber-900">
+              {emptyCatalogSignal}
+            </span>
+          )}
+        </Button>
+
+        {/* The strip drops its own shell inside the cluster: the cluster is
+            already wearing it, and two nested pills would read as two
+            controls. Rendered only while the panel it selects is on screen. */}
+        {isToolsOpen && (
         <TabsList
-          className="w-full shrink-0 lg:w-[400px] xl:w-[480px]"
+          className="min-w-0 flex-1 border-0 bg-transparent p-0"
           data-testid="tool-tabs"
         >
           {TOOL_TABS.map((info) => (
@@ -536,7 +574,8 @@ export function PlanWorkspace({
             </TabsTrigger>
           ))}
         </TabsList>
-      )}
+        )}
+      </div>
 
       <h3 className="text-base font-semibold text-foreground">Weekly Schedule</h3>
 
@@ -564,31 +603,6 @@ export function PlanWorkspace({
           Clear schedule
         </Button>
         <ExportMenu planSummary={planSummary} plan={plan} conflicts={conflicts} />
-
-        {/* The fold control rides with the actions rather than leading the
-            row. It led the row until the tabs had to align with the panel,
-            and its own width was the whole of the offset that stopped them. */}
-        <Button
-          type="button"
-          size="sm"
-          onClick={() => setIsToolsOpen(!isToolsOpen)}
-          className="h-9 shrink-0 gap-2 bg-emerald-700 px-3 text-white hover:bg-emerald-800"
-          data-testid={isToolsOpen ? "hide-tools" : "show-tools"}
-          aria-expanded={isToolsOpen}
-          title={
-            isToolsOpen
-              ? "Hide the tools and give the schedule the whole window"
-              : "Show Capture, Solve, and Pick"
-          }
-        >
-          <Menu className="h-4 w-4" aria-hidden="true" />
-          <span className="sr-only">{isToolsOpen ? "Hide tools" : "Show tools"}</span>
-          {!isToolsOpen && emptyCatalogSignal && (
-            <span className="rounded-pill bg-amber-100 px-1.5 py-0.5 text-nano font-bold uppercase tracking-wider text-amber-900">
-              {emptyCatalogSignal}
-            </span>
-          )}
-        </Button>
       </div>
     </div>
   );
@@ -668,8 +682,6 @@ export function PlanWorkspace({
         render="notices"
         campusId={planSummary.campusId}
         sessionId={planSummary.sessionId}
-        campusName={planSummary.campusName}
-        sessionName={planSummary.sessionName}
         summary={captureSummary}
         isLoading={isCaptureLoading}
         error={captureError}
@@ -932,8 +944,6 @@ export function PlanWorkspace({
                 render="controls"
                 campusId={planSummary.campusId}
                 sessionId={planSummary.sessionId}
-                campusName={planSummary.campusName}
-                sessionName={planSummary.sessionName}
                 summary={captureSummary}
                 isLoading={isCaptureLoading}
                 error={captureError}

@@ -1271,24 +1271,44 @@ describe("the tool panel and the permanent week grid", () => {
       }
     });
 
-    it("leads the row with the tabs, so they align with the panel below", () => {
+    it("leads the row with the tool cluster, fold control first inside it", () => {
       const html = render();
       const bar = html.slice(
         html.indexOf('data-testid="workspace-bar"'),
         html.indexOf('data-testid="workspace-columns"')
       );
 
+      const cluster = bar.indexOf('data-testid="tool-cluster"');
+      const fold = bar.indexOf('data-testid="hide-tools"');
       const tabs = bar.indexOf('data-testid="tool-tabs"');
       const title = bar.indexOf("Weekly Schedule");
-      const fold = bar.indexOf('data-testid="hide-tools"');
 
-      // Nothing may precede the tab strip in the bar: the tool panel starts
-      // at the column's left edge, so anything before the strip offsets it
-      // by exactly its own width. The fold control rides with the actions
-      // for that reason, not for a stylistic one.
-      expect(tabs).toBeGreaterThan(-1);
+      // Eyes travel left to right, so the control that opens the tools is
+      // the first thing on the row. It sits *inside* the cluster, which is
+      // what lets it be first without costing the tabs their alignment:
+      // anything before the cluster offsets it by exactly its own width.
+      expect(cluster).toBeGreaterThan(-1);
+      expect(fold).toBeGreaterThan(cluster);
+      expect(tabs).toBeGreaterThan(fold);
       expect(title).toBeGreaterThan(tabs);
-      expect(fold).toBeGreaterThan(title);
+    });
+
+    it("puts nothing before the cluster, so its left edge is the panel's", () => {
+      const html = render();
+      const bar = html.slice(
+        html.indexOf('data-testid="workspace-bar"'),
+        html.indexOf('data-testid="workspace-columns"')
+      );
+      const opening = /<div[^>]*data-testid="workspace-bar"[^>]*>/.exec(html);
+
+      // The tool panel starts at the column's left edge. Anything rendered
+      // between the bar's own opening tag and the cluster pushes the cluster
+      // out of line with it — which is the bug this guards.
+      const between = bar.slice(
+        opening![0].length,
+        bar.indexOf('data-testid="tool-cluster"')
+      );
+      expect(between).not.toMatch(/<(div|button|span|h3)\b/);
     });
 
     it("gives the bar no padding of its own, so the strip can sit flush", () => {
@@ -1300,20 +1320,21 @@ describe("the tool panel and the permanent week grid", () => {
       expect(bar![0]).not.toMatch(/\bp-\d|\bpx-\d|\bpl-\d/);
     });
 
-    it("sizes the tab strip to the tool panel it sits over", () => {
+    it("sizes the tool cluster to the panel it sits over", () => {
       // `TabsList` is `w-full` by default. Left at that it stretched across
       // the whole bar and pushed the title onto a row of its own, which is
-      // the opposite of sitting over the column it drives.
+      // the opposite of sitting over the column it drives. The width now
+      // lives on the cluster, which is the thing that has to line up.
       const html = render();
-      const list = /<div[^>]*data-testid="tool-tabs"[^>]*>/.exec(html);
+      const cluster = /<div[^>]*data-testid="tool-cluster"[^>]*>/.exec(html);
       const panel = /<div[^>]*data-testid="tool-panel"[^>]*>/.exec(html);
 
-      expect(list, "the tab strip must render").not.toBeNull();
+      expect(cluster, "the tool cluster must render").not.toBeNull();
       expect(panel, "the tool panel must render").not.toBeNull();
 
       const width = /lg:w-\[(\d+)px\]/.exec(panel![0]);
       expect(width, "the panel must have a fixed column width").not.toBeNull();
-      expect(list![0]).toContain(`lg:w-[${width![1]}px]`);
+      expect(cluster![0]).toContain(`lg:w-[${width![1]}px]`);
     });
 
     it("shows no tab strip while the tools are folded away", () => {
