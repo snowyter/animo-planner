@@ -739,6 +739,7 @@ fn begin_solve(store: &Store, args: &SolvePlanArgs) -> Result<(Solver, Option<St
             section_code: section.section_code.clone(),
             blocks: section.blocks.clone(),
             pinned: section.pinned,
+            teacher: section.latest_snapshot.teacher.clone(),
         })
         .collect();
     let catalog = store.solver_courses(&scope).map_err(|err| err.to_string())?;
@@ -791,6 +792,7 @@ fn finish_outcome(
         resume_token,
         unsatisfiable_courses: outcome.unsatisfiable_courses,
         excluded_full_count: outcome.excluded_full_count,
+        excluded_avoided_count: outcome.excluded_avoided_count,
         snapshot_taken_at,
     }
 }
@@ -1516,6 +1518,8 @@ mod tests {
             latest_end_min: None,
             exclude_full: true,
             result_limit: 12,
+            priority: Priority::default(),
+            teacher_preferences: vec![],
         }
     }
 
@@ -1802,6 +1806,8 @@ mod tests {
             latest_end_min: None,
             exclude_full: false,
             result_limit: 12,
+            priority: Priority::default(),
+            teacher_preferences: vec![],
         }
     }
 

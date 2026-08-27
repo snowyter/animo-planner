@@ -24,8 +24,8 @@
 //!   derivable and differ — an underivable building is never "different".
 
 use crate::core::ipc_types::{
-    BlockModality, Day, Preset, ScoreComponent, SectionRef, SolutionSection, TransitionWarning,
-    WarningKind,
+    BlockModality, Day, Preset, Priority, ScoreComponent, SectionRef, SolutionSection,
+    TeacherPreferenceEntry, TransitionWarning, WarningKind,
 };
 use serde::{Deserialize, Serialize};
 
@@ -37,6 +37,9 @@ pub struct Evaluation {
     pub score: f64,
     pub breakdown: Vec<ScoreComponent>,
     pub warnings: Vec<TransitionWarning>,
+    /// Teacher preference score, used for sorting under Teachers and Hybrid
+    /// priorities. Zero under Schedule priority or when no preferences exist.
+    pub teacher_score: f64,
 }
 
 /// The gap, in minutes, at or below which two consecutive blocks on the same
@@ -51,6 +54,13 @@ const CLASS_LENGTH_MIN: i64 = 90;
 /// Weight of the lone-F2F-day penalty, applied under every preset. Small
 /// enough that no preset's primary objective is ever overturned by it.
 const LONE_F2F_DAY_WEIGHT: f64 = 0.1;
+
+/// Weight of the teacher preference term in Hybrid priority mode.
+/// Calibrated so that one course's rank-1 teacher (1.0 points) is worth
+/// roughly one campus day (1.0 points under FewestCampusDays). A student
+/// who ranks one teacher per course and takes four courses on campus gets
+/// about the same benefit from Teachers as from one fewer campus day.
+const HYBRID_TEACHER_WEIGHT: f64 = 1.0;
 
 /// Index of a day within the Mon–Sat week, for ordering and tallies.
 pub(crate) fn day_index(day: Day) -> usize {
@@ -263,15 +273,134 @@ fn score_components(stats: &Stats, preset: Preset) -> (f64, Vec<ScoreComponent>)
     (score, components)
 }
 
+/// Normalized form of a teacher name — trimmed, case-folded, inner
+/// whitespace collapsed. The only thing a ranking is ever keyed on.
+pub fn teacher_key(name: &str) -> String {
+    let mut result = String::with_capacity(name.len());
+    let mut prev_was_space = false;
+    for c in name.trim().to_lowercase().chars() {
+        if c.is_whitespace() {
+            if !prev_was_space {
+                result.push(' ');
+            }
+            prev_was_space = true;
+        } else {
+            result.push(c);
+            prev_was_space = false;
+        }
+    }
+    result
+}
+
+/// The teacher preference score for one section, on a 1/rank curve.
+/// Unranked scores 0. Blank scores 0. (ticket 48, ADR-0021).
+fn teacher_score_for_section(
+    course_id: i64,
+    teacher: &Option<String>,
+    preferences: &[TeacherPreferenceEntry],
+) -> f64 {
+    let Some(ref teacher_name) = teacher else {
+        return 0.0; // blank teacher scores 0
+    };
+    let key = teacher_key(teacher_name);
+    // Find the rank for this teacher in this course's preferences.
+    let rank = preferences.iter().find_map(|pref| {
+        if pref.course_id == course_id && !pref.avoid && pref.teacher_key == key {
+            pref.rank
+        } else {
+            None
+        }
+    });
+    match rank {
+        Some(r) if r > 0 => 1.0 / r as f64,
+        _ => 0.0, // unranked scores 0
+    }
+}
+
+/// Total teacher preference score across all courses, capped at 1.0 per
+/// course. A course contributes at most one teacher's points (the section
+/// that was actually chosen), because a student takes one section of it.
+fn teacher_score_total(
+    sections: &[SolutionSection],
+    preferences: &[TeacherPreferenceEntry],
+) -> (f64, Vec<ScoreComponent>) {
+    if preferences.is_empty() {
+        return (0.0, vec![]);
+    }
+    // Per course, take the max teacher score (there's only one section
+    // per course in a solution, but we cap at 1.0 per course anyway).
+    let mut course_scores: std::collections::HashMap<i64, f64> = std::collections::HashMap::new();
+    for section in sections {
+        let score = teacher_score_for_section(
+            section.course_id,
+            &section.teacher,
+            preferences,
+        );
+        course_scores
+            .entry(section.course_id)
+            .and_modify(|e| *e = (*e).max(score))
+            .or_insert(score);
+    }
+    let total: f64 = course_scores.values().sum();
+    let components = if total > 0.0 {
+        vec![component("Teacher preference", total)]
+    } else {
+        vec![]
+    };
+    (total, components)
+}
+
 /// Scores one complete plan under a preset and finds its advisory warnings,
 /// both in a single pass over the sorted schedule blocks.
 pub fn evaluate(sections: &[SolutionSection], preset: Preset) -> Evaluation {
+    evaluate_with_teacher_prefs(sections, preset, Priority::Schedule, &[])
+}
+
+/// Scores one complete plan under a preset and priority with teacher
+/// preferences, finding advisory warnings in a single pass.
+pub fn evaluate_with_teacher_prefs(
+    sections: &[SolutionSection],
+    preset: Preset,
+    priority: Priority,
+    teacher_preferences: &[TeacherPreferenceEntry],
+) -> Evaluation {
     let (stats, warnings) = analyze(sections);
-    let (score, breakdown) = score_components(&stats, preset);
+    let (preset_score, mut breakdown) = score_components(&stats, preset);
+
+    let (teacher_score, teacher_components) = match priority {
+        Priority::Schedule => {
+            // Schedule is bit-for-bit today's behaviour: teacher
+            // preferences are completely invisible (ADR-0021).
+            (0.0, vec![])
+        }
+        Priority::Teachers | Priority::Hybrid => {
+            teacher_score_total(sections, teacher_preferences)
+        }
+    };
+    breakdown.extend(teacher_components);
+
+    let score = match priority {
+        Priority::Schedule => preset_score,
+        Priority::Teachers => {
+            // Under Teachers priority, the teacher score is the primary
+            // key and the preset score is only a tiebreak. The heap key
+            // handles the sorting; the score field carries the preset
+            // for the tiebreak.
+            preset_score
+        }
+        Priority::Hybrid => {
+            // Hybrid: weighted sum of preset and teacher scores.
+            // HYBRID_TEACHER_WEIGHT is calibrated so one course's rank-1
+            // teacher is worth roughly one campus day.
+            preset_score + teacher_score * HYBRID_TEACHER_WEIGHT
+        }
+    };
+
     Evaluation {
         score,
         breakdown,
         warnings,
+        teacher_score,
     }
 }
 
@@ -319,6 +448,7 @@ mod tests {
             section_code: format!("S{section_id}"),
             pinned: false,
             blocks,
+            teacher: None,
         }
     }
 
