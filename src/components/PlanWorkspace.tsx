@@ -535,7 +535,15 @@ export function PlanWorkspace({
             the panel they select is on screen — a tab strip pointing at
             nothing would be a control that does not control anything. */}
         {isToolsOpen && (
-          <TabsList className="min-w-0 shrink-0" data-testid="tool-tabs">
+          <TabsList
+            /* The same width as the tool panel below it, so the strip sits
+               over the column it drives. `TabsList` is `w-full` by default,
+               which is right when it owns its container and wrong here: it
+               stretched across the whole bar and pushed the title onto a
+               row of its own. */
+            className="w-full shrink-0 lg:w-[400px] xl:w-[480px]"
+            data-testid="tool-tabs"
+          >
             {TOOL_TABS.map((info) => (
               <TabsTrigger
                 key={info.tab}

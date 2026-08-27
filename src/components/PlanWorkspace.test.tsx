@@ -1283,6 +1283,22 @@ describe("the tool panel and the permanent week grid", () => {
       expect(title).toBeGreaterThan(tabs);
     });
 
+    it("sizes the tab strip to the tool panel it sits over", () => {
+      // `TabsList` is `w-full` by default. Left at that it stretched across
+      // the whole bar and pushed the title onto a row of its own, which is
+      // the opposite of sitting over the column it drives.
+      const html = render();
+      const list = /<div[^>]*data-testid="tool-tabs"[^>]*>/.exec(html);
+      const panel = /<div[^>]*data-testid="tool-panel"[^>]*>/.exec(html);
+
+      expect(list, "the tab strip must render").not.toBeNull();
+      expect(panel, "the tool panel must render").not.toBeNull();
+
+      const width = /lg:w-\[(\d+)px\]/.exec(panel![0]);
+      expect(width, "the panel must have a fixed column width").not.toBeNull();
+      expect(list![0]).toContain(`lg:w-[${width![1]}px]`);
+    });
+
     it("shows no tab strip while the tools are folded away", () => {
       // A tab strip selecting a panel that is not on screen is a control
       // that controls nothing.
