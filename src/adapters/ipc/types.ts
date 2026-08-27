@@ -286,6 +286,29 @@ export interface CaptureReport {
   issueUrl: string;
 }
 
+/**
+ * A teacher who can be ranked for a course: keyed, de-duplicated, with the
+ * sections they appear on in the latest snapshots.
+ */
+export interface RankableTeacher {
+  key: string;
+  displayName: string;
+  sectionIds: number[];
+}
+
+/**
+ * A stored teacher preference for a course: either a rank or an avoid,
+ * never both (enforced by CHECK in the schema).
+ */
+export interface TeacherPreference {
+  teacherKey: string;
+  displayName: string;
+  rank: number | null;
+  avoid: boolean;
+  /** Whether this teacher still appears on the latest snapshots. */
+  active: boolean;
+}
+
 export type UpdateCheckStatus =
   | "available"
   | "up_to_date"

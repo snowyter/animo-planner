@@ -142,6 +142,31 @@ before this migration read as `included: true`, which is the behaviour that alre
 | `export_plan_ics` | `{ planId }` | `IcsExport` |
 | `build_capture_report` | `{ error }` | `CaptureReport` |
 
+### Teacher preferences (ticket 47)
+
+| Command | Arguments | Returns |
+|---|---|---|
+| `list_rankable_teachers` | `{ campusId, sessionId, courseId }` | `RankableTeacher[]` |
+| `get_course_preferences` | `{ campusId, sessionId, courseId }` | `TeacherPreference[]` |
+| `write_course_preferences` | `{ campusId, sessionId, courseId, ranked, avoided }` | `TeacherPreference[]` |
+
+`list_rankable_teachers` returns the distinct teachers on the latest snapshot of each of a
+course's sections, keyed and de-duplicated. A blank teacher has no key and never appears.
+
+`get_course_preferences` returns a course's stored preferences, including entries whose teacher
+no longer appears in the latest-snapshot set. Those are **inactive**: kept, returned, flagged
+(`active: false`), and scoring nothing.
+
+`write_course_preferences` replaces a course's preferences in one call. `ranked` is an ordered
+list of `{ key, displayName }`; `avoided` is a list of teacher keys. Ranks are contiguous from 1
+within a course — the store owns that invariant. The command returns the updated preferences.
+
+Preferences are **app-wide within a capture scope**, shared by every plan under that
+`(campus, session)`. They are not plan data and must not be copied into a plan.
+
+Forgetting a course leaves its preferences alone — they lie dormant and come back if the course
+is re-captured.
+
 **Amended in ticket 19:** the arguments no longer carry a `fragment`. The failing DOM is
 retained Rust-side at the capture-failure site and scrubbed there before any report is
 assembled, so raw DOM never crosses into the webview; the command matches `error` against
@@ -392,6 +417,28 @@ continues from there. On `"offline"` nothing changed.
 fully scrubbed (`hdnStudId`, `userID`, `IP_ADDRESS`, `MAC_ADDRESS` removed, along with
 anything shaped like a MAC or IPv4 address); the app never posts it — the student reviews
 and opens `issueUrl` themselves.
+
+### `RankableTeacher`
+
+```json
+{ "key": "bryant lee", "displayName": "Bryant Lee", "sectionIds": [384, 385] }
+```
+
+`key` is the normalized teacher key (trimmed, case-folded, inner whitespace collapsed).
+`displayName` is the verbatim name from the first snapshot that produced this key.
+`sectionIds` are the sections this teacher appears on in the latest snapshots.
+
+### `TeacherPreference`
+
+```json
+{ "teacherKey": "bryant lee", "displayName": "Bryant Lee",
+  "rank": 1, "avoid": false, "active": true }
+```
+
+`rank` is non-null when the teacher is ranked (1..n, contiguous); `avoid` is `true` when the
+teacher is avoided. The two are mutually exclusive (enforced by CHECK in the schema).
+`active` is `false` when the teacher no longer appears on the course's latest snapshots — the
+preference is kept and shown, but scores nothing.
 
 ### `UpdateCheck`
 

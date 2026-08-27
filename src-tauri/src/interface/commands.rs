@@ -207,6 +207,31 @@ pub struct BuildCaptureReportArgs {
     pub error: String,
 }
 
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct TeacherPreferencesArgs {
+    pub campus_id: i64,
+    pub session_id: i64,
+    pub course_id: i64,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct WriteTeacherPreferencesArgs {
+    pub campus_id: i64,
+    pub session_id: i64,
+    pub course_id: i64,
+    pub ranked: Vec<RankedTeacher>,
+    pub avoided: Vec<String>,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct RankedTeacher {
+    pub key: String,
+    pub display_name: String,
+}
+
 /// Shared cancellation flag for the solve commands: `cancel_solve` sets it,
 /// a starting solve clears it, and a finishing chunk reports
 /// [`SolveStatus::Cancelled`] when it saw the flag set.
@@ -1015,6 +1040,65 @@ pub fn build_capture_report(
         app.package_info().version.to_string(),
         &selector_config.loaded(),
     )
+}
+
+// ---------- commands: teacher preferences (ticket 47) ----------
+
+#[tauri::command]
+pub fn list_rankable_teachers(
+    args: TeacherPreferencesArgs,
+    store: tauri::State<'_, StoreHandle>,
+) -> Result<Vec<RankableTeacher>, String> {
+    let store = store.lock().unwrap_or_else(|poisoned| poisoned.into_inner());
+    store
+        .rankable_teachers(
+            &CaptureScope {
+                campus_id: args.campus_id,
+                session_id: args.session_id,
+            },
+            args.course_id,
+        )
+        .map_err(|err| err.to_string())
+}
+
+#[tauri::command]
+pub fn get_course_preferences(
+    args: TeacherPreferencesArgs,
+    store: tauri::State<'_, StoreHandle>,
+) -> Result<Vec<TeacherPreference>, String> {
+    let store = store.lock().unwrap_or_else(|poisoned| poisoned.into_inner());
+    store
+        .course_preferences(
+            &CaptureScope {
+                campus_id: args.campus_id,
+                session_id: args.session_id,
+            },
+            args.course_id,
+        )
+        .map_err(|err| err.to_string())
+}
+
+#[tauri::command]
+pub fn write_course_preferences(
+    args: WriteTeacherPreferencesArgs,
+    store: tauri::State<'_, StoreHandle>,
+) -> Result<Vec<TeacherPreference>, String> {
+    let mut store = store.lock().unwrap_or_else(|poisoned| poisoned.into_inner());
+    let scope = CaptureScope {
+        campus_id: args.campus_id,
+        session_id: args.session_id,
+    };
+    let ranked: Vec<(String, String)> = args
+        .ranked
+        .iter()
+        .map(|r| (r.key.clone(), r.display_name.clone()))
+        .collect();
+    store
+        .write_course_preferences(&scope, args.course_id, &ranked, &args.avoided)
+        .map_err(|err| err.to_string())?;
+    store
+        .course_preferences(&scope, args.course_id)
+        .map_err(|err| err.to_string())
 }
 
 #[cfg(test)]
@@ -1946,5 +2030,75 @@ mod tests {
         let complete = fresh.run();
         let result = finish_outcome(complete, "p1", false, None);
         assert_eq!(result.status, SolveStatus::Complete);
+    }
+
+    // ---------- teacher preferences seam (ticket 47) ----------
+
+    #[test]
+    fn list_rankable_teachers_crosses_the_seam_with_keyed_and_deduplicated_teachers() {
+        let mut store = seeded_store();
+        // Add teachers to the captured sections.
+        store.record_capture(
+            &CaptureScope { campus_id: 7, session_id: 155 },
+            &[
+                {
+                    let mut s = parsed_section(2923, 384, "S01", vec![block(Day::Mon, 450)]);
+                    s.teacher = Some("Bryant Lee".into());
+                    s
+                },
+                {
+                    let mut s = parsed_section(2923, 385, "S02", vec![block(Day::Tue, 570)]);
+                    s.teacher = Some("BRYANT LEE".into());
+                    s
+                },
+            ],
+            T1,
+        ).expect("capture with teachers");
+
+        let teachers = store.rankable_teachers(
+            &CaptureScope { campus_id: 7, session_id: 155 },
+            2923,
+        ).expect("rankable");
+        assert_eq!(teachers.len(), 1, "same key deduplicates");
+        assert_eq!(teachers[0].key, "bryant lee");
+        assert_eq!(teachers[0].display_name, "Bryant Lee");
+        assert_eq!(teachers[0].section_ids, vec![384, 385]);
+    }
+
+    #[test]
+    fn write_and_read_course_preferences_round_trip_through_the_store() {
+        let mut store = seeded_store();
+        store.record_capture(
+            &CaptureScope { campus_id: 7, session_id: 155 },
+            &[
+                {
+                    let mut s = parsed_section(2923, 384, "S01", vec![block(Day::Mon, 450)]);
+                    s.teacher = Some("Bryant Lee".into());
+                    s
+                },
+                {
+                    let mut s = parsed_section(2923, 385, "S02", vec![block(Day::Tue, 570)]);
+                    s.teacher = Some("Other Teacher".into());
+                    s
+                },
+            ],
+            T1,
+        ).expect("capture with teachers");
+
+        let scope = CaptureScope { campus_id: 7, session_id: 155 };
+        store.write_course_preferences(
+            &scope, 2923,
+            &[("bryant lee".into(), "Bryant Lee".into())],
+            &["other teacher".into()],
+        ).expect("write prefs");
+
+        let prefs = store.course_preferences(&scope, 2923).expect("read prefs");
+        assert_eq!(prefs.len(), 2);
+        let ranked = prefs.iter().find(|p| p.teacher_key == "bryant lee").expect("ranked");
+        assert_eq!(ranked.rank, Some(1));
+        assert!(!ranked.avoid);
+        let avoided = prefs.iter().find(|p| p.teacher_key == "other teacher").expect("avoided");
+        assert_eq!(avoided.rank, None);
+        assert!(avoided.avoid);
     }
 }
