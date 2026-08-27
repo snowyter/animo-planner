@@ -6,7 +6,7 @@
 
 **Runs in parallel with:** 48 — they share no files. 49 can be built and merged before the solver honours anything; the ranking simply has no effect until 48 lands
 
-**Status:** ready-for-agent
+**Status:** done — merged to main in `4398c76`
 
 ## Why
 
@@ -62,3 +62,20 @@ A student has two or three teachers they want for a course and one they will not
 ## Worth knowing before starting
 
 The panel already collapses (`initialToolsOpen = false` in `PlanWorkspace.tsx`) and already opens on Capture (`DEFAULT_TOOL_TAB`), both from ticket 46 — build on them rather than rebuilding them. Read `src/core/toolPanel.ts` first: tab identity, ordering, and empty-catalog copy are decisions kept out of the markup on purpose, and anything this ticket adds in that family belongs there too.
+
+## Comments
+
+Merged in `4398c76`. The drill-down replaces the whole two-column workspace
+rather than the grid, so ticket 46's rule survives and its layout tests pass
+untouched. `motion` is not used anywhere in this ticket, as required.
+
+One fix on main in `0f19021`: `TeacherRanking.tsx` imports
+`@dnd-kit/utilities` directly but only `core` and `sortable` were declared —
+it worked on npm hoisting alone. Now declared, and named in
+`docs/agents/dependencies.md` alongside the other two.
+
+Worth knowing for later: `teacherKey` in `src/core/teacherRanking.ts` is a
+fourth normalization, unavoidably, because it is the other language. Its
+tests mirror the Rust cases but nothing enforces the agreement across the
+boundary. If the two ever diverge, preferences written by the UI silently
+stop matching in the solver.

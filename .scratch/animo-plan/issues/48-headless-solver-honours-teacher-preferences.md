@@ -6,7 +6,7 @@
 
 **Runs in parallel with:** 49 — they share no files
 
-**Status:** ready-for-agent
+**Status:** done — merged to main in `4c18983`
 
 ## Why
 
@@ -58,3 +58,25 @@ Read both before writing code. The reasoning in them is load-bearing, especially
 ## Worth knowing before starting
 
 `solver.rs` opens with a module doc that states the current guarantees precisely, including the sentence about blank teachers and v1.1 that this ticket makes obsolete. **Update it.** It is the first thing anyone reads about this file, and a stale guarantee there is worse than none.
+
+## Comments
+
+Merged in `4c18983`. Two defects fixed on main in `0f19021`:
+
+- **Three `teacher_key` implementations.** This ticket wrote its own in both
+  `scoring.rs` and `solver.rs` rather than using `core::teachers::teacher_key`
+  from ticket 47. All three agreed, but the drift they invite fails silently:
+  a solver key that stops matching the store's key makes ranks and avoids
+  quietly do nothing, with no error. Both now call the one implementation.
+  `is_only_avoided` was byte-identical to `is_avoided` and is gone.
+- **The breakdown stopped summing to the score under Hybrid.** The "Teacher
+  preference" component carried the unweighted score while `score` added the
+  weighted one, so `scoring.rs`'s documented invariant held only because
+  `HYBRID_TEACHER_WEIGHT` is 1.0 — and this ticket explicitly invites tuning
+  it. The existing sums-to-score test only ran under `Priority::Schedule`,
+  which is why it passed. Coverage now spans Hybrid under all three presets,
+  the deliberate Teachers exception, and a whitespace-only teacher.
+
+Everything else matched the ticket: the lexicographic sort key, the version 4
+bump with its reasoning, the attribution split for the new unsatisfiable
+reason, and the `Priority::Schedule` regression test.
