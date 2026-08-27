@@ -26,6 +26,9 @@ vi.mock("../adapters/ipc/client", () => ({
   applySolution: vi.fn(),
   onCaptureUpdated: vi.fn().mockResolvedValue(() => {}),
   onCaptureFailed: vi.fn().mockResolvedValue(() => {}),
+  listRankableTeachers: vi.fn().mockResolvedValue([]),
+  getCoursePreferences: vi.fn().mockResolvedValue([]),
+  writeCoursePreferences: vi.fn().mockResolvedValue([]),
 }));
 
 describe("PlanWorkspace", () => {
@@ -1732,3 +1735,156 @@ describe("PlanWorkspace plan-mutating handlers reload the plan", () => {
   });
 });
 
+/**
+ * Ticket 49 — ranking the teachers of a course.
+ *
+ * The suite renders to static markup, so the drill-down and the preferences
+ * behind it are drivable from props, the way `initialTab` and
+ * `initialToolsOpen` already are.
+ */
+describe("PlanWorkspace teacher preferences", () => {
+  const planSummary: PlanSummary = {
+    id: "p1",
+    name: "T1 Target Schedule",
+    campusId: 7,
+    campusName: "Manila",
+    sessionId: 155,
+    sessionName: "AY2026-27 T1",
+    createdAt: "2026-08-22T00:00:00Z",
+    sectionCount: 1,
+  };
+
+  const avoidedSection: PlanSection = {
+    courseId: 2923,
+    courseCode: "GEARTAP",
+    courseTitle: "Art Appreciation",
+    sectionId: 384,
+    sectionCode: "S17",
+    pinned: false,
+    missing: false,
+    modality: "F2F",
+    blocks: [
+      { day: "MON", startMin: 450, endMin: 540, modality: "F2F", location: "L226" },
+    ],
+    latestSnapshot: {
+      capturedAt: "2026-08-27T00:00:00Z",
+      enrolled: 40,
+      teacher: "Bryant Lee",
+      remark: null,
+    },
+  };
+
+  const avoidedPreferences = new Map([
+    [
+      2923,
+      [
+        {
+          teacherKey: "bryant lee",
+          displayName: "Bryant Lee",
+          rank: null,
+          avoid: true,
+          active: true,
+        },
+      ],
+    ],
+  ]);
+
+  const render = (props: Record<string, unknown> = {}) =>
+    renderToStaticMarkup(
+      React.createElement(PlanWorkspace, {
+        planSummary,
+        plan: { ...planSummary, sections: [avoidedSection] },
+        isLoading: false,
+        error: null,
+        initialToolsOpen: true,
+        onBack: vi.fn(),
+        onRetry: vi.fn(),
+        ...props,
+      })
+    );
+
+  beforeEach(() => {
+    vi.clearAllMocks();
+    vi.mocked(client.getCaptureSummary).mockResolvedValue({
+      campusId: 7,
+      sessionId: 155,
+      sectionCount: 42,
+      courseCount: 8,
+    });
+    vi.mocked(client.onCaptureUpdated).mockResolvedValue(() => {});
+    vi.mocked(client.onCaptureFailed).mockResolvedValue(() => {});
+  });
+
+  describe("the drill-down", () => {
+    it("takes the entire workspace width, and the two-column region gives way to it", () => {
+      const html = render({ initialRankingCourseId: 2923 });
+
+      expect(html).toContain('data-testid="ranking-drilldown"');
+      expect(html).toContain('data-testid="teacher-ranking"');
+      expect(html).not.toContain('data-testid="workspace-columns"');
+    });
+
+    it("keeps the plan header put — a drill-down inside the workspace, not a screen", () => {
+      const html = render({ initialRankingCourseId: 2923 });
+
+      expect(html).toContain("T1 Target Schedule");
+      expect(html).toContain("Plan Scope:");
+      expect(html).not.toContain('role="dialog"');
+    });
+
+    it("offers the explicit way back to the Capture tab", () => {
+      const html = render({ initialRankingCourseId: 2923 });
+
+      expect(html).toContain('data-testid="teacher-ranking-back"');
+    });
+
+    it("is not open unless it was drilled into", () => {
+      const html = render();
+
+      expect(html).not.toContain('data-testid="ranking-drilldown"');
+      expect(html).toContain('data-testid="workspace-columns"');
+    });
+  });
+
+  describe("the advisory notice", () => {
+    it("names the section and the teacher it has acquired, from any tab", () => {
+      for (const initialTab of ["capture", "solve", "pick"]) {
+        const html = render({
+          initialTab,
+          initialPreferencesByCourse: avoidedPreferences,
+        });
+
+        expect(
+          html,
+          `the advisory must be visible from the ${initialTab} tab`
+        ).toContain('data-testid="avoided-teacher-notice"');
+        expect(html).toContain("GEARTAP S17");
+        expect(html).toContain("Bryant Lee");
+      }
+    });
+
+    it("sits outside the tabs, above the two regions", () => {
+      const html = render({ initialPreferencesByCourse: avoidedPreferences });
+
+      expect(html.indexOf('data-testid="avoided-teacher-notice"')).toBeLessThan(
+        html.indexOf('data-testid="workspace-columns"')
+      );
+    });
+
+    it("stays silent when no plan section carries an avoided teacher", () => {
+      expect(render()).not.toContain('data-testid="avoided-teacher-notice"');
+    });
+  });
+
+  describe("the Priority control", () => {
+    it("reaches the Solve panel with the summary of what has been said", () => {
+      const html = render({
+        initialTab: "solve",
+        initialPreferencesByCourse: avoidedPreferences,
+      });
+
+      expect(html).toContain('data-testid="solve-priority"');
+      expect(html).toContain("0 courses ranked · 1 teacher avoided");
+    });
+  });
+});

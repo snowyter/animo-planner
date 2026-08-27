@@ -1,4 +1,4 @@
-import { useState, useMemo } from "react";
+import { useState, useMemo, useRef } from "react";
 /**
  * One glyph survives on this screen: the conflict indicator (ADR-0009), which
  * is the single thing a student scans the plan header for. Everything else
@@ -26,9 +26,19 @@ import { useSectionPicker } from "./useSectionPicker";
 import { SolvePanel } from "./SolvePanel";
 import { usePlanRefresh } from "./usePlanRefresh";
 import { MissingSectionBanner } from "./MissingSectionBanner";
+import { AvoidedTeacherNotice } from "./AvoidedTeacherNotice";
+import { TeacherRanking } from "./TeacherRanking";
+import { useCourseRanking, useTeacherPreferences } from "./useTeacherPreferences";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "./ui/tabs";
 import * as client from "../adapters/ipc/client";
-import type { Plan, PlanSection, PlanSummary, Section, Solution } from "../adapters/ipc/types";
+import type {
+  Plan,
+  PlanSection,
+  PlanSummary,
+  Section,
+  Solution,
+  TeacherPreference,
+} from "../adapters/ipc/types";
 import { formatSectionCount } from "../core/plan";
 import { findConflicts } from "../core/conflicts";
 import {
@@ -49,6 +59,10 @@ import {
   solutionToSectionRefs,
 } from "../core/solver";
 import { ExportMenu } from "./ExportMenu";
+import {
+  findAvoidedTeacherAdvisories,
+  summarisePreferences,
+} from "../core/teacherRanking";
 
 export interface PlanWorkspaceProps {
   planSummary: PlanSummary;
@@ -73,6 +87,19 @@ export interface PlanWorkspaceProps {
    * control, so this is drivable from props.
    */
   initialToolsOpen?: boolean;
+  /**
+   * Which course's teacher ranking the drill-down opens on, if any
+   * (ticket 49). The suite renders to static markup and cannot click a
+   * course row, so the drill-down is drivable from props — the same seam
+   * `initialTab` provides for the tool panel.
+   */
+  initialRankingCourseId?: number | null;
+  /**
+   * The catalog's stored preferences, seeded. Nothing loads under a static
+   * render, and the advisory notice and the Priority summary are both
+   * computed from this.
+   */
+  initialPreferencesByCourse?: Map<number, TeacherPreference[]>;
   onBack: () => void;
   onRetry: () => void;
   onReportBrokenCapture?: (error: string) => void;
@@ -88,6 +115,8 @@ export function PlanWorkspace({
   initialTab = DEFAULT_TOOL_TAB,
   initialPreviewSolution = null,
   initialToolsOpen = false,
+  initialRankingCourseId = null,
+  initialPreferencesByCourse,
   onRetry,
   onReportBrokenCapture,
   onPlanUpdated,
@@ -121,6 +150,25 @@ export function PlanWorkspace({
     solution: Solution;
     rank: number;
   } | null>(() => (initialPreviewSolution ? { solution: initialPreviewSolution, rank: 1 } : null));
+  /**
+   * Which course's teacher ranking is open, if any.
+   *
+   * A drill-down, not a fourth tab: the workspace stays, the plan header
+   * stays, and the two-column region gives way to it for as long as it is
+   * open. Held beside the selected tab so leaving returns to the tool the
+   * student came from.
+   */
+  const [rankingCourseId, setRankingCourseId] = useState<number | null>(
+    () => initialRankingCourseId
+  );
+  /**
+   * Where the tool column was scrolled when the drill-down was entered.
+   * The column unmounts while the ranking is open, so the offset is put back
+   * by the scroll region's own ref rather than by an effect.
+   */
+  const toolScrollRef = useRef<HTMLDivElement | null>(null);
+  const savedToolScrollRef = useRef<number>(0);
+  const savedWindowScrollRef = useRef<number>(0);
   const [isConfirmingClear, setIsConfirmingClear] = useState<boolean>(
     () => initialConfirmingClear
   );
@@ -173,6 +221,43 @@ export function PlanWorkspace({
       fetchSummary();
     },
   });
+
+  /**
+   * The catalog's teacher preferences.
+   *
+   * Read here rather than inside the Solve panel because two surfaces need
+   * them and neither owns the other: the panel summarises them, and the
+   * advisory notice — which lives outside the tabs — is computed from them.
+   */
+  const { preferencesByCourse, reloadPreferences } = useTeacherPreferences(
+    { campusId: planSummary.campusId, sessionId: planSummary.sessionId },
+    courses.map((course) => course.courseId),
+    initialPreferencesByCourse
+  );
+
+  const rankingCourse = courses.find((course) => course.courseId === rankingCourseId);
+
+  const ranking = useCourseRanking(
+    { campusId: planSummary.campusId, sessionId: planSummary.sessionId },
+    rankingCourseId
+  );
+
+  const preferenceSummary = useMemo(
+    () => summarisePreferences([...preferencesByCourse.values()]),
+    [preferencesByCourse]
+  );
+
+  /**
+   * A section already in the plan that has acquired an avoided teacher.
+   *
+   * Advisory only. Nothing is removed and nothing is re-solved — the plan is
+   * the student's (ADR-0009), and avoid is a filter on what a solve offers
+   * (ADR-0020).
+   */
+  const avoidedTeacherAdvisories = useMemo(
+    () => findAvoidedTeacherAdvisories(currentSections, preferencesByCourse),
+    [currentSections, preferencesByCourse]
+  );
 
   const handleClearSchedule = async () => {
     setIsClearing(true);
@@ -314,6 +399,29 @@ export function PlanWorkspace({
     setPreviewSelection(null);
     setActiveTab("pick");
     setIsToolsOpen(true);
+  };
+
+  /**
+   * Going into, and coming back from, the ranking.
+   *
+   * Leaving returns to the Capture tab on the course it was entered from,
+   * scrolled where it was — the panel's scroll offset is restored when the
+   * tool column mounts again. Coming back also re-reads the preferences, so
+   * the Priority summary and the advisory notice reflect what was just said.
+   */
+  const openRanking = (courseId: number) => {
+    savedToolScrollRef.current = toolScrollRef.current?.scrollTop ?? 0;
+    savedWindowScrollRef.current =
+      typeof window === "undefined" ? 0 : window.scrollY;
+    setPreviewSelection(null);
+    setActiveTab("capture");
+    setIsToolsOpen(true);
+    setRankingCourseId(courseId);
+  };
+
+  const closeRanking = () => {
+    setRankingCourseId(null);
+    reloadPreferences();
   };
 
   /**
@@ -682,6 +790,16 @@ export function PlanWorkspace({
         onRemoveMissingSection={handleRemoveMissingSection}
       />
 
+      {/* A section already in the plan has acquired an avoided teacher on a
+          refresh (ticket 49). Same family as the banner above it, same
+          restraint: it names the section and changes nothing. It belongs out
+          here with the global notices, not inside Capture — a student on
+          Pick needs to see it too (ticket 46). */}
+      <AvoidedTeacherNotice
+        advisories={avoidedTeacherAdvisories}
+        onOpenRanking={openRanking}
+      />
+
       {error && (
         <Alert variant="destructive">
           <AlertTitle className="flex items-center justify-between">
@@ -714,6 +832,30 @@ export function PlanWorkspace({
           positioned `fixed`, and every one of those properties would make an
           ancestor its containing block and silently mis-place it
           (tickets 41, 45). */}
+      {/* The teacher ranking drill-down (ticket 49).
+          Ranking is not a fourth tool acting on the grid — it is a place you
+          go and come back from — so it takes the entire workspace width
+          rather than displacing the grid, and ticket 46's rule that the grid
+          sits in the same place on every *tab* survives untouched. */}
+      {rankingCourseId !== null ? (
+        <div
+          data-testid="ranking-drilldown"
+          data-course-id={rankingCourseId}
+          className="w-full min-w-0"
+        >
+          <TeacherRanking
+            courseCode={rankingCourse?.code ?? `Course ${rankingCourseId}`}
+            courseTitle={rankingCourse?.title ?? ""}
+            entries={ranking.entries}
+            sectionCodesById={ranking.sectionCodesById}
+            isLoading={ranking.isLoading}
+            isSaving={ranking.isSaving}
+            error={ranking.error}
+            onMove={ranking.move}
+            onBack={closeRanking}
+          />
+        </div>
+      ) : (
       <div
         data-testid="workspace-columns"
         className="flex flex-col lg:flex-row items-start gap-6"
@@ -813,6 +955,15 @@ export function PlanWorkspace({
 
             <div
               data-testid="tool-panel-scroll"
+              ref={(node) => {
+                toolScrollRef.current = node;
+                if (node && savedToolScrollRef.current > 0) {
+                  node.scrollTop = savedToolScrollRef.current;
+                }
+                if (node && savedWindowScrollRef.current > 0 && typeof window !== "undefined") {
+                  window.scrollTo(0, savedWindowScrollRef.current);
+                }
+              }}
               className="min-h-0 flex-1 lg:overflow-y-auto lg:pr-1"
             >
             {/* Capture: the arrival surface. The way in, and what came in. */}
@@ -843,6 +994,7 @@ export function PlanWorkspace({
                 isLoading={isLoadingCourses}
                 isMutating={isMutating}
                 onBrowseCourse={browseCourse}
+                onRankTeachers={openRanking}
                 onSetIncluded={handleSetCourseIncluded}
                 onRemoveCourse={handleRemoveCourse}
               />
@@ -856,6 +1008,11 @@ export function PlanWorkspace({
                 onTogglePin={handleTogglePin}
                 selectedSolutionId={previewSelection?.solution.id ?? null}
                 onSelectSolution={setPreviewSelection}
+                preferenceSummary={preferenceSummary}
+                onOpenPreferences={() => {
+                  setActiveTab("capture");
+                  setIsToolsOpen(true);
+                }}
                 onPlanUpdated={(updatedPlan) => {
                   onPlanUpdated?.(updatedPlan);
                   onRetry();
@@ -892,6 +1049,7 @@ export function PlanWorkspace({
         </div>
         )}
       </div>
+      )}
     </div>
   );
 }
