@@ -5,6 +5,7 @@ import {
   parseAcademicSessionName,
   buildAcademicSessionStructure,
   resolveAcademicSessionId,
+  termsForStartYear,
 } from "./options";
 
 // The campus/session option values themselves live in Rust
@@ -178,28 +179,82 @@ describe("plan input validation", () => {
   });
 
   describe("resolveAcademicSessionId", () => {
+    // SPEC §2's verified dropdown, in the order the site lists it.
     const fixtureSessions = [
       { id: 155, name: "AY2026-27 T1" },
       { id: 156, name: "AY2026-27 T2" },
       { id: 157, name: "AY2026-27 T3" },
+      { id: 144, name: "Annual" },
+      { id: 161, name: "SHS" },
     ];
 
-    it("matches existing session option when available", () => {
+    it("matches a session the catalog actually publishes", () => {
       expect(resolveAcademicSessionId(fixtureSessions, 2026, 1)).toBe(155);
       expect(resolveAcademicSessionId(fixtureSessions, 2026, 2)).toBe(156);
       expect(resolveAcademicSessionId(fixtureSessions, 2026, 3)).toBe(157);
     });
 
-    it("computes session id dynamically for incremented/decremented years", () => {
-      // 2027-2028: 158, 159, 160
-      expect(resolveAcademicSessionId(fixtureSessions, 2027, 1)).toBe(158);
-      expect(resolveAcademicSessionId(fixtureSessions, 2027, 2)).toBe(159);
-      expect(resolveAcademicSessionId(fixtureSessions, 2027, 3)).toBe(160);
+    it("returns null for a year the catalog does not publish", () => {
+      expect(resolveAcademicSessionId(fixtureSessions, 2027, 1)).toBeNull();
+      expect(resolveAcademicSessionId(fixtureSessions, 2025, 3)).toBeNull();
+    });
 
-      // 2025-2026: 152, 153, 154
-      expect(resolveAcademicSessionId(fixtureSessions, 2025, 1)).toBe(152);
-      expect(resolveAcademicSessionId(fixtureSessions, 2025, 2)).toBe(153);
-      expect(resolveAcademicSessionId(fixtureSessions, 2025, 3)).toBe(154);
+    it("never hands an academic term the id of SHS", () => {
+      // The regression this file exists to hold down. Extrapolating
+      // `155 + (startYear - 2026) * 3 + (term - 1)` lands on 161 for
+      // AY2028-29 T1, and SPEC §2 verified 161 as `SHS` — an offered
+      // session, so every downstream check passed and the plan took that
+      // scope silently, under a name the student never chose.
+      expect(resolveAcademicSessionId(fixtureSessions, 2028, 1)).toBeNull();
+      // Everything from AY2028-29 on was off by one term for the same reason.
+      expect(resolveAcademicSessionId(fixtureSessions, 2028, 2)).toBeNull();
+      expect(resolveAcademicSessionId(fixtureSessions, 2029, 1)).toBeNull();
+    });
+
+    it("never invents an id, for any year and term the stepper can reach", () => {
+      // The stepper clamps to 2000-2100, so this is every session id the UI
+      // can produce. Each one is either a real option or nothing at all —
+      // which is what keeps the TypeScript and Rust sides of the seam in
+      // agreement structurally, rather than by coincidence.
+      const offered = new Set(fixtureSessions.map((session) => session.id));
+      for (let year = 2000; year <= 2100; year += 1) {
+        for (const term of [1, 2, 3]) {
+          const id = resolveAcademicSessionId(fixtureSessions, year, term);
+          if (id !== null) {
+            expect(offered.has(id)).toBe(true);
+          }
+        }
+      }
+    });
+
+    it("keeps the sessions that carry no year selectable", () => {
+      // `Annual` and `SHS` were selectable before the year stepper existed.
+      // They cannot be expressed as a year and a term, so the structure
+      // carries them separately rather than narrowing what a plan may be.
+      const struct = buildAcademicSessionStructure(fixtureSessions);
+      expect(struct.otherSessions).toEqual([
+        { id: 144, name: "Annual" },
+        { id: 161, name: "SHS" },
+      ]);
+      expect(struct.years).toEqual(["2026-2027"]);
+    });
+  });
+
+  describe("termsForStartYear", () => {
+    const struct = buildAcademicSessionStructure([
+      { id: 155, name: "AY2026-27 T1" },
+      { id: 157, name: "AY2026-27 T3" },
+    ]);
+
+    it("lists only the terms that year actually publishes", () => {
+      expect(termsForStartYear(struct, 2026)).toEqual([
+        { term: 1, termLabel: "Term 1", sessionId: 155 },
+        { term: 3, termLabel: "Term 3", sessionId: 157 },
+      ]);
+    });
+
+    it("is empty for a year the catalog has not published", () => {
+      expect(termsForStartYear(struct, 2031)).toEqual([]);
     });
   });
 });

@@ -55,6 +55,14 @@ export interface ParsedAcademicSession {
   term: number;
 }
 
+/**
+ * Reads `AY2026-27 T1` into its parts, or `null` when the name is not an
+ * academic-year term at all.
+ *
+ * `Annual` and `SHS` are offered sessions that deliberately fail this parse
+ * (SPEC §2). They are sessions without a year, not malformed years, and the
+ * caller is expected to carry them separately rather than drop them.
+ */
 export function parseAcademicSessionName(name: string): ParsedAcademicSession | null {
   const match = /^AY\s*(\d{4})-(\d{2,4})\s*(?:T|Term\s*)(\d+)$/i.exec(name.trim());
   if (!match) return null;
@@ -87,24 +95,58 @@ export interface AcademicTermOption {
 export interface AcademicSessionStructure {
   years: string[];
   termsByYear: Record<string, AcademicTermOption[]>;
+  /**
+   * The offered sessions that carry no academic year — `Annual`, `SHS`.
+   *
+   * They are as real as any term and were selectable before the year
+   * stepper existed. A year-and-term control cannot express them, so it
+   * carries them alongside instead of quietly narrowing what a plan may be
+   * scoped to.
+   */
+  otherSessions: { id: number; name: string }[];
   defaultSessionId: number | null;
   defaultYear: string | null;
   defaultTerm: number | null;
   defaultStartYear: number;
 }
 
+/**
+ * The session id for an academic year and term, or `null` when the fetched
+ * options list no such session.
+ *
+ * This is a lookup, and it must never become a calculation. An earlier
+ * version extrapolated ids from AY2026-27 T1 = 155 on the assumption that
+ * Archer's Hub numbers terms in an unbroken run of three per year. It does
+ * not. The id that formula produced for AY2028-29 T1 was 161 — which SPEC §2
+ * verified as `SHS`, an offered session in its own right. The invented id
+ * therefore passed every validity check on both sides of the seam and
+ * scoped the plan to the wrong catalog, under a name the student never
+ * chose and with nothing anywhere to flag it.
+ *
+ * Session identity comes from the config that carries it (ADR-0013), or it
+ * does not exist. `null` is the honest answer for a term the catalog has
+ * not published, and the caller is expected to say so rather than guess.
+ */
 export function resolveAcademicSessionId(
   sessionOptions: { id: number; name: string }[],
   startYear: number,
   term: number
-): number {
+): number | null {
   for (const option of sessionOptions) {
     const parsed = parseAcademicSessionName(option.name);
     if (parsed && parsed.startYear === startYear && parsed.term === term) {
       return option.id;
     }
   }
-  return 155 + (startYear - 2026) * 3 + (term - 1);
+  return null;
+}
+
+/** The terms the catalog publishes for one academic year, possibly none. */
+export function termsForStartYear(
+  structure: AcademicSessionStructure,
+  startYear: number
+): AcademicTermOption[] {
+  return structure.termsByYear[formatFullAcademicYear(startYear)] ?? [];
 }
 
 export function buildAcademicSessionStructure(
@@ -112,11 +154,15 @@ export function buildAcademicSessionStructure(
 ): AcademicSessionStructure {
   const years: string[] = [];
   const termsByYear: Record<string, AcademicTermOption[]> = {};
+  const otherSessions: { id: number; name: string }[] = [];
   let defaultStartYear = 2026;
 
   for (const option of sessionOptions) {
     const parsed = parseAcademicSessionName(option.name);
-    if (!parsed) continue;
+    if (!parsed) {
+      otherSessions.push({ id: option.id, name: option.name });
+      continue;
+    }
 
     if (!termsByYear[parsed.year]) {
       termsByYear[parsed.year] = [];
@@ -146,10 +192,10 @@ export function buildAcademicSessionStructure(
   return {
     years,
     termsByYear,
+    otherSessions,
     defaultSessionId,
     defaultYear,
     defaultTerm,
     defaultStartYear,
   };
 }
-

@@ -75,24 +75,7 @@ pub const fn session_name(session_id: i64) -> Option<&'static str> {
         }
         index += 1;
     }
-    match session_id {
-        149 => Some("AY2024-25 T1"),
-        150 => Some("AY2024-25 T2"),
-        151 => Some("AY2024-25 T3"),
-        152 => Some("AY2025-26 T1"),
-        153 => Some("AY2025-26 T2"),
-        154 => Some("AY2025-26 T3"),
-        158 => Some("AY2027-28 T1"),
-        159 => Some("AY2027-28 T2"),
-        160 => Some("AY2027-28 T3"),
-        162 => Some("AY2028-29 T1"),
-        163 => Some("AY2028-29 T2"),
-        164 => Some("AY2028-29 T3"),
-        165 => Some("AY2029-30 T1"),
-        166 => Some("AY2029-30 T2"),
-        167 => Some("AY2029-30 T3"),
-        _ => None,
-    }
+    None
 }
 
 /// Whether the campus id is one the app offers for real plans. The reserved
@@ -112,10 +95,14 @@ pub const fn is_offered_campus(campus_id: i64) -> bool {
 /// Whether the session id is one the app offers for real plans. See
 /// [`is_offered_campus`].
 pub const fn is_offered_session(session_id: i64) -> bool {
-    if session_id == SAMPLE_SESSION_ID {
-        return false;
+    let mut index = 0;
+    while index < SESSION_OPTIONS.len() {
+        if SESSION_OPTIONS[index].0 == session_id {
+            return true;
+        }
+        index += 1;
     }
-    session_name(session_id).is_some()
+    false
 }
 
 #[cfg(test)]
@@ -156,6 +143,35 @@ mod tests {
         }
         assert_eq!(campus_name(10), None, "no combined-campus option is offered");
         assert_eq!(session_name(999), None);
+    }
+
+    #[test]
+    fn the_ids_around_the_offered_terms_have_no_invented_names() {
+        // A session id is a value the site hands out, never a position in a
+        // sequence. AY2026-27 runs 155/156/157, which reads like an unbroken
+        // three-per-year run and invites extrapolating the neighbouring
+        // years from it. The site does not oblige: 144 is `Annual`, and 161
+        // — the id that arithmetic assigns AY2028-29 T1 — is `SHS`.
+        //
+        // That is what makes the shortcut dangerous rather than merely
+        // wrong. An invented id that lands on nothing is caught here; one
+        // that lands on `SHS` is an *offered* session, so it satisfies
+        // `is_offered_session`, resolves to a real name, and scopes a plan
+        // to the wrong catalog with nothing anywhere to flag it.
+        assert_eq!(session_name(154), None, "AY2025-26 T3 by arithmetic");
+        assert_eq!(session_name(158), None, "AY2027-28 T1 by arithmetic");
+        assert_eq!(session_name(162), None);
+        assert_eq!(
+            session_name(161),
+            Some("SHS"),
+            "the id arithmetic hands AY2028-29 T1 is a session in its own right"
+        );
+        for id in [149, 152, 154, 158, 159, 160, 162, 167] {
+            assert!(
+                !is_offered_session(id),
+                "{id} is not an offered session and must never be plannable"
+            );
+        }
     }
 
     #[test]

@@ -114,6 +114,7 @@ Things that must always be true. Most of these are the subject of an ADR; violat
 - **The solver only ever emits conflict-free sets.** Any conflict in a plan is user-authored.
 - **A blank professor means unknown, never "not this professor".** No filter may treat it as a mismatch, and no ranking may treat it as a demerit: a section with an unknown professor survives every avoid list and scores as neutral, never as worst.
 - **`remark` is stored and displayed verbatim.** Never parsed, never branched on. It is not always incidental: for a PE course it names the activity (`PICKLEBALL`, `SWIMMING`, `SOCDANCE`) and is the only thing distinguishing two otherwise identical sections, so a surface that drops it can leave a student unable to tell them apart.
+- **A campus or session id is looked up, never calculated.** Archer's Hub's ids are values the site hands out, not positions in a sequence: `Annual` is 144 and `SHS` is 161, both inside the range that extrapolating from AY2026-27's 155/156/157 walks through. A plan may only be scoped to a session the fetched options actually list (ADR-0013).
 - **The week is Mon–Sat**, not Mon–Fri.
 - **Hue encodes course identity only.** Never modality.
 - **Refresh never runs on a timer or in the background.**

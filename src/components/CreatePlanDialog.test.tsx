@@ -71,4 +71,63 @@ describe("CreatePlanDialog", () => {
 
     expect(html).toContain("hard-scoped");
   });
+
+  it("says so when the chosen term is not in the catalog, and blocks creation", () => {
+    // Nothing here parses as an academic year, so the stepper opens on its
+    // 2026 default with no session behind it. Before, the dialog invented an
+    // id and created the plan anyway; now it must say the term does not
+    // exist and refuse.
+    const html = renderToStaticMarkup(
+      React.createElement(CreatePlanDialog, {
+        open: true,
+        onOpenChange: vi.fn(),
+        campusOptions: CAMPUS_FIXTURES,
+        sessionOptions: [{ id: 144, name: "Annual" }],
+        onSubmit: vi.fn(),
+      })
+    );
+
+    expect(html).toContain('data-testid="plan-session-unavailable"');
+    expect(html).toContain("is not in the Archer");
+    expect(html).toMatch(/<button[^>]*disabled=""[^>]*>Create Plan<\/button>/);
+
+    // The same dialog with a real session must leave the button live, or the
+    // assertion above would pass for a button that is always disabled.
+    const usable = renderToStaticMarkup(
+      React.createElement(CreatePlanDialog, {
+        open: true,
+        onOpenChange: vi.fn(),
+        campusOptions: CAMPUS_FIXTURES,
+        sessionOptions: SESSION_FIXTURES,
+        onSubmit: vi.fn(),
+      })
+    );
+    expect(usable).not.toContain('data-testid="plan-session-unavailable"');
+    expect(usable).not.toMatch(/<button[^>]*disabled=""[^>]*>Create Plan<\/button>/);
+  });
+
+  it("keeps the year-less sessions selectable beside the terms", () => {
+    // `Annual` and `SHS` are offered sessions (SPEC §2) that a year-and-term
+    // control cannot express. They were selectable before the stepper
+    // existed and must not be quietly dropped by it.
+    const html = renderToStaticMarkup(
+      React.createElement(CreatePlanDialog, {
+        open: true,
+        onOpenChange: vi.fn(),
+        campusOptions: CAMPUS_FIXTURES,
+        sessionOptions: [
+          { id: 155, name: "AY2026-27 T1" },
+          { id: 144, name: "Annual" },
+          { id: 161, name: "SHS" },
+        ],
+        onSubmit: vi.fn(),
+      })
+    );
+
+    expect(html).toContain("Other sessions");
+    expect(html).toContain("Annual");
+    expect(html).toContain("SHS");
+    expect(html).toContain('value="session:144"');
+    expect(html).toContain('value="session:161"');
+  });
 });

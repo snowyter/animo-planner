@@ -17,6 +17,8 @@ import {
   formatFullAcademicYear,
   buildAcademicSessionStructure,
   resolveAcademicSessionId,
+  termsForStartYear,
+  type AcademicTermOption,
 } from "../core/options";
 
 export interface CreatePlanDialogProps {
@@ -53,6 +55,7 @@ export function CreatePlanDialog({
   const [selectedTerm, setSelectedTerm] = useState<number>(
     () => sessionStructure.defaultTerm ?? 1
   );
+  const [otherSessionId, setOtherSessionId] = useState<number | null>(null);
   const [validationErrors, setValidationErrors] = useState<{
     name?: string;
     campusId?: string;
@@ -60,7 +63,22 @@ export function CreatePlanDialog({
   }>({});
 
   const formattedYear = formatFullAcademicYear(startYear);
-  const currentSessionId = resolveAcademicSessionId(sessionOptions, startYear, selectedTerm);
+  const availableTerms = termsForStartYear(sessionStructure, startYear);
+  /**
+   * The year's published terms when the catalog has them, and the three a
+   * DLSU year has otherwise — so stepping to a year Archer's Hub has not
+   * published yet leaves a control the student can still read, which then
+   * reports the gap, rather than an empty select that explains nothing.
+   */
+  const termChoices: AcademicTermOption[] =
+    availableTerms.length > 0
+      ? availableTerms
+      : [1, 2, 3].map((term) => ({ term, termLabel: `Term ${term}`, sessionId: -1 }));
+  const currentSessionId =
+    otherSessionId ?? resolveAcademicSessionId(sessionOptions, startYear, selectedTerm);
+  const isSessionUnavailable = currentSessionId === null;
+  const sessionChoiceValue =
+    otherSessionId !== null ? `session:${otherSessionId}` : `term:${selectedTerm}`;
 
   const handleStepYear = (delta: number) => {
     const nextYear = startYear + delta;
@@ -72,8 +90,13 @@ export function CreatePlanDialog({
     }
   };
 
-  const handleTermChange = (term: number) => {
-    setSelectedTerm(term);
+  const handleSessionChoiceChange = (raw: string) => {
+    if (raw.startsWith("session:")) {
+      setOtherSessionId(Number(raw.slice("session:".length)));
+    } else {
+      setOtherSessionId(null);
+      setSelectedTerm(Number(raw.slice("term:".length)));
+    }
     if (validationErrors.sessionId) {
       setValidationErrors((prev) => ({ ...prev, sessionId: undefined }));
     }
@@ -194,7 +217,7 @@ export function CreatePlanDialog({
                   type="button"
                   variant="ghost"
                   size="sm"
-                  disabled={isLoading || startYear <= 2000}
+                  disabled={isLoading || otherSessionId !== null || startYear <= 2000}
                   onClick={() => handleStepYear(-1)}
                   aria-label="Previous Academic Year"
                   className="h-7 w-7 p-0 text-muted-foreground hover:text-foreground disabled:opacity-30 cursor-pointer"
@@ -211,7 +234,7 @@ export function CreatePlanDialog({
                   type="button"
                   variant="ghost"
                   size="sm"
-                  disabled={isLoading || startYear >= 2100}
+                  disabled={isLoading || otherSessionId !== null || startYear >= 2100}
                   onClick={() => handleStepYear(1)}
                   aria-label="Next Academic Year"
                   className="h-7 w-7 p-0 text-muted-foreground hover:text-foreground disabled:opacity-30 cursor-pointer"
@@ -221,17 +244,38 @@ export function CreatePlanDialog({
               </div>
               <select
                 id="plan-term"
-                aria-label="Academic Term"
-                value={selectedTerm}
-                onChange={(e) => handleTermChange(Number(e.target.value))}
+                aria-label="Academic Term or Session"
+                value={sessionChoiceValue}
+                onChange={(e) => handleSessionChoiceChange(e.target.value)}
                 disabled={isLoading}
                 className="flex h-9 flex-1 rounded-control border border-input bg-card px-3 py-1 text-sm disabled:cursor-not-allowed disabled:opacity-50"
               >
-                <option value={1}>Term 1</option>
-                <option value={2}>Term 2</option>
-                <option value={3}>Term 3</option>
+                {termChoices.map((choice) => (
+                  <option key={choice.term} value={`term:${choice.term}`}>
+                    {choice.termLabel}
+                  </option>
+                ))}
+                {sessionStructure.otherSessions.length > 0 && (
+                  <optgroup label="Other sessions">
+                    {sessionStructure.otherSessions.map((session) => (
+                      <option key={session.id} value={`session:${session.id}`}>
+                        {session.name}
+                      </option>
+                    ))}
+                  </optgroup>
+                )}
               </select>
             </div>
+            {isSessionUnavailable && (
+              <p
+                data-testid="plan-session-unavailable"
+                className="text-xs font-medium text-amber-700"
+              >
+                AY{formattedYear} Term {selectedTerm} is not in the Archer&rsquo;s Hub
+                catalog. Pick a term it currently offers &mdash; a plan cannot be
+                scoped to a session that does not exist.
+              </p>
+            )}
             {validationErrors.sessionId && (
               <p className="text-xs text-red-600 font-medium">{validationErrors.sessionId}</p>
             )}
@@ -251,7 +295,7 @@ export function CreatePlanDialog({
             >
               Cancel
             </Button>
-            <Button type="submit" disabled={isLoading}>
+            <Button type="submit" disabled={isLoading || isSessionUnavailable}>
               {isLoading ? "Creating..." : "Create Plan"}
             </Button>
           </DialogFooter>
