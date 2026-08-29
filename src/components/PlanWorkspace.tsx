@@ -953,7 +953,7 @@ export function PlanWorkspace({
               className="min-h-0 flex-1 lg:overflow-y-auto"
             >
             {/* Capture: the arrival surface. The way in, and what came in. */}
-            <TabsContent value="capture" className="space-y-4">
+            <TabsContent value="capture" className="enter-fade space-y-4">
               <CaptureBar
                 render="controls"
                 campusId={planSummary.campusId}
@@ -985,7 +985,7 @@ export function PlanWorkspace({
             </TabsContent>
 
             {/* Solve: the former modal, now a panel beside the grid it draws on. */}
-            <TabsContent value="solve">
+            <TabsContent value="solve" className="enter-fade">
               <SolvePanel
                 planId={planSummary.id}
                 planSections={currentSections}
@@ -1005,7 +1005,7 @@ export function PlanWorkspace({
             </TabsContent>
 
             {/* Pick: unchanged, in a column of its own. */}
-            <TabsContent value="pick">
+            <TabsContent value="pick" className="enter-fade">
               <SectionPicker
                 render="all"
                 scrollContext="panel"

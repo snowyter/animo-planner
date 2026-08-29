@@ -1345,6 +1345,18 @@ describe("the tool panel and the permanent week grid", () => {
       expect(panel).toContain("enter-slide-left");
     });
 
+    it("arrives the tool panel's content when the tab changes", () => {
+      // Radix unmounts the inactive panel, so switching tabs is a real
+      // remount and each switch earns its own arrival. Previously the tool
+      // appeared on the same frame as the click.
+      const html = render({ initialToolsOpen: true });
+      const panels = [...html.matchAll(/<div[^>]*data-state="active"[^>]*>/g)];
+      expect(panels.length).toBeGreaterThan(0);
+      expect(
+        panels.some((panel) => panel[0].includes("enter-fade"))
+      ).toBe(true);
+    });
+
     it("puts the fold animation on the panel, never on a grid ancestor", () => {
       // The bug this would cause: the workspace columns wrap the week grid,
       // and a transform or an opacity there re-parents the grid's portalled

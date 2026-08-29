@@ -116,7 +116,7 @@ describe("design foundation", () => {
     // Matched only where `motion.` is used as a value — `<motion.div>` or
     // `motion.span` — and never inside an import specifier: `../core/motion.ts`
     // and `motion/react-m` both contain "motion." and are not the component.
-    expect(offenders(/(?<![\/"'`])motion\.[a-z]/, isTest)).toEqual([]);
+    expect(offenders(/(?<!["'`/])motion\.[a-z]/, isTest)).toEqual([]);
   });
 
   it("leaves no transform behind after a screen or stagger animation settles", () => {

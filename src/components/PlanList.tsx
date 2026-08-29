@@ -5,6 +5,7 @@ import { Skeleton } from "./ui/skeleton";
 import { Alert, AlertTitle, AlertDescription } from "./ui/alert";
 import type { PlanSummary } from "../adapters/ipc/types";
 import { formatSectionCount } from "../core/plan";
+import { staggerStyle } from "../core/motion";
 
 export interface PlanListProps {
   plans: PlanSummary[];
@@ -64,7 +65,9 @@ export function PlanList({
 
       <div className="ambient-content mx-auto max-w-7xl px-4 py-8 sm:px-6 lg:px-8">
         {error && (
-          <Alert variant="destructive" className="mb-6">
+          /* A fade, not a rise: this sits above the list, and moving it
+             would shift the content beneath it as it lands. */
+          <Alert variant="destructive" className="enter-fade mb-6">
             <AlertTitle className="flex items-center justify-between">
               <span>Unable to load plans</span>
               <Button
@@ -96,7 +99,7 @@ export function PlanList({
              content when the sample-data path was removed, so it is set as a
              centred column rather than a card with a hole where the second
              option used to be. */
-          <div className="mx-auto flex min-h-[440px] max-w-xl flex-col items-center justify-center rounded-panel border border-border bg-card px-8 py-14 text-center shadow-raised">
+          <div className="enter-rise mx-auto flex min-h-[440px] max-w-xl flex-col items-center justify-center rounded-panel border border-border bg-card px-8 py-14 text-center shadow-raised">
             <h2 className="text-3xl font-bold tracking-tight text-foreground">
               No saved plans yet
             </h2>
@@ -132,12 +135,20 @@ export function PlanList({
             </div>
 
             {/* Repeated elements stay cheap: border colour on hover, no
-                per-card shadow and no `transition-all`. */}
+                per-card shadow and no `transition-all`.
+
+                The arrival is the one exception, and it is CSS-only — the
+                same `stagger-rise` the solve results use, with the delay
+                carried by a custom property rather than by per-card JS. A
+                student may have dozens of plans, so the stagger is capped:
+                the list finishes arriving in a few frames rather than in
+                sequence. */}
             <div className="grid grid-cols-1 gap-5 sm:grid-cols-2 lg:grid-cols-3">
-              {plans.map((plan) => (
+              {plans.map((plan, index) => (
                 <Card
                   key={plan.id}
-                  className="flex flex-col justify-between hover:border-slate-300 cursor-pointer group"
+                  className="stagger-rise flex flex-col justify-between hover:border-slate-300 cursor-pointer group"
+                  style={staggerStyle(index)}
                   onClick={() => onOpenPlan(plan)}
                 >
                   <CardHeader className="pb-3">
