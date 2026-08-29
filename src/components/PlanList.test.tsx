@@ -117,6 +117,26 @@ describe("PlanList", () => {
     expect(Math.max(...delays)).toBeLessThanOrEqual(320);
   });
 
+  it("uses at most one spotlight, and never on a repeated card", () => {
+    // The condition `SpotlightCard` was allowed in under: it is a
+    // `mousemove` listener and a state update per element, which is exactly
+    // the per-item cost the design system refuses on repeated surfaces. One,
+    // on the empty state, is a flourish. Two is a decision to revisit.
+    const html = renderToStaticMarkup(
+      React.createElement(PlanList, {
+        plans: mockPlans,
+        isLoading: false,
+        error: null,
+        onOpenCreate: vi.fn(),
+        onOpenPlan: vi.fn(),
+        onDeletePlan: vi.fn(),
+        onRetry: vi.fn(),
+      })
+    );
+
+    expect([...html.matchAll(/data-testid="spotlight-card"/g)].length).toBeLessThanOrEqual(1);
+  });
+
   it("arrives the empty state and the error alert rather than cutting them in", () => {
     const empty = renderToStaticMarkup(
       React.createElement(PlanList, {

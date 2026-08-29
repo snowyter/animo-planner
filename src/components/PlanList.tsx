@@ -6,6 +6,7 @@ import { Alert, AlertTitle, AlertDescription } from "./ui/alert";
 import type { PlanSummary } from "../adapters/ipc/types";
 import { formatSectionCount } from "../core/plan";
 import { staggerStyle } from "../core/motion";
+import { SpotlightCard } from "./ui/spotlightCard";
 
 export interface PlanListProps {
   plans: PlanSummary[];
@@ -99,7 +100,12 @@ export function PlanList({
              content when the sample-data path was removed, so it is set as a
              centred column rather than a card with a hole where the second
              option used to be. */
-          <div className="enter-rise mx-auto flex min-h-[440px] max-w-xl flex-col items-center justify-center rounded-panel border border-border bg-card px-8 py-14 text-center shadow-raised">
+          /* The one spotlight in the app, and the only place one belongs:
+             this is a single card the student is being asked to act on, not
+             one of forty. A mousemove listener per element is exactly the
+             per-item cost the design system refuses on repeated surfaces, so
+             `SpotlightCard` is used here and nowhere else. */
+          <SpotlightCard className="enter-rise mx-auto flex min-h-[440px] max-w-xl flex-col items-center justify-center rounded-panel border border-border bg-card px-8 py-14 text-center shadow-raised">
             <h2 className="text-3xl font-bold tracking-tight text-foreground">
               No saved plans yet
             </h2>
@@ -117,7 +123,7 @@ export function PlanList({
             <p className="mt-4 text-micro text-muted-foreground">
               Nothing leaves your machine, and no credentials are stored.
             </p>
-          </div>
+          </SpotlightCard>
         ) : (
           <div>
             <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4 mb-6">
