@@ -178,6 +178,7 @@ Keeping this list short is the point. Anything added to it should be added here 
 | Tool panel fold | 12px slide from the edge it occupies | CSS `.enter-slide-left` |
 | Plan cards | 40ms stagger, capped at 8 steps | CSS `.stagger-rise` |
 | **Every button** | 0.97 scale while pressed | CSS `active:` on the cva base |
+| Empty state (plan list) | Cursor-following glow, one card only | `ui/spotlightCard.tsx`, React Bits |
 
 The ghost handoff is the one animation here that carries meaning rather than polish, and the reason `motion` was approved at all. It is armed only for the section that just landed, for one `--motion-slow`, and then disarmed — so the other blocks are never measuring.
 
