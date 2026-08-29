@@ -709,7 +709,7 @@ export function WeekGrid({
                     // time. Every other block stays a plain `div` and never
                     // measures.
                     const sectionKey = `${section.courseId}-${section.sectionId}`;
-                    const isHandingOff = isGhost || handoffKey === sectionKey;
+                    const isHandingOff = handoffKey === sectionKey;
                     const BlockTag = isHandingOff ? m.div : "div";
                     const handoffProps = isHandingOff
                       ? {
@@ -1303,14 +1303,6 @@ export function WeekGrid({
                 })()}
               </DialogDescription>
             </DialogHeader>
-
-            <div className="rounded-lg border border-amber-200 bg-amber-50/70 p-3 text-xs text-amber-900 space-y-1">
-              <span className="font-semibold block">About Conflicts (ADR-0009):</span>
-              <p className="leading-relaxed">
-                In Animo Plan, conflicts are displayed and never prevented. You can keep conflicting sections
-                while planning, swap one for an alternative in the picker, or remove it from your schedule.
-              </p>
-            </div>
 
             <DialogFooter className="flex flex-row items-center justify-end gap-2 pt-3 border-t border-border">
               {onShowOtherSections && (

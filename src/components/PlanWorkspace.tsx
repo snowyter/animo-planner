@@ -1,4 +1,4 @@
-import { useState, useMemo, useRef } from "react";
+import { useState, useMemo, useRef, useCallback } from "react";
 /**
  * One glyph survives on this screen: the conflict indicator (ADR-0009), which
  * is the single thing a student scans the plan header for. Everything else
@@ -167,6 +167,18 @@ export function PlanWorkspace({
   const toolScrollRef = useRef<HTMLDivElement | null>(null);
   const savedToolScrollRef = useRef<number>(0);
   const savedWindowScrollRef = useRef<number>(0);
+
+  const handleToolScrollRef = useCallback((node: HTMLDivElement | null) => {
+    toolScrollRef.current = node;
+    if (node && savedToolScrollRef.current > 0) {
+      node.scrollTop = savedToolScrollRef.current;
+      savedToolScrollRef.current = 0;
+    }
+    if (node && savedWindowScrollRef.current > 0 && typeof window !== "undefined") {
+      window.scrollTo(0, savedWindowScrollRef.current);
+      savedWindowScrollRef.current = 0;
+    }
+  }, []);
   const [isConfirmingClear, setIsConfirmingClear] = useState<boolean>(
     () => initialConfirmingClear
   );
@@ -941,15 +953,7 @@ export function PlanWorkspace({
           >
             <div
               data-testid="tool-panel-scroll"
-              ref={(node) => {
-                toolScrollRef.current = node;
-                if (node && savedToolScrollRef.current > 0) {
-                  node.scrollTop = savedToolScrollRef.current;
-                }
-                if (node && savedWindowScrollRef.current > 0 && typeof window !== "undefined") {
-                  window.scrollTo(0, savedWindowScrollRef.current);
-                }
-              }}
+              ref={handleToolScrollRef}
               className="min-h-0 flex-1 lg:overflow-y-auto"
             >
             {/* Capture: the arrival surface. The way in, and what came in. */}

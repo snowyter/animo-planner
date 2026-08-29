@@ -1475,6 +1475,11 @@ describe("the tool panel and the permanent week grid", () => {
       expect(columns).toMatch(/lg:order-1/);
       expect(columns).toMatch(/lg:order-2/);
     });
+
+    it("renders tool-panel-scroll container with stable scroll handle", () => {
+      const html = render({ initialToolsOpen: true });
+      expect(html).toContain('data-testid="tool-panel-scroll"');
+    });
   });
 
   describe("nothing gets hidden that must be seen", () => {

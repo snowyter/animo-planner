@@ -1179,7 +1179,7 @@ describe("WeekGrid component", () => {
       expect(html).toContain("CSINTSY Z01");
       expect(html).toContain("MON");
       expect(html).toContain("8:00 AM – 9:00 AM");
-      expect(html).toContain("ADR-0009");
+      expect(html).not.toContain("About Conflicts (ADR-0009)");
     });
 
     it("renders Flagged Explanation modal explaining missing status and ADR-0008 invariant", () => {
