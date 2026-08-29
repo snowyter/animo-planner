@@ -4,9 +4,25 @@ import { cva, type VariantProps } from "class-variance-authority";
 import { cn } from "../../lib/utils";
 
 const buttonVariants = cva(
+  // The press.
+  //
+  // Every action in this app is a button, and one that gives no feedback
+  // leaves the student unsure whether the click landed — during enlistment,
+  // that is a double-click on "Add to Plan". `scale` rather than a colour
+  // shift because it is compositor-only: no paint, no layout, and it cannot
+  // cost frames on a surface holding forty other controls.
+  //
+  // The transition names its properties explicitly — `transform`,
+  // `box-shadow`, and the `color`/`background-color` the hover fills need —
+  // and never `transition-all`, which on the app's most repeated control is
+  // one stray property away from animating layout.
+  //
+  // It sits on the base, so every variant inherits it and a new variant
+  // cannot quietly become the one control that does not respond.
+  //
   // Focus is never invisible: `:focus-visible` in App.css draws the ring for
   // every interactive element, and this keeps it from being suppressed here.
-  "inline-flex items-center justify-center gap-2 whitespace-nowrap rounded-control text-sm font-medium transition-colors disabled:pointer-events-none disabled:opacity-50 [&_svg]:pointer-events-none [&_svg]:size-4 [&_svg]:shrink-0 cursor-pointer",
+  "inline-flex items-center justify-center gap-2 whitespace-nowrap rounded-control text-sm font-medium cursor-pointer active:scale-[0.97] transition-[transform,box-shadow,color,background-color,border-color] duration-150 ease-out disabled:active:scale-100 disabled:pointer-events-none disabled:opacity-50 [&_svg]:pointer-events-none [&_svg]:size-4 [&_svg]:shrink-0",
   {
     variants: {
       variant: {
