@@ -53,6 +53,46 @@ dnd-kit elsewhere is a new question, not a precedent.
 
 **shadcn components are copied into the repo, not pulled at runtime** (`SPEC.md` §7). Ticket 06 sets up Tailwind and the shadcn init; later UI tickets copy in only the components they use.
 
+## React Bits — resolved: source-in, no dependency, CSS-only tier
+
+[Raised in ticket 33](../../.scratch/animo-plan/issues/33-ui-visual-revision.md) as a possible source, and decided by a human:
+
+**There is no npm package to install.** `react-bits` on npm is an unrelated, abandoned React Native
+library (last published 2022; depends on `react-native` and `react-timer-mixin`). React Bits
+(reactbits.dev, `DavidHDev/react-bits`) distributes through a shadcn-style **registry** — components
+are copied into the repo, and the vendored files are the dependency. So "install it" is not an
+available option; "copy it in" is.
+
+**Its licence is MIT + Commons Clause, not MIT** (`LICENSE.md` in that repo). The Commons Clause
+forbids redistributing the components "alone, in a bundle, or as a ported version." This repo is MIT
+(ADR-0005: public source is the trust model). A human accepted that the two sit alongside each other.
+In practice this constrains *use*, not distribution:
+
+- Copy only **individual components**, never the collection — bundling the library is what the clause restricts.
+- Keep each vendored file's **attribution and licence header intact**.
+- Prefer **CSS-only** components. Of the 170 in the registry, 107 pull in GSAP or WebGL.
+
+**Tiers, as measured against the registry:**
+
+| Tier | Count | Verdict |
+|---|---|---|
+| WebGL / canvas (`ogl`, `three`, `OGL`) | ~60 | **Ruled out.** No canvas, no WebGL, and a looping background fails the idle-app rule on its own (ticket 33). |
+| GSAP-based | ~47 | **Ruled out.** GSAP is ~70 kB on top of the `motion` bundle ticket 33 tuned to +14.5 kB gzip, for effects CSS already covers. |
+| `motion`-based | ~16 | **Ruled out by the guard test.** They import `motion/react` and render `motion.span`, which `src/designSystem.test.ts` bans in favour of `m`, and would re-inflate the initial chunk. |
+| CSS-only | ~11 | **Open.** No dependency, no bundle cost. |
+
+The CSS-only shortlist, checked against this repo's guard tests: `SpotlightCard`, `Magnet`,
+`ReflectiveCard`, `BorderGlow`, `GlareHover`, `Folder`, `GooeyNav`, `LineSidebar`, `GlitchText`.
+Rejected from the CSS-only tier for cause: `GradualBlur` / `GlassIcons` / `ProfileCard`
+(`backdrop-filter`), `StarBorder` / `GlitchText` (`infinite` loops — an idle app has zero), and
+`PixelSwap` / `InfiniteSpiral` / `LogoLoop` / `MaskedHeading` / `EchoText` / `DepthText` (per-component
+`prefers-reduced-motion`, which must stay handled once at the root).
+
+Even an approved component is **not** dropped in as-is: its dark-by-default neutrals, its durations,
+and its `will-change` are all rewritten to this repo's tokens before it lands.
+
+A later ticket wanting the GSAP or WebGL tier is a new question, not a precedent.
+
 ## Two decisions that are NOT pre-approved
 
 Stop and ask on both of these — they are architecture, not plumbing.

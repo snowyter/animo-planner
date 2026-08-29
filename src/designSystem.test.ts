@@ -112,7 +112,11 @@ describe("design foundation", () => {
 
     // The full `motion` component pulls the entire feature set into the
     // initial bundle. `m` is the only component allowed.
-    expect(offenders(/\bmotion\.[a-z]/, isTest)).toEqual([]);
+    //
+    // Matched only where `motion.` is used as a value — `<motion.div>` or
+    // `motion.span` — and never inside an import specifier: `../core/motion.ts`
+    // and `motion/react-m` both contain "motion." and are not the component.
+    expect(offenders(/(?<![\/"'`])motion\.[a-z]/, isTest)).toEqual([]);
   });
 
   it("leaves no transform behind after a screen or stagger animation settles", () => {
@@ -121,7 +125,17 @@ describe("design foundation", () => {
     // permanent containing block for `position: fixed` descendants — which is
     // exactly what trapped the grid context menu (ticket 45) and what would
     // mis-place the off-screen PNG export wrapper (ticket 40).
-    const settling = [".screen-enter", ".stagger-rise", ".menu-enter", ".ambient-wash"];
+    const settling = [
+      ".screen-enter",
+      ".stagger-rise",
+      ".menu-enter",
+      ".ambient-wash",
+      ".enter-rise",
+      ".enter-fade",
+      ".enter-collapse",
+      ".block-land",
+      ".enter-scale",
+    ];
     for (const selector of settling) {
       const rule = APP_CSS.slice(APP_CSS.indexOf(selector));
       const decl = rule.slice(0, rule.indexOf("}"));
@@ -130,6 +144,16 @@ describe("design foundation", () => {
         "backwards"
       );
     }
+  });
+
+  it("animates a repeated element with a CSS animation, never a per-item motion component", () => {
+    // The grid's ~40 blocks are the densest repeated surface in the app. The
+    // entrance is a plain CSS animation so it costs no layout projection and
+    // no per-element measurement, and it settles with `backwards` so no
+    // `transform` survives on a block or a day column — a retained transform
+    // there is the containing block for the portalled, `position: fixed`
+    // context menu (tickets 41 and 45).
+    expect(APP_CSS).toMatch(/\.block-land\s*\{[^}]*animation:/);
   });
 
   it("never restates a centering offset inside an entrance keyframe", () => {
@@ -147,6 +171,16 @@ describe("design foundation", () => {
         /-\s*50%/
       );
     }
+  });
+
+  it("keeps a conflict instant: no animation, no transition on the hatch", () => {
+    // ADR-0009 is intact. A conflict is displayed, never softened, and it
+    // appears the moment it exists — so no entrance animation and no
+    // transition may attach to it, even while everything around it animates.
+    const conflictRule = APP_CSS.slice(APP_CSS.indexOf(".conflict-hatch"));
+    const decl = conflictRule.slice(0, conflictRule.indexOf("}"));
+    expect(decl).not.toMatch(/animation/);
+    expect(decl).not.toMatch(/transition/);
   });
 
   it("keeps backdrop-filter off large, scrolling, and repeated surfaces", () => {
