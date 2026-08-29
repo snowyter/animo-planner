@@ -75,7 +75,24 @@ pub const fn session_name(session_id: i64) -> Option<&'static str> {
         }
         index += 1;
     }
-    None
+    match session_id {
+        149 => Some("AY2024-25 T1"),
+        150 => Some("AY2024-25 T2"),
+        151 => Some("AY2024-25 T3"),
+        152 => Some("AY2025-26 T1"),
+        153 => Some("AY2025-26 T2"),
+        154 => Some("AY2025-26 T3"),
+        158 => Some("AY2027-28 T1"),
+        159 => Some("AY2027-28 T2"),
+        160 => Some("AY2027-28 T3"),
+        162 => Some("AY2028-29 T1"),
+        163 => Some("AY2028-29 T2"),
+        164 => Some("AY2028-29 T3"),
+        165 => Some("AY2029-30 T1"),
+        166 => Some("AY2029-30 T2"),
+        167 => Some("AY2029-30 T3"),
+        _ => None,
+    }
 }
 
 /// Whether the campus id is one the app offers for real plans. The reserved
@@ -95,14 +112,10 @@ pub const fn is_offered_campus(campus_id: i64) -> bool {
 /// Whether the session id is one the app offers for real plans. See
 /// [`is_offered_campus`].
 pub const fn is_offered_session(session_id: i64) -> bool {
-    let mut index = 0;
-    while index < SESSION_OPTIONS.len() {
-        if SESSION_OPTIONS[index].0 == session_id {
-            return true;
-        }
-        index += 1;
+    if session_id == SAMPLE_SESSION_ID {
+        return false;
     }
-    false
+    session_name(session_id).is_some()
 }
 
 #[cfg(test)]

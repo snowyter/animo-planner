@@ -72,7 +72,11 @@ describe("OnboardingDialog", () => {
     );
 
     expect(html).toContain("Manila");
-    expect(html).toContain("AY2026-27 T1");
+    expect(html).toContain("AY");
+    expect(html).toContain("2026-2027");
+    expect(html).toContain("Term 1");
+    expect(html).toContain("Previous Academic Year");
+    expect(html).toContain("Next Academic Year");
     expect(html).toMatch(/Campus/i);
     expect(html).toMatch(/Academic Session/i);
     expect(html).toMatch(/Skip/i);

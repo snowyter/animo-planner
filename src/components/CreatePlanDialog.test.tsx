@@ -17,7 +17,7 @@ const SESSION_FIXTURES: SessionOption[] = [
 ];
 
 describe("CreatePlanDialog", () => {
-  it("renders when open with inputs for name, campus, and academic session", () => {
+  it("renders when open with inputs for name, campus, and structured academic session with complete year", () => {
     const html = renderToStaticMarkup(
       React.createElement(CreatePlanDialog, {
         open: true,
@@ -35,7 +35,12 @@ describe("CreatePlanDialog", () => {
     expect(html).toContain("Manila");
     expect(html).toContain("Laguna");
     expect(html).toContain("Rufino");
-    expect(html).toContain("AY2026-27 T1");
+    expect(html).toContain("AY");
+    expect(html).toContain("2026-2027");
+    expect(html).toContain("Term 1");
+    expect(html).toContain("Term 2");
+    expect(html).toContain("Previous Academic Year");
+    expect(html).toContain("Next Academic Year");
   });
 
   it("renders identifiable error state when submission error occurs", () => {

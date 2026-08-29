@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from "react";
+import React, { useState, useEffect, useMemo } from "react";
 import {
   Dialog,
   DialogContent,
@@ -11,14 +11,19 @@ import { Button } from "./ui/button";
 import { Input } from "./ui/input";
 import { Alert, AlertDescription, AlertTitle } from "./ui/alert";
 /** "Opens outside the app" is not something the label says. */
-import { ExternalLink } from "lucide-react";
+import { ExternalLink, ChevronLeft, ChevronRight } from "lucide-react";
 import type { CampusOption, SessionOption, PlanSummary } from "../adapters/ipc/types";
 import {
   DISCLAIMER_TEXT,
   SIGN_IN_NOTICE,
   type OnboardingStep,
 } from "../core/onboarding";
-import { validateCreatePlanInput } from "../core/options";
+import {
+  validateCreatePlanInput,
+  formatFullAcademicYear,
+  buildAcademicSessionStructure,
+  resolveAcademicSessionId,
+} from "../core/options";
 
 export interface OnboardingDialogProps {
   open: boolean;
@@ -43,13 +48,21 @@ export function OnboardingDialog({
   onComplete,
   initialStep = "choice",
 }: OnboardingDialogProps) {
+  const sessionStructure = useMemo(
+    () => buildAcademicSessionStructure(sessionOptions),
+    [sessionOptions]
+  );
+
   const [step, setStep] = useState<OnboardingStep>(initialStep);
   const [name, setName] = useState("Target Schedule");
   const [campusId, setCampusId] = useState<number | null>(
     campusOptions.length > 0 ? campusOptions[0].id : 7
   );
-  const [sessionId, setSessionId] = useState<number | null>(
-    sessionOptions.length > 0 ? sessionOptions[0].id : 155
+  const [startYear, setStartYear] = useState<number>(
+    () => sessionStructure.defaultStartYear
+  );
+  const [selectedTerm, setSelectedTerm] = useState<number>(
+    () => sessionStructure.defaultTerm ?? 1
   );
   const [createdPlan, setCreatedPlan] = useState<PlanSummary | null>(null);
 
@@ -61,6 +74,26 @@ export function OnboardingDialog({
     sessionId?: string;
   }>({});
   const [hasOpenedCapture, setHasOpenedCapture] = useState(false);
+
+  const formattedYear = formatFullAcademicYear(startYear);
+  const currentSessionId = resolveAcademicSessionId(sessionOptions, startYear, selectedTerm);
+
+  const handleStepYear = (delta: number) => {
+    const nextYear = startYear + delta;
+    if (nextYear >= 2000 && nextYear <= 2100) {
+      setStartYear(nextYear);
+      if (validationErrors.sessionId) {
+        setValidationErrors((prev) => ({ ...prev, sessionId: undefined }));
+      }
+    }
+  };
+
+  const handleTermChange = (term: number) => {
+    setSelectedTerm(term);
+    if (validationErrors.sessionId) {
+      setValidationErrors((prev) => ({ ...prev, sessionId: undefined }));
+    }
+  };
 
   useEffect(() => {
     if (open) {
@@ -77,11 +110,7 @@ export function OnboardingDialog({
     }
   }, [campusId, campusOptions]);
 
-  useEffect(() => {
-    if (sessionId === null && sessionOptions.length > 0) {
-      setSessionId(sessionOptions[0].id);
-    }
-  }, [sessionId, sessionOptions]);
+
 
   const handleOpenChange = (nextOpen: boolean) => {
     if (!nextOpen) {
@@ -99,13 +128,17 @@ export function OnboardingDialog({
 
   const handleCreateStepSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
-    const result = validateCreatePlanInput({ name, campusId, sessionId });
+    const result = validateCreatePlanInput({
+      name,
+      campusId,
+      sessionId: currentSessionId,
+    });
     if (!result.valid) {
       setValidationErrors(result.errors);
       return;
     }
 
-    if (campusId === null || sessionId === null) return;
+    if (campusId === null || currentSessionId === null) return;
 
     setIsLoading(true);
     setError(null);
@@ -113,7 +146,7 @@ export function OnboardingDialog({
       const plan = await onCreatePlan({
         name: name.trim(),
         campusId,
-        sessionId,
+        sessionId: currentSessionId,
       });
       setCreatedPlan(plan);
       setStep("sign-in");
@@ -132,7 +165,7 @@ export function OnboardingDialog({
 
   const handleOpenArcherHub = async () => {
     const cId = createdPlan?.campusId ?? campusId ?? 7;
-    const sId = createdPlan?.sessionId ?? sessionId ?? 155;
+    const sId = createdPlan?.sessionId ?? currentSessionId ?? 155;
     setIsLoading(true);
     setError(null);
     try {
@@ -305,31 +338,56 @@ export function OnboardingDialog({
               </div>
 
               <div className="space-y-1.5">
-                <label htmlFor="onboarding-session" className="text-xs font-semibold text-foreground block">
+                <label className="text-xs font-semibold text-foreground block">
                   Academic Session <span className="text-red-600">*</span>
                 </label>
-                <select
-                  id="onboarding-session"
-                  value={sessionId ?? ""}
-                  onChange={(e) => {
-                    const val = e.target.value ? Number(e.target.value) : null;
-                    setSessionId(val);
-                    if (validationErrors.sessionId) {
-                      setValidationErrors((prev) => ({ ...prev, sessionId: undefined }));
-                    }
-                  }}
-                  disabled={isLoading}
-                  className="flex h-9 w-full rounded-control border border-input bg-card px-3 py-1 text-sm"
-                >
-                  <option value="" disabled>
-                    Select academic session...
-                  </option>
-                  {sessionOptions.map((s) => (
-                    <option key={s.id} value={s.id}>
-                      {s.name}
-                    </option>
-                  ))}
-                </select>
+                <div className="flex items-center gap-2">
+                  <span className="flex h-9 items-center justify-center rounded-control border border-input bg-muted px-3 text-sm font-bold text-foreground select-none shrink-0">
+                    AY
+                  </span>
+                  <div className="flex h-9 items-center justify-between rounded-control border border-input bg-card px-1 flex-1">
+                    <Button
+                      type="button"
+                      variant="ghost"
+                      size="sm"
+                      disabled={isLoading || startYear <= 2000}
+                      onClick={() => handleStepYear(-1)}
+                      aria-label="Previous Academic Year"
+                      className="h-7 w-7 p-0 text-muted-foreground hover:text-foreground disabled:opacity-30 cursor-pointer"
+                    >
+                      <ChevronLeft className="h-4 w-4" />
+                    </Button>
+                    <span
+                      data-testid="onboarding-year-display"
+                      className="text-sm font-medium text-foreground px-2 tabular-nums select-none"
+                    >
+                      {formattedYear}
+                    </span>
+                    <Button
+                      type="button"
+                      variant="ghost"
+                      size="sm"
+                      disabled={isLoading || startYear >= 2100}
+                      onClick={() => handleStepYear(1)}
+                      aria-label="Next Academic Year"
+                      className="h-7 w-7 p-0 text-muted-foreground hover:text-foreground disabled:opacity-30 cursor-pointer"
+                    >
+                      <ChevronRight className="h-4 w-4" />
+                    </Button>
+                  </div>
+                  <select
+                    id="onboarding-term"
+                    aria-label="Academic Term"
+                    value={selectedTerm}
+                    onChange={(e) => handleTermChange(Number(e.target.value))}
+                    disabled={isLoading}
+                    className="flex h-9 flex-1 rounded-control border border-input bg-card px-3 py-1 text-sm"
+                  >
+                    <option value={1}>Term 1</option>
+                    <option value={2}>Term 2</option>
+                    <option value={3}>Term 3</option>
+                  </select>
+                </div>
                 {validationErrors.sessionId && (
                   <p className="text-xs text-red-600">{validationErrors.sessionId}</p>
                 )}
