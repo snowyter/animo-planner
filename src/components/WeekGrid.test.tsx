@@ -1400,6 +1400,36 @@ describe("WeekGrid component", () => {
       expect(new Set(delays).size).toBeGreaterThan(1);
     });
 
+    it("keeps every animated element inside the grid off the menu's ancestor chain", () => {
+      // The invariant, stated positively rather than per-element: the
+      // portalled context menu is `position: fixed`, so a transform,
+      // opacity, filter, or will-change on anything between it and the
+      // document root re-parents or mis-places it. Tickets 41 and 45 were
+      // both this. Every class in the grid's own markup is checked against
+      // the set that would create a containing block.
+      const section = makeSection(1, 1, "GEARTAP", "S01", [makeBlock("MON", 450, 540)]);
+      const html = renderToStaticMarkup(
+        React.createElement(WeekGrid, {
+          sections: [section],
+          initialMenu: { section, block: section.blocks[0] },
+        })
+      );
+
+      // Everything the grid renders before the portalled menu leaves this
+      // file: the menu is appended after the grid subtree.
+      const beforeMenu = html.slice(0, html.indexOf('data-testid="grid-context-menu"'));
+
+      for (const testid of ["week-grid", "week-grid-lattice"]) {
+        const el = new RegExp(`<div[^>]*data-testid="${testid}"[^>]*>`).exec(
+          beforeMenu
+        );
+        expect(el, `${testid} must render`).not.toBeNull();
+        expect(el![0]).not.toMatch(
+          /block-land|enter-|transform|opacity|filter:|backdrop|will-change/
+        );
+      }
+    });
+
     it("keeps the entrance off the lattice, the day column, and the grid root", () => {
       // The three places a transform or an opacity would be fatal: the
       // lattice is a scroll container that would clip the portalled menu,
