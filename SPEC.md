@@ -81,9 +81,21 @@ The location slot is **either** `Room - <CODE>` **or** the literal `Online`.
 - Every GEARTAP section had exactly 2 blocks. *Do not hardcode this.*
 - All rows shared identical start/end dates → **sections span the full term**. Date-range conflict
   logic is not implemented; a mismatch raises a diagnostic warning instead.
-- **`Teacher` was empty in 42/42 GEARTAP rows** and 3/5 CSINTSY rows. It populates over time.
+- **`Teacher` was empty in 42/42 GEARTAP rows** and 3/5 CSINTSY rows. It populates over time —
+  **confirmed 2026-08-28**, when a PETHREE capture came back with most rows named (Rosalinda
+  Santiago, Almario Quesada, Bengie Mendizabal, Dionisio Oribiana). Blank still means *unknown*.
   (The site's column is labelled *Teacher*; the app calls the person a **professor** — see `CONTEXT.md`.)
-- **`Remark` was empty in all 47 rows observed.** Contents unknown → opaque passthrough.
+- **`Remark` carries content, and for some courses it is the only thing that distinguishes two
+  sections.** Empty in all 47 rows first observed, which is why contents were unknown — but a
+  PETHREE capture on **2026-08-28** returned `PICKLEBALL`, `SWIMMING`, and `SOCDANCE` on otherwise
+  identical-looking Lecture rows. For a PE course the remark *is* the activity, and two sections at
+  the same hour in the same room differ by nothing else on the row.
+
+  This vindicates the opaque passthrough rather than overturning it: the values are a small open
+  vocabulary the university can extend at will, so they are stored and shown verbatim and still
+  never parsed or branched on. What it does change is how much the remark is worth **showing** —
+  it is load-bearing content for at least one whole course family, not the incidental note the
+  original observation implied.
 - Enrolled counts are live and non-zero well before enlistment (42/45, 39/45, 38/40 seen).
 - Section-code prefixes (`Y`, `Z`, `S`, `C`, `A`, `E`, `L`, `V`) may encode college eligibility.
   **Deliberately disregarded in v1**; noted as a future filter.

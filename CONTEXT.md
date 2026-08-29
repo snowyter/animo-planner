@@ -113,7 +113,7 @@ Things that must always be true. Most of these are the subject of an ADR; violat
 - **A plan may legally hold conflicting sections.** Conflict is reported, never enforced.
 - **The solver only ever emits conflict-free sets.** Any conflict in a plan is user-authored.
 - **A blank professor means unknown, never "not this professor".** No filter may treat it as a mismatch, and no ranking may treat it as a demerit: a section with an unknown professor survives every avoid list and scores as neutral, never as worst.
-- **`remark` is stored and displayed verbatim.** Never parsed, never branched on.
+- **`remark` is stored and displayed verbatim.** Never parsed, never branched on. It is not always incidental: for a PE course it names the activity (`PICKLEBALL`, `SWIMMING`, `SOCDANCE`) and is the only thing distinguishing two otherwise identical sections, so a surface that drops it can leave a student unable to tell them apart.
 - **The week is Mon–Sat**, not Mon–Fri.
 - **Hue encodes course identity only.** Never modality.
 - **Refresh never runs on a timer or in the background.**

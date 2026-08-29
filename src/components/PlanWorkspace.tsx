@@ -524,7 +524,7 @@ export function PlanWorkspace({
         data-testid="tool-cluster"
         className={
           isToolsOpen
-            ? "flex w-full shrink-0 items-center gap-1 rounded-panel border border-border bg-muted p-1 lg:w-[400px] xl:w-[480px]"
+            ? "flex w-full shrink-0 items-center gap-1 rounded-panel border border-border bg-muted p-1 lg:w-[360px] xl:w-[380px]"
             : "flex shrink-0 items-center"
         }
       >
@@ -613,7 +613,7 @@ export function PlanWorkspace({
   );
 
   return (
-    <div className="mx-auto max-w-7xl px-4 py-6 sm:px-6 lg:px-8 space-y-6">
+    <div className="mx-auto max-w-7xl 2xl:max-w-screen-2xl px-4 py-6 sm:px-6 lg:px-8 space-y-6">
       {/* Clear Schedule Confirmation Dialog (Ticket 36) */}
       <Dialog open={isConfirmingClear} onOpenChange={setIsConfirmingClear}>
         <DialogContent className="max-w-md p-6" data-testid="clear-schedule-dialog">
@@ -922,7 +922,7 @@ export function PlanWorkspace({
         {isToolsOpen && (
         <div
           data-testid="tool-panel"
-          className="w-full lg:w-[400px] xl:w-[480px] lg:shrink-0 min-w-0 order-2 lg:order-1 flex flex-col lg:max-h-[calc(100vh-14rem)]"
+          className="w-full lg:w-[360px] xl:w-[380px] lg:shrink-0 min-w-0 order-2 lg:order-1 flex flex-col lg:max-h-[calc(100vh-14rem)]"
         >
           <div
             /* `flex-1 min-h-0` is what actually makes the bound bite: without

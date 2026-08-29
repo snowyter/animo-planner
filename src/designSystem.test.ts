@@ -159,4 +159,25 @@ describe("design foundation", () => {
       )
     ).toEqual([]);
   });
+
+  it("never branches on the remark value (ticket 50, CONTEXT.md invariant)", () => {
+    // CONTEXT.md & ticket 50: `remark` is opaque, verbatim text. It is never
+    // parsed, never branched on, and never matched against literals (e.g. no
+    // swimming icon map, no activity-specific styling).
+    const branchingPatterns = [
+      /\bremark\s*(?:===|!==|==|!=)\s*["'`][^"'`]+["'`]/,
+      /["'`][^"'`]+["'`]\s*(?:===|!==|==|!=)\s*\bremark\b/,
+      /\bremark\.(?:includes|startsWith|endsWith|indexOf|match)\s*\(/,
+      /\/(?:PICKLEBALL|SWIMMING|SOCDANCE|BASKETBALL|VOLLEYBALL)\/[i]?\.(?:test|exec)\s*\(/,
+      /\bswitch\s*\([^)]*remark[^)]*\)/,
+      /\b(?:REMARK_|remarkMap|activityMap|activityIcon)\b/,
+    ];
+
+    for (const pattern of branchingPatterns) {
+      expect(
+        offenders(pattern, isTest),
+        `no production source may branch on remark with pattern ${pattern}`
+      ).toEqual([]);
+    }
+  });
 });

@@ -166,6 +166,10 @@ export function blockTooltip(
   if (snapshot && typeof snapshot.enrolled === "number") {
     lines.push(`Enrolled: ${snapshot.enrolled}`);
   }
+  const remark = snapshot?.remark?.trim();
+  if (remark) {
+    lines.push(`Remark: ${remark}`);
+  }
   if (flags.isGhost) lines.push("[Preview]");
   if (flags.isMissing) lines.push("[Missing from catalog]");
   return lines.join("\n");
@@ -434,39 +438,43 @@ export function WeekGrid({
         className={`rounded-panel border border-border bg-card overflow-hidden ${className}`}
         data-testid="week-grid-skeleton"
       >
-        <div className="grid grid-cols-[70px_repeat(6,1fr)] border-b border-border bg-muted/60 text-xs font-semibold text-foreground">
-          <div className="p-3 text-center text-muted-foreground font-normal border-r border-border">
-            Time
-          </div>
-          {DAY_INFOS.map((info) => (
-            <div
-              key={info.day}
-              className="p-3 text-center border-r last:border-r-0 border-border"
-            >
-              {info.shortLabel}
-            </div>
-          ))}
-        </div>
-        <div className="grid grid-cols-[70px_repeat(6,1fr)] min-h-[640px]">
-          <div className="border-r border-border bg-muted/30 p-2 space-y-14">
-            {LATTICE_START_MINUTES.map((startMin) => (
-              <Skeleton key={startMin} className="h-3 w-10" />
-            ))}
-          </div>
-          {DAYS.map((day, column) => (
-            <div
-              key={day}
-              className="border-r last:border-r-0 border-border p-1.5 space-y-3"
-            >
-              {[0, 1].map((row) => (
-                <Skeleton
-                  key={row}
-                  className="w-full"
-                  style={{ height: "72px", marginTop: row === 0 ? `${column * 26}px` : undefined }}
-                />
+        <div className="overflow-x-auto">
+          <div className="min-w-0">
+            <div className="grid grid-cols-[48px_repeat(6,1fr)] border-b border-border bg-muted/60 text-xs font-semibold text-foreground">
+              <div className="p-2 text-center text-muted-foreground font-normal border-r border-border text-micro">
+                Time
+              </div>
+              {DAY_INFOS.map((info) => (
+                <div
+                  key={info.day}
+                  className="p-3 text-center border-r last:border-r-0 border-border"
+                >
+                  {info.shortLabel}
+                </div>
               ))}
             </div>
-          ))}
+            <div className="grid grid-cols-[48px_repeat(6,1fr)] min-h-[640px]">
+              <div className="border-r border-border bg-muted/30 p-1.5 space-y-14">
+                {LATTICE_START_MINUTES.map((startMin) => (
+                  <Skeleton key={startMin} className="h-3 w-8" />
+                ))}
+              </div>
+              {DAYS.map((day, column) => (
+                <div
+                  key={day}
+                  className="border-r last:border-r-0 border-border p-1.5 space-y-3"
+                >
+                  {[0, 1].map((row) => (
+                    <Skeleton
+                      key={row}
+                      className="w-full"
+                      style={{ height: "72px", marginTop: row === 0 ? `${column * 26}px` : undefined }}
+                    />
+                  ))}
+                </div>
+              ))}
+            </div>
+          </div>
         </div>
       </div>
     );
@@ -537,10 +545,10 @@ export function WeekGrid({
         data-testid="week-grid-lattice"
         aria-hidden={isEmpty ? true : undefined}
       >
-        <div className="min-w-[680px]">
+        <div className="min-w-0">
           {/* Day Headers (Mon–Sat) */}
-          <div className="grid grid-cols-[70px_repeat(6,1fr)] border-b border-border bg-muted/60 sticky top-0 z-10 text-xs font-semibold text-foreground">
-            <div className="p-3 text-center text-muted-foreground font-normal border-r border-border">
+          <div className="grid grid-cols-[48px_repeat(6,1fr)] border-b border-border bg-muted/60 sticky top-0 z-10 text-xs font-semibold text-foreground">
+            <div className="p-2 text-center text-muted-foreground font-normal border-r border-border text-micro">
               Time
             </div>
             {DAY_INFOS.map((info) => {
@@ -565,7 +573,7 @@ export function WeekGrid({
           </div>
 
           {/* Grid Canvas */}
-          <div className="relative grid grid-cols-[70px_repeat(6,1fr)] min-h-[640px] bg-card">
+          <div className="relative grid grid-cols-[48px_repeat(6,1fr)] min-h-[640px] bg-card">
             {/* Time labels & horizontal guide lines */}
             <div className="border-r border-border bg-muted/30 relative">
               {LATTICE_START_MINUTES.map((startMin) => {
@@ -578,7 +586,7 @@ export function WeekGrid({
                 return (
                   <div
                     key={startMin}
-                    className={`absolute right-2 text-micro font-mono font-medium text-muted-foreground select-none pointer-events-none ${
+                    className={`absolute right-1 text-micro font-mono font-medium text-muted-foreground select-none pointer-events-none ${
                       pos.topPercent <= 0 ? "translate-y-0" : "-translate-y-2"
                     }`}
                     style={{ top: `${pos.topPercent}%` }}
@@ -590,7 +598,7 @@ export function WeekGrid({
             </div>
 
             {/* Horizontal guide lines spanning all day columns */}
-            <div className="absolute inset-0 left-[70px] pointer-events-none">
+            <div className="absolute inset-0 left-[48px] pointer-events-none">
               {LATTICE_START_MINUTES.map((startMin) => {
                 const pos = computeBlockPosition(
                   startMin,
@@ -634,6 +642,7 @@ export function WeekGrid({
                       "enrollCap" in section ? (section.enrollCap as number | undefined) : undefined;
                     const enrollLabel =
                       enrollCap !== undefined ? `${enrolled}/${enrollCap}` : `${enrolled}`;
+                    const remark = section.latestSnapshot?.remark?.trim();
 
                     const isCurrentMenuOpen =
                       openMenu !== null &&
@@ -743,7 +752,7 @@ export function WeekGrid({
                             });
                           }
                         }}
-                        className={`absolute inset-x-1 rounded-control p-2 flex flex-col justify-between select-none ${
+                        className={`absolute inset-x-0.5 rounded-control p-1.5 flex flex-col justify-between select-none overflow-hidden ${
                           isGhost
                             ? "cursor-default pointer-events-none"
                             : interactive
@@ -767,25 +776,15 @@ export function WeekGrid({
                               })
                         }
                       >
-                        {/* Top row: Course Code, Section Code, Badges */}
-                        <div className="flex items-start justify-between gap-1 leading-tight">
-                          <div className="flex items-center gap-1 min-w-0">
+                        {/* Top row: Course Code, Section Code, Actions */}
+                        <div className="flex items-center justify-between gap-1 leading-tight min-w-0">
+                          <div className="flex items-baseline gap-1 min-w-0">
                             <span className="font-bold text-xs truncate">
                               {section.courseCode}
                             </span>
-                            <span className="text-micro font-medium opacity-75">
+                            <span className="text-micro font-medium opacity-75 shrink-0">
                               {section.sectionCode}
                             </span>
-                            {isGhost && (
-                              <span className="text-nano uppercase tracking-wider font-semibold opacity-75 bg-black/5 px-1 rounded-control ml-0.5">
-                                Preview
-                              </span>
-                            )}
-                            {isMissing && (
-                              <span className="text-nano uppercase tracking-wider font-semibold bg-amber-200 text-amber-900 px-1 rounded-control ml-0.5">
-                                Missing
-                              </span>
-                            )}
                           </div>
 
                           <div className="flex items-center gap-1 shrink-0">
@@ -808,9 +807,9 @@ export function WeekGrid({
                           </div>
                         </div>
 
-                        {/* Middle: Time and Location / Modality */}
-                        <div className="flex items-center justify-between text-nano mt-1 opacity-90">
-                          <div className="flex items-center gap-1 truncate">
+                        {/* Middle: Location, Remark, and Status Badges / Enrolment */}
+                        <div className="flex items-center justify-between gap-1 text-nano mt-0.5 opacity-90 min-w-0">
+                          <div className="flex items-center gap-1 min-w-0 truncate">
                             {isF2F ? (
                               <>
                                 <Building2 className="h-3 w-3 shrink-0" />
@@ -822,19 +821,40 @@ export function WeekGrid({
                                 <span>Online</span>
                               </>
                             )}
+                            {remark && (
+                              <span
+                                className="text-nano font-medium opacity-85 truncate"
+                                title={remark}
+                              >
+                                • {remark}
+                              </span>
+                            )}
                           </div>
 
-                          {/* Enrolled / Cap numeric label */}
-                          <div
-                            className="font-mono text-nano font-medium px-1 py-0.2 rounded-control bg-black/5 shrink-0"
-                            title="Enrolled / Capacity"
-                          >
-                            {enrollLabel}
+                          <div className="flex items-center gap-1 shrink-0">
+                            {isGhost && (
+                              <span className="text-nano uppercase font-semibold opacity-75 bg-black/5 px-1 rounded-control">
+                                Preview
+                              </span>
+                            )}
+                            {isMissing && (
+                              <span className="text-nano uppercase font-semibold bg-amber-200 text-amber-900 px-1 rounded-control">
+                                Missing
+                              </span>
+                            )}
+                            {!isGhost && !isMissing && (
+                              <div
+                                className="font-mono text-nano font-medium px-1 py-0.2 rounded-control bg-black/5 shrink-0"
+                                title="Enrolled / Capacity"
+                              >
+                                {enrollLabel}
+                              </div>
+                            )}
                           </div>
                         </div>
 
                         {/* Bottom: Precise Time Range */}
-                        <div className="text-nano font-mono opacity-70 mt-0.5">
+                        <div className="text-nano font-medium opacity-85 mt-0.5 whitespace-nowrap truncate tracking-tight">
                           {formatMinutesToTime12(block.startMin)} – {formatMinutesToTime12(block.endMin)}
                         </div>
                       </BlockTag>

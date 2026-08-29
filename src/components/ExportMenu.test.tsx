@@ -156,6 +156,50 @@ describe("ExportMenu", () => {
     expect(canvasHtml).not.toContain("2 sections");
   });
 
+  it("renders section remarks in exported PNG canvas element for disambiguation", () => {
+    const peSectionA: PlanSection = {
+      ...sectionA,
+      courseCode: "PETHREE",
+      sectionCode: "Y16H",
+      latestSnapshot: {
+        capturedAt: "2026-08-28T00:00:00Z",
+        enrolled: 42,
+        professor: "Prof Coach",
+        remark: "PICKLEBALL",
+      },
+    };
+
+    const peSectionB: PlanSection = {
+      ...sectionB,
+      courseCode: "PETHREE",
+      sectionCode: "Y07K",
+      latestSnapshot: {
+        capturedAt: "2026-08-28T00:00:00Z",
+        enrolled: 45,
+        professor: "Prof Swimmer",
+        remark: "SWIMMING",
+      },
+    };
+
+    const pePlan: Plan = {
+      ...mockPlanSummary,
+      sections: [peSectionA, peSectionB],
+    };
+
+    const html = renderToStaticMarkup(
+      React.createElement(ExportMenu, {
+        planSummary: mockPlanSummary,
+        plan: pePlan,
+        conflicts: [],
+      })
+    );
+
+    const canvasHtml = html.substring(html.indexOf('data-testid="export-canvas"'));
+    expect(canvasHtml).toContain("PICKLEBALL");
+    expect(canvasHtml).toContain("SWIMMING");
+    expect(canvasHtml).toContain("PETHREE");
+  });
+
   it("renders conflict warning in exported image when conflicts exist", () => {
     const html = renderToStaticMarkup(
       React.createElement(ExportMenu, {

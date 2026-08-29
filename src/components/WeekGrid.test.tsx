@@ -39,6 +39,67 @@ describe("WeekGrid component", () => {
     expect(tip).toContain("Professor: Unknown");
   });
 
+  it("includes remark in block tooltip when present", () => {
+    const tip = blockTooltip(
+      {
+        courseCode: "PETHREE",
+        sectionCode: "Y16H",
+        latestSnapshot: {
+          capturedAt: "",
+          enrolled: 42,
+          professor: "Prof Coach",
+          remark: "PICKLEBALL",
+        },
+      } as never,
+      { day: "SAT", startMin: 480, endMin: 600, location: "R7B", modality: "F2F" } as never,
+      { isF2F: true, isGhost: false, isMissing: false }
+    );
+
+    expect(tip).toContain("Remark: PICKLEBALL");
+  });
+
+  it("omits remark line in block tooltip when remark is null", () => {
+    const tip = blockTooltip(
+      {
+        courseCode: "GEARTAP",
+        sectionCode: "S11",
+        latestSnapshot: { capturedAt: "", enrolled: 40, professor: "Prof A", remark: null },
+      } as never,
+      { day: "MON", startMin: 450, endMin: 540, location: "L226", modality: "F2F" } as never,
+      { isF2F: true, isGhost: false, isMissing: false }
+    );
+
+    expect(tip).not.toContain("Remark");
+  });
+
+  it("omits remark line in block tooltip when remark is empty string", () => {
+    const tip = blockTooltip(
+      {
+        courseCode: "GEARTAP",
+        sectionCode: "S11",
+        latestSnapshot: { capturedAt: "", enrolled: 40, professor: "Prof A", remark: "" },
+      } as never,
+      { day: "MON", startMin: 450, endMin: 540, location: "L226", modality: "F2F" } as never,
+      { isF2F: true, isGhost: false, isMissing: false }
+    );
+
+    expect(tip).not.toContain("Remark");
+  });
+
+  it("omits remark line in block tooltip when remark is whitespace-only", () => {
+    const tip = blockTooltip(
+      {
+        courseCode: "GEARTAP",
+        sectionCode: "S11",
+        latestSnapshot: { capturedAt: "", enrolled: 40, professor: "Prof A", remark: "   " },
+      } as never,
+      { day: "MON", startMin: 450, endMin: 540, location: "L226", modality: "F2F" } as never,
+      { isF2F: true, isGhost: false, isMissing: false }
+    );
+
+    expect(tip).not.toContain("Remark");
+  });
+
   const makeBlock = (
     day: ScheduleBlock["day"],
     startMin: number,
@@ -72,7 +133,8 @@ describe("WeekGrid component", () => {
     blocks: ScheduleBlock[],
     pinned = false,
     enrolled = 38,
-    enrollCap = 45
+    enrollCap = 45,
+    remark: string | null = null
   ): PlanSection & { enrollCap: number } => ({
     courseId,
     courseCode,
@@ -91,9 +153,275 @@ describe("WeekGrid component", () => {
       capturedAt: "2026-08-22T00:00:00Z",
       enrolled,
       professor: "Prof X",
-      remark: null,
+      remark,
     },
     enrollCap,
+  });
+
+  it("renders a section with a remark displaying the remark text on the grid block", () => {
+    const peSection = makeSection(
+      101,
+      201,
+      "PETHREE",
+      "Y16H",
+      [makeBlock("SAT", 480, 600, "F2F", "R7B")],
+      false,
+      42,
+      45,
+      "PICKLEBALL"
+    );
+
+    const html = renderToStaticMarkup(
+      React.createElement(WeekGrid, {
+        sections: [peSection],
+      })
+    );
+
+    expect(html).toContain("PETHREE");
+    expect(html).toContain("Y16H");
+    expect(html).toContain("PICKLEBALL");
+    expect(html).toMatch(/<span[^>]*class="[^"]*truncate[^"]*"[^>]*title="PICKLEBALL"[^>]*>\s*(?:•\s*)?PICKLEBALL\s*<\/span>/);
+  });
+
+  it("renders a section without a remark identically with no empty remark element or dash", () => {
+    const sectionNull = makeSection(
+      2923,
+      384,
+      "GEARTAP",
+      "S11",
+      [makeBlock("MON", 450, 540, "F2F", "L226")],
+      false,
+      42,
+      45,
+      null
+    );
+
+    const sectionEmpty = makeSection(
+      2923,
+      384,
+      "GEARTAP",
+      "S11",
+      [makeBlock("MON", 450, 540, "F2F", "L226")],
+      false,
+      42,
+      45,
+      ""
+    );
+
+    const sectionWhitespace = makeSection(
+      2923,
+      384,
+      "GEARTAP",
+      "S11",
+      [makeBlock("MON", 450, 540, "F2F", "L226")],
+      false,
+      42,
+      45,
+      "   "
+    );
+
+    const htmlNull = renderToStaticMarkup(React.createElement(WeekGrid, { sections: [sectionNull] }));
+    const htmlEmpty = renderToStaticMarkup(React.createElement(WeekGrid, { sections: [sectionEmpty] }));
+    const htmlWhitespace = renderToStaticMarkup(React.createElement(WeekGrid, { sections: [sectionWhitespace] }));
+
+    expect(htmlNull).toBe(htmlEmpty);
+    expect(htmlNull).toBe(htmlWhitespace);
+    expect(htmlNull).toContain("GEARTAP");
+    expect(htmlNull).toContain("S11");
+    expect(htmlNull).not.toContain("Remark:");
+    expect(htmlNull).not.toMatch(/title="null"/);
+    expect(htmlNull).not.toMatch(/title="undefined"/);
+  });
+
+  it("truncates a long remark with the full text available in title", () => {
+    const longRemark = "VERY LONG REMARK DESCRIBING SECTION REQUIREMENTS AND SPECIAL PREREQUISITES";
+    const sectionWithLongRemark = makeSection(
+      102,
+      202,
+      "PETHREE",
+      "Y07K",
+      [makeBlock("SAT", 930, 1050, "F2F", "ERPOOL")],
+      false,
+      45,
+      45,
+      longRemark
+    );
+
+    const html = renderToStaticMarkup(
+      React.createElement(WeekGrid, {
+        sections: [sectionWithLongRemark],
+      })
+    );
+
+    expect(html).toContain("PETHREE");
+    expect(html).toContain("Y07K");
+    expect(html).toContain(longRemark);
+    expect(html).toMatch(new RegExp(`title="${longRemark}"`));
+    expect(html).toMatch(/class="[^"]*truncate[^"]*"/);
+  });
+
+  it("renders course code and section code distinctly in the top row", () => {
+    const section = makeSection(
+      101,
+      201,
+      "PETHREE",
+      "Y16H",
+      [makeBlock("SAT", 480, 600, "F2F", "R7B")],
+      false,
+      42,
+      45,
+      "PICKLEBALL"
+    );
+
+    const html = renderToStaticMarkup(
+      React.createElement(WeekGrid, {
+        sections: [section],
+      })
+    );
+
+    expect(html).toMatch(/<span[^>]*class="[^"]*font-bold[^"]*truncate[^"]*"[^>]*>\s*PETHREE\s*<\/span>/);
+    expect(html).toContain("Y16H");
+  });
+
+  it("keeps time range on a single line with whitespace-nowrap so times do not break onto multiple lines", () => {
+    const section = makeSection(
+      101,
+      201,
+      "GEWORLD",
+      "E01A",
+      [makeBlock("WED", 555, 645, "F2F", "G208")],
+      false,
+      45,
+      45
+    );
+
+    const html = renderToStaticMarkup(
+      React.createElement(WeekGrid, {
+        sections: [section],
+      })
+    );
+
+    expect(html).toMatch(/<div[^>]*class="[^"]*whitespace-nowrap[^"]*"[^>]*>\s*9:15 AM – 10:45 AM\s*<\/div>/);
+  });
+
+  it("keeps grid responsive and full-width without forcing a horizontal scrollbar", () => {
+    const html = renderToStaticMarkup(
+      React.createElement(WeekGrid, {
+        sections: [],
+      })
+    );
+
+    expect(html).toContain('min-w-0');
+    expect(html).not.toContain('min-w-[880px]');
+    expect(html).not.toContain('min-w-[840px]');
+    expect(html).not.toContain('min-w-[680px]');
+  });
+
+  it("renders remark on preview/ghost blocks alongside Preview badge", () => {
+    const ghostSectionWithRemark = makeSection(
+      103,
+      203,
+      "PETHREE",
+      "Y09J",
+      [makeBlock("SAT", 480, 600, "F2F", "R804")],
+      false,
+      40,
+      45,
+      "SOCDANCE"
+    );
+
+    const html = renderToStaticMarkup(
+      React.createElement(WeekGrid, {
+        sections: [],
+        previewSections: [ghostSectionWithRemark],
+      })
+    );
+
+    expect(html).toContain("data-ghost=\"true\"");
+    expect(html).toContain("SOCDANCE");
+    expect(html).toContain("Preview");
+  });
+
+  it("confines tile contents with overflow-hidden on the schedule block container", () => {
+    const section = makeSection(
+      101,
+      201,
+      "CSOPESY",
+      "S03",
+      [makeBlock("MON", 660, 750, "F2F", "G207")],
+      false,
+      45,
+      45
+    );
+
+    const html = renderToStaticMarkup(
+      React.createElement(WeekGrid, {
+        sections: [section],
+      })
+    );
+
+    expect(html).toMatch(/<div[^>]*role="button"[^>]*class="[^"]*overflow-hidden[^"]*"/);
+  });
+
+  it("places Preview and Missing badges in the status cluster", () => {
+    const ghostSection = makeSection(
+      101,
+      201,
+      "CSOPESY",
+      "S03",
+      [makeBlock("MON", 660, 750, "F2F", "G207")],
+      false,
+      45,
+      45
+    );
+
+    const html = renderToStaticMarkup(
+      React.createElement(WeekGrid, {
+        sections: [],
+        previewSections: [ghostSection],
+      })
+    );
+
+    expect(html).toMatch(/<div class="flex items-center gap-1 shrink-0"><span[^>]*>\s*Preview\s*<\/span><\/div>/);
+  });
+
+  it("renders remark on conflicting blocks alongside AlertTriangle conflict indicator", () => {
+    const sectionA = makeSection(
+      101,
+      201,
+      "PETHREE",
+      "Y16H",
+      [makeBlock("SAT", 480, 600, "F2F", "R7B")],
+      false,
+      42,
+      45,
+      "PICKLEBALL"
+    );
+    const sectionB = makeSection(
+      103,
+      203,
+      "PETHREE",
+      "Y09J",
+      [makeBlock("SAT", 480, 600, "F2F", "R804")],
+      false,
+      40,
+      45,
+      "SOCDANCE"
+    );
+
+    const conflicts = findConflicts([sectionA, sectionB]);
+    expect(conflicts.length).toBe(1);
+
+    const html = renderToStaticMarkup(
+      React.createElement(WeekGrid, {
+        sections: [sectionA, sectionB],
+        conflicts,
+      })
+    );
+
+    expect(html).toContain("PICKLEBALL");
+    expect(html).toContain("SOCDANCE");
+    expect(html).toContain("data-conflicting=\"true\"");
   });
 
   it("renders six day columns Mon–Sat (never Mon–Fri)", () => {
@@ -906,7 +1234,7 @@ describe("WeekGrid component", () => {
       expect(menuIndex).toBeGreaterThan(-1);
 
       // The grid canvas and all schedule blocks precede the context menu
-      const canvasStartIndex = html.indexOf('class="relative grid grid-cols-[70px_repeat(6,1fr)]');
+      const canvasStartIndex = html.indexOf('class="relative grid grid-cols-[48px_repeat(6,1fr)]');
       expect(canvasStartIndex).toBeGreaterThan(-1);
       expect(canvasStartIndex).toBeLessThan(menuIndex);
 
