@@ -47,4 +47,15 @@ describe("AvoidedProfessorNotice", () => {
   it("renders nothing at all when no plan section has acquired an avoided professor", () => {
     expect(render([])).toBe("");
   });
+
+  it("arrives rather than appearing, so a notice reads as new information", () => {
+    // A notice is information the student has not seen before. Landing it
+    // with the shared arrival is what makes it noticeable — but it must stay
+    // on the notice itself and never on a wrapper, because a transform on an
+    // ancestor of the workspace re-parents the grid's `position: fixed`
+    // context menu (tickets 41 and 45).
+    const html = render([advisory]);
+
+    expect(html).toContain("enter-rise");
+  });
 });

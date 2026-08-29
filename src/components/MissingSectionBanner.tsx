@@ -48,7 +48,7 @@ export function MissingSectionBanner({
         return (
           <div
             key={`missing-${missing.courseId}-${missing.sectionId}`}
-            className="rounded-panel border border-amber-300 bg-amber-50/80 p-panel"
+            className="enter-rise rounded-panel border border-amber-300 bg-amber-50/80 p-panel"
           >
             <div className="flex flex-col md:flex-row md:items-start md:justify-between gap-4">
               <div className="space-y-1">

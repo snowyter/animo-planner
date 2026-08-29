@@ -127,4 +127,21 @@ describe("MissingSectionBanner", () => {
 
     expect(html).toContain("No other sections");
   });
+
+  it("arrives rather than appearing, so a new banner reads as new information", () => {
+    // The banner is the answer to "why did my section disappear" — it has to
+    // be noticed. The arrival sits on the banner itself and not on a wrapper
+    // around the workspace, where a transform would re-parent the grid's
+    // `position: fixed` context menu (tickets 41 and 45).
+    const html = renderToStaticMarkup(
+      React.createElement(MissingSectionBanner, {
+        missingSections: [mockMissing],
+        planSections: [mockPlanSection],
+        onAddAlternative: vi.fn(),
+        onRemoveMissingSection: vi.fn(),
+      })
+    );
+
+    expect(html).toContain("enter-rise");
+  });
 });

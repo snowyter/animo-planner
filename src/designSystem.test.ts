@@ -132,7 +132,7 @@ describe("design foundation", () => {
       ".ambient-wash",
       ".enter-rise",
       ".enter-fade",
-      ".enter-collapse",
+      ".enter-slide-left",
       ".block-land",
       ".enter-scale",
     ];

@@ -1337,6 +1337,27 @@ describe("the tool panel and the permanent week grid", () => {
       expect(cluster![0]).toContain(`lg:w-[${width![1]}px]`);
     });
 
+    it("folds the panel in and out rather than cutting it", () => {
+      // Folding is the one layout change on this screen, and it used to be a
+      // hard cut: the panel vanished and the grid snapped to full width on
+      // the same frame. The panel arrives with the shared arrival.
+      const panel = /<div[^>]*data-testid="tool-panel"[^>]*>/.exec(render())![0];
+      expect(panel).toContain("enter-slide-left");
+    });
+
+    it("puts the fold animation on the panel, never on a grid ancestor", () => {
+      // The bug this would cause: the workspace columns wrap the week grid,
+      // and a transform or an opacity there re-parents the grid's portalled
+      // `position: fixed` context menu (tickets 41 and 45). The panel is a
+      // sibling of the grid region, which is what makes this safe.
+      const html = render();
+      const columns = /<div[^>]*data-testid="workspace-columns"[^>]*>/.exec(html)![0];
+      const gridRegion = /<div[^>]*data-testid="grid-region"[^>]*>/.exec(html)![0];
+
+      expect(columns).not.toMatch(/enter-|transform/);
+      expect(gridRegion).not.toMatch(/enter-|transform/);
+    });
+
     it("aligns Weekly Schedule to the grid column when tools are open", () => {
       const openHtml = render({ initialToolsOpen: true });
       const openBar = /<div[^>]*data-testid="workspace-bar"[^>]*>/.exec(openHtml);

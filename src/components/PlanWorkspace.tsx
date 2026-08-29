@@ -922,7 +922,16 @@ export function PlanWorkspace({
         {isToolsOpen && (
         <div
           data-testid="tool-panel"
-          className="w-full lg:w-[360px] xl:w-[380px] lg:shrink-0 min-w-0 order-2 lg:order-1 flex flex-col lg:max-h-[calc(100vh-14rem)]"
+          /* The fold used to be a hard cut: the panel disappeared and the
+             grid snapped to full width on the same frame. The panel now
+             slides in from the edge it occupies.
+
+             It is on the panel and only on the panel. The panel is a sibling
+             of the grid region, so nothing here becomes an ancestor of the
+             week grid — and a transform on such an ancestor would re-parent
+             the grid's portalled, `position: fixed` context menu, which is
+             exactly what tickets 41 and 45 both were. */
+          className="enter-slide-left w-full lg:w-[360px] xl:w-[380px] lg:shrink-0 min-w-0 order-2 lg:order-1 flex flex-col lg:max-h-[calc(100vh-14rem)]"
         >
           <div
             /* `flex-1 min-h-0` is what actually makes the bound bite: without

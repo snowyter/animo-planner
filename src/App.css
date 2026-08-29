@@ -198,12 +198,14 @@
     animation: fade-in var(--motion-base) var(--ease-quiet) backwards;
   }
 
-  /* A panel that grows into the space it is taking. Driven by `max-height`
-     and `opacity` rather than `height`, so the frame is compositor-only
-     instead of a full relayout on every frame. Capped with `overflow: hidden`
-     by the caller. */
-  .enter-collapse {
-    animation: enter-collapse var(--motion-base) var(--ease-enter) backwards;
+  /* The tool panel, which sits to the left of the grid. It slides in from
+     its own edge rather than growing: `max-height` was the first attempt and
+     it fights the panel's own `lg:max-h-[calc(100vh-14rem)]` bound, because
+     an animated `max-height` wins the cascade for the length of the
+     animation and briefly lets the panel overshoot to the keyframe's value.
+     A transform costs nothing, cannot overshoot, and settles to `none`. */
+  .enter-slide-left {
+    animation: enter-slide-left var(--motion-base) var(--ease-enter) backwards;
   }
 
   /* A dialog-ish arrival for a card that was not there a moment ago. */
@@ -363,14 +365,16 @@
   }
 }
 
-@keyframes enter-collapse {
+/* Slides 12px, not a full column width: the panel is beside the grid the
+   student is reading, and a large travel pulls the eye off it. */
+@keyframes enter-slide-left {
   from {
     opacity: 0;
-    max-height: 0;
+    transform: translate3d(-12px, 0, 0);
   }
   to {
     opacity: 1;
-    max-height: 60rem;
+    transform: none;
   }
 }
 
