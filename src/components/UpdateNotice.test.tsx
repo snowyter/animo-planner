@@ -125,4 +125,28 @@ describe("UpdateNotice component", () => {
 
     expect(html).toBe("");
   });
+
+  it("fades in rather than pushing the page down without warning", () => {
+    // The notice appears above the whole app, asynchronously, after the
+    // startup check resolves. Arriving with a rise here would shift every
+    // surface below it a few seconds after first paint, so it is a fade.
+    const check: UpdateCheck = {
+      status: "available",
+      currentVersion: "0.1.0",
+      availableVersion: "0.2.0",
+      notes: "Fixed Course Finder selectors for T1",
+      failureReason: null,
+      failureDetail: null,
+    };
+
+    const html = renderToStaticMarkup(
+      React.createElement(UpdateNotice, {
+        updateCheck: check,
+        onOpenAbout: vi.fn(),
+        onDismiss: vi.fn(),
+      })
+    );
+
+    expect(html).toContain("enter-fade");
+  });
 });

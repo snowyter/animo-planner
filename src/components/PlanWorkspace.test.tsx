@@ -1337,6 +1337,39 @@ describe("the tool panel and the permanent week grid", () => {
       expect(cluster![0]).toContain(`lg:w-[${width![1]}px]`);
     });
 
+    it("folds the panel in and out rather than cutting it", () => {
+      // Folding is the one layout change on this screen, and it used to be a
+      // hard cut: the panel vanished and the grid snapped to full width on
+      // the same frame. The panel arrives with the shared arrival.
+      const panel = /<div[^>]*data-testid="tool-panel"[^>]*>/.exec(render())![0];
+      expect(panel).toContain("enter-slide-left");
+    });
+
+    it("arrives the tool panel's content when the tab changes", () => {
+      // Radix unmounts the inactive panel, so switching tabs is a real
+      // remount and each switch earns its own arrival. Previously the tool
+      // appeared on the same frame as the click.
+      const html = render({ initialToolsOpen: true });
+      const panels = [...html.matchAll(/<div[^>]*data-state="active"[^>]*>/g)];
+      expect(panels.length).toBeGreaterThan(0);
+      expect(
+        panels.some((panel) => panel[0].includes("enter-fade"))
+      ).toBe(true);
+    });
+
+    it("puts the fold animation on the panel, never on a grid ancestor", () => {
+      // The bug this would cause: the workspace columns wrap the week grid,
+      // and a transform or an opacity there re-parents the grid's portalled
+      // `position: fixed` context menu (tickets 41 and 45). The panel is a
+      // sibling of the grid region, which is what makes this safe.
+      const html = render();
+      const columns = /<div[^>]*data-testid="workspace-columns"[^>]*>/.exec(html)![0];
+      const gridRegion = /<div[^>]*data-testid="grid-region"[^>]*>/.exec(html)![0];
+
+      expect(columns).not.toMatch(/enter-|transform/);
+      expect(gridRegion).not.toMatch(/enter-|transform/);
+    });
+
     it("aligns Weekly Schedule to the grid column when tools are open", () => {
       const openHtml = render({ initialToolsOpen: true });
       const openBar = /<div[^>]*data-testid="workspace-bar"[^>]*>/.exec(openHtml);
@@ -1441,6 +1474,11 @@ describe("the tool panel and the permanent week grid", () => {
       expect(grid).toBeLessThan(panel);
       expect(columns).toMatch(/lg:order-1/);
       expect(columns).toMatch(/lg:order-2/);
+    });
+
+    it("renders tool-panel-scroll container with stable scroll handle", () => {
+      const html = render({ initialToolsOpen: true });
+      expect(html).toContain('data-testid="tool-panel-scroll"');
     });
   });
 

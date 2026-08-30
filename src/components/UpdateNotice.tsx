@@ -30,9 +30,12 @@ export function UpdateNotice({
   const version = updateCheck?.availableVersion ?? "";
 
   return (
+    /* A fade, never a rise: this strip appears above the entire app, and it
+       resolves asynchronously after first paint. Anything that moved here
+       would shift every surface below it a second or two after load. */
     <div
       data-testid="update-notice"
-      className="border-b border-border bg-muted px-4 py-2 text-micro text-muted-foreground"
+      className="enter-fade border-b border-border bg-muted px-4 py-2 text-micro text-muted-foreground"
     >
       <div className="mx-auto flex max-w-7xl items-center justify-between gap-3">
         <span className="truncate">

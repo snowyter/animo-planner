@@ -40,7 +40,7 @@ export function AvoidedProfessorNotice({
         return (
           <div
             key={`avoided-${advisory.courseId}-${advisory.sectionId}`}
-            className="rounded-panel border border-amber-300 bg-amber-50/80 p-panel"
+            className="enter-rise rounded-panel border border-amber-300 bg-amber-50/80 p-panel"
           >
             <div className="flex flex-col gap-3 md:flex-row md:items-start md:justify-between">
               <div className="space-y-1">

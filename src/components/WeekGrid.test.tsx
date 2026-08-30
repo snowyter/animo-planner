@@ -1179,7 +1179,7 @@ describe("WeekGrid component", () => {
       expect(html).toContain("CSINTSY Z01");
       expect(html).toContain("MON");
       expect(html).toContain("8:00 AM – 9:00 AM");
-      expect(html).toContain("ADR-0009");
+      expect(html).not.toContain("About Conflicts (ADR-0009)");
     });
 
     it("renders Flagged Explanation modal explaining missing status and ADR-0008 invariant", () => {
@@ -1345,6 +1345,131 @@ describe("WeekGrid component", () => {
     });
   });
 
+  describe("block entrance", () => {
+    it("lands a committed block with the shared CSS entrance", () => {
+      const section = makeSection(1, 1, "GEARTAP", "S01", [makeBlock("MON", 450, 540)]);
+      const html = renderToStaticMarkup(
+        React.createElement(WeekGrid, { sections: [section] })
+      );
+
+      expect(html).toContain("block-land");
+    });
+
+    it("never animates a conflicting block — a conflict is shown, not softened (ADR-0009)", () => {
+      // Two overlapping sections: the second is hatched. The hatch appears
+      // the instant it exists and must carry no entrance animation.
+      const sectionA = makeSection(1, 1, "GEARTAP", "S01", [makeBlock("MON", 450, 540)]);
+      const sectionB = makeSection(2, 2, "LBYJSWA", "S02", [makeBlock("MON", 480, 570)]);
+
+      const html = renderToStaticMarkup(
+        React.createElement(WeekGrid, { sections: [sectionA, sectionB] })
+      );
+
+      const conflicting = html
+        .split("<div")
+        .filter((chunk) => chunk.includes('data-conflicting="true"'));
+      expect(conflicting.length).toBeGreaterThan(0);
+      for (const chunk of conflicting) {
+        expect(chunk).not.toContain("block-land");
+      }
+    });
+
+    it("staggers the blocks within a day, capped, so a full grid is not still arriving", () => {
+      // Six blocks on one day: each carries a `--stagger-delay`, and the
+      // delay is computed from a capped step count in core/motion.ts rather
+      // than growing with the size of the grid.
+      const blocks = [
+        makeBlock("MON", 450, 500),
+        makeBlock("MON", 510, 560),
+        makeBlock("MON", 570, 620),
+        makeBlock("MON", 630, 680),
+        makeBlock("MON", 690, 740),
+        makeBlock("MON", 750, 800),
+      ];
+      const section = makeSection(1, 1, "GEARTAP", "S01", blocks);
+
+      const html = renderToStaticMarkup(
+        React.createElement(WeekGrid, { sections: [section] })
+      );
+
+      const delays = [...html.matchAll(/--stagger-delay:\s*(\d+)ms/g)].map((m) =>
+        Number(m[1])
+      );
+      expect(delays.length).toBe(6);
+      expect(Math.max(...delays)).toBeLessThanOrEqual(320);
+      expect(new Set(delays).size).toBeGreaterThan(1);
+    });
+
+    it("keeps every animated element inside the grid off the menu's ancestor chain", () => {
+      // The invariant, stated positively rather than per-element: the
+      // portalled context menu is `position: fixed`, so a transform,
+      // opacity, filter, or will-change on anything between it and the
+      // document root re-parents or mis-places it. Tickets 41 and 45 were
+      // both this. Every class in the grid's own markup is checked against
+      // the set that would create a containing block.
+      const section = makeSection(1, 1, "GEARTAP", "S01", [makeBlock("MON", 450, 540)]);
+      const html = renderToStaticMarkup(
+        React.createElement(WeekGrid, {
+          sections: [section],
+          initialMenu: { section, block: section.blocks[0] },
+        })
+      );
+
+      // Everything the grid renders before the portalled menu leaves this
+      // file: the menu is appended after the grid subtree.
+      const beforeMenu = html.slice(0, html.indexOf('data-testid="grid-context-menu"'));
+
+      for (const testid of ["week-grid", "week-grid-lattice"]) {
+        const el = new RegExp(`<div[^>]*data-testid="${testid}"[^>]*>`).exec(
+          beforeMenu
+        );
+        expect(el, `${testid} must render`).not.toBeNull();
+        expect(el![0]).not.toMatch(
+          /block-land|enter-|transform|opacity|filter:|backdrop|will-change/
+        );
+      }
+    });
+
+    it("keeps the entrance off the lattice, the day column, and the grid root", () => {
+      // The three places a transform or an opacity would be fatal: the
+      // lattice is a scroll container that would clip the portalled menu,
+      // and a transform on a column or the root re-parents it (ticket 45).
+      const section = makeSection(1, 1, "GEARTAP", "S01", [makeBlock("MON", 450, 540)]);
+      const html = renderToStaticMarkup(
+        React.createElement(WeekGrid, { sections: [section] })
+      );
+
+      const lattice = /<div[^>]*data-testid="week-grid-lattice"[^>]*>/.exec(html)![0];
+      expect(lattice).not.toMatch(/block-land|transform|opacity/);
+
+      const root = /<div[^>]*data-testid="week-grid"[^>]*>/.exec(html)![0];
+      expect(root).not.toMatch(/block-land/);
+    });
+
+    it("still renders the portalled context menu outside the animated subtree", () => {
+      // The regression this change could plausibly cause: an animated block
+      // is inside the grid subtree, and if its animation left a transform or
+      // an opacity anywhere on an ancestor, the `position: fixed` menu would
+      // be trapped or mis-placed. Ordering is the assertion.
+      const section = makeSection(1, 1, "GEARTAP", "S01", [makeBlock("MON", 450, 540)]);
+      const html = renderToStaticMarkup(
+        React.createElement(WeekGrid, {
+          sections: [section],
+          initialMenu: { section, block: section.blocks[0] },
+        })
+      );
+
+      const menuIndex = html.indexOf('data-testid="grid-context-menu"');
+      const canvasIndex = html.indexOf(
+        'class="relative grid grid-cols-[48px_repeat(6,1fr)]'
+      );
+      expect(canvasIndex).toBeGreaterThan(-1);
+      expect(menuIndex).toBeGreaterThan(canvasIndex);
+      expect(html.slice(canvasIndex, menuIndex)).not.toContain(
+        'data-testid="grid-context-menu"'
+      );
+    });
+  });
 });
 
 

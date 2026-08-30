@@ -1,4 +1,4 @@
-import { useState, useMemo, useRef } from "react";
+import { useState, useMemo, useRef, useCallback } from "react";
 /**
  * One glyph survives on this screen: the conflict indicator (ADR-0009), which
  * is the single thing a student scans the plan header for. Everything else
@@ -167,6 +167,18 @@ export function PlanWorkspace({
   const toolScrollRef = useRef<HTMLDivElement | null>(null);
   const savedToolScrollRef = useRef<number>(0);
   const savedWindowScrollRef = useRef<number>(0);
+
+  const handleToolScrollRef = useCallback((node: HTMLDivElement | null) => {
+    toolScrollRef.current = node;
+    if (node && savedToolScrollRef.current > 0) {
+      node.scrollTop = savedToolScrollRef.current;
+      savedToolScrollRef.current = 0;
+    }
+    if (node && savedWindowScrollRef.current > 0 && typeof window !== "undefined") {
+      window.scrollTo(0, savedWindowScrollRef.current);
+      savedWindowScrollRef.current = 0;
+    }
+  }, []);
   const [isConfirmingClear, setIsConfirmingClear] = useState<boolean>(
     () => initialConfirmingClear
   );
@@ -922,7 +934,16 @@ export function PlanWorkspace({
         {isToolsOpen && (
         <div
           data-testid="tool-panel"
-          className="w-full lg:w-[360px] xl:w-[380px] lg:shrink-0 min-w-0 order-2 lg:order-1 flex flex-col lg:max-h-[calc(100vh-14rem)]"
+          /* The fold used to be a hard cut: the panel disappeared and the
+             grid snapped to full width on the same frame. The panel now
+             slides in from the edge it occupies.
+
+             It is on the panel and only on the panel. The panel is a sibling
+             of the grid region, so nothing here becomes an ancestor of the
+             week grid — and a transform on such an ancestor would re-parent
+             the grid's portalled, `position: fixed` context menu, which is
+             exactly what tickets 41 and 45 both were. */
+          className="enter-slide-left w-full lg:w-[360px] xl:w-[380px] lg:shrink-0 min-w-0 order-2 lg:order-1 flex flex-col lg:max-h-[calc(100vh-14rem)]"
         >
           <div
             /* `flex-1 min-h-0` is what actually makes the bound bite: without
@@ -932,19 +953,11 @@ export function PlanWorkspace({
           >
             <div
               data-testid="tool-panel-scroll"
-              ref={(node) => {
-                toolScrollRef.current = node;
-                if (node && savedToolScrollRef.current > 0) {
-                  node.scrollTop = savedToolScrollRef.current;
-                }
-                if (node && savedWindowScrollRef.current > 0 && typeof window !== "undefined") {
-                  window.scrollTo(0, savedWindowScrollRef.current);
-                }
-              }}
+              ref={handleToolScrollRef}
               className="min-h-0 flex-1 lg:overflow-y-auto"
             >
             {/* Capture: the arrival surface. The way in, and what came in. */}
-            <TabsContent value="capture" className="space-y-4">
+            <TabsContent value="capture" className="enter-fade space-y-4">
               <CaptureBar
                 render="controls"
                 campusId={planSummary.campusId}
@@ -976,7 +989,7 @@ export function PlanWorkspace({
             </TabsContent>
 
             {/* Solve: the former modal, now a panel beside the grid it draws on. */}
-            <TabsContent value="solve">
+            <TabsContent value="solve" className="enter-fade">
               <SolvePanel
                 planId={planSummary.id}
                 planSections={currentSections}
@@ -996,7 +1009,7 @@ export function PlanWorkspace({
             </TabsContent>
 
             {/* Pick: unchanged, in a column of its own. */}
-            <TabsContent value="pick">
+            <TabsContent value="pick" className="enter-fade">
               <SectionPicker
                 render="all"
                 scrollContext="panel"

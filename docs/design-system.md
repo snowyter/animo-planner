@@ -171,8 +171,24 @@ Keeping this list short is the point. Anything added to it should be added here 
 | Skeletons | Opacity breathe, only while loading | CSS `.skeleton` |
 | Capture counter | The number rises in when a capture lands | `m.span`, one element |
 | **Ghost → committed block** | Shared-element handoff on the week grid | `m.div` + `layoutId`, **two elements, transient** |
+| **Grid blocks** | 4px rise + 0.98 scale, 40ms stagger capped at 8 | CSS `.block-land` |
+| Banners and notices | 8px rise on arrival | CSS `.enter-rise` |
+| Tab panels | Fade on switch (Radix remounts the panel) | CSS `.enter-fade` |
+| Empty states, error alerts, update notice | Fade on arrival | CSS `.enter-fade` |
+| Tool panel fold | 12px slide from the edge it occupies | CSS `.enter-slide-left` |
+| Plan cards | 40ms stagger, capped at 8 steps | CSS `.stagger-rise` |
+| **Every button** | 0.97 scale while pressed | CSS `active:` on the cva base |
+| Empty state (plan list) | Cursor-following glow, one card only | `ui/spotlightCard.tsx`, React Bits |
 
 The ghost handoff is the one animation here that carries meaning rather than polish, and the reason `motion` was approved at all. It is armed only for the section that just landed, for one `--motion-slow`, and then disarmed — so the other blocks are never measuring.
+
+Everything added after it is **CSS**, and that is deliberate: the inventory grew without a single new JS-driven animation, so the `motion` bundle stayed at the deferred 84.83 kB / 27.87 kB gzip that ticket 33 recorded. Re-check `npm run build` if that ever changes.
+
+### Three refusals worth keeping
+
+- **A conflicting block never animates.** ADR-0009 is intact: the hatch appears the instant the conflict exists. `src/designSystem.test.ts` asserts that `.conflict-hatch` carries neither an animation nor a transition, even now that every non-conflicting block around it does.
+- **The grid's lattice, day columns, and root are never animated.** The lattice is the scroll container that mounts the portalled menu's anchor; a transform or an opacity anywhere in that chain re-parents the `position: fixed` context menu. Tickets 41 and 45 were both this bug. The blocks animate; nothing above them does.
+- **The tool panel slides rather than growing.** A `max-height` arrival was the first attempt and it is wrong here: an animated `max-height` wins the cascade against the panel's own `lg:max-h-[calc(100vh-14rem)]` bound, so the panel briefly overshoots to the keyframe's value. A transform cannot overshoot.
 
 ---
 

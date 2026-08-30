@@ -177,6 +177,61 @@
     animation: menu-in var(--motion-instant) var(--ease-quiet) backwards;
   }
 
+  /* ---- Shared arrivals ----------------------------------------------------
+     One entrance vocabulary for every surface that appears after first paint:
+     banners, notices, empty states, tab panels, tool-panel content.
+
+     `transform` and `opacity` only, and `backwards` on each — the retained
+     transform that `forwards` leaves behind is both a stacking context and the
+     containing block for every `position: fixed` descendant, which is the
+     ticket-45 trap. `src/designSystem.test.ts` asserts the fill mode on all
+     of them. */
+
+  /* Anything that arrives from below: notices, banners, tool panels. */
+  .enter-rise {
+    animation: enter-rise var(--motion-base) var(--ease-enter) backwards;
+  }
+
+  /* A plain fade, for surfaces that must not move — the update strip sits
+     under the header and a rise there would read as the page jumping. */
+  .enter-fade {
+    animation: fade-in var(--motion-base) var(--ease-quiet) backwards;
+  }
+
+  /* The tool panel, which sits to the left of the grid. It slides in from
+     its own edge rather than growing: `max-height` was the first attempt and
+     it fights the panel's own `lg:max-h-[calc(100vh-14rem)]` bound, because
+     an animated `max-height` wins the cascade for the length of the
+     animation and briefly lets the panel overshoot to the keyframe's value.
+     A transform costs nothing, cannot overshoot, and settles to `none`. */
+  .enter-slide-left {
+    animation: enter-slide-left var(--motion-base) var(--ease-enter) backwards;
+  }
+
+  /* A dialog-ish arrival for a card that was not there a moment ago. */
+  .enter-scale {
+    animation: enter-scale var(--motion-base) var(--ease-enter) backwards;
+  }
+
+  /* ---- The week grid's blocks --------------------------------------------
+     The densest repeated surface in the app (~40 blocks). A CSS animation,
+     never a per-element `motion` component: no layout projection, no
+     measurement, nothing for the other blocks to do.
+
+     `backwards` matters most here. These blocks live inside the grid's
+     subtree, and the context menu is portalled to `document.body` and
+     positioned `position: fixed` — a transform left on a block or a day
+     column after the animation settles silently re-parents that menu
+     (tickets 41 and 45).
+
+     Motion is *not* put on the grid container. The container is a
+     `overflow-x-auto` scroll box that mounts the portalled menu's anchor,
+     and `opacity`/`transform` on it would clip the menu outright. */
+  .block-land {
+    animation: block-land var(--motion-base) var(--ease-enter) backwards;
+    animation-delay: var(--stagger-delay, 0ms);
+  }
+
   /* ---- Ranked stagger -----------------------------------------------------
      The ordering of solve results should read as an ordering. The delay is
      CSS `animation-delay` set per card — never a chain of `setTimeout`s and
@@ -296,6 +351,57 @@
   to {
     opacity: 1;
     transform: translate3d(0, 0, 0);
+  }
+}
+
+@keyframes enter-rise {
+  from {
+    opacity: 0;
+    transform: translate3d(0, 8px, 0);
+  }
+  to {
+    opacity: 1;
+    transform: translate3d(0, 0, 0);
+  }
+}
+
+/* Slides 12px, not a full column width: the panel is beside the grid the
+   student is reading, and a large travel pulls the eye off it. */
+@keyframes enter-slide-left {
+  from {
+    opacity: 0;
+    transform: translate3d(-12px, 0, 0);
+  }
+  to {
+    opacity: 1;
+    transform: none;
+  }
+}
+
+/* Scale arrives from 0.985, not 0.98, and `transform: none` on arrival —
+   the delta only, so nothing is left composed with a parent's `translate`. */
+@keyframes enter-scale {
+  from {
+    opacity: 0;
+    transform: translate3d(0, 6px, 0) scale(0.985);
+  }
+  to {
+    opacity: 1;
+    transform: none;
+  }
+}
+
+/* Blocks scale from 0.98: at ~56px tall a 8px rise is a seventh of the
+   block's own height and reads as a jump. A hair of scale plus a short
+   rise lands them instead. */
+@keyframes block-land {
+  from {
+    opacity: 0;
+    transform: translate3d(0, 4px, 0) scale(0.98);
+  }
+  to {
+    opacity: 1;
+    transform: none;
   }
 }
 

@@ -64,7 +64,7 @@ import {
 import { Button } from "./ui/button";
 import { Badge } from "./ui/badge";
 import { Skeleton } from "./ui/skeleton";
-import { MOTION_DURATION_MS } from "../core/motion";
+import { MOTION_DURATION_MS, staggerStyle } from "../core/motion";
 import {
   Dialog,
   DialogContent,
@@ -625,7 +625,7 @@ export function WeekGrid({
                   key={day}
                   className="relative border-r last:border-r-0 border-border min-h-[640px] p-1"
                 >
-                  {dayBlocks.map(({ section, block, isConflicting, isGhost }) => {
+                  {dayBlocks.map(({ section, block, isConflicting, isGhost }, blockIndex) => {
                     const pos = computeBlockPosition(
                       block.startMin,
                       block.endMin,
@@ -678,11 +678,38 @@ export function WeekGrid({
                       ? "hatched conflict-hatch ring-2 ring-red-500/80"
                       : "";
 
+                    /**
+                     * The entrance, at last.
+                     *
+                     * One CSS animation on the block itself — never a
+                     * `motion` component and never a `layout` prop, so a
+                     * forty-block grid measures nothing to arrive.
+                     *
+                     * Three things are deliberately NOT animated:
+                     *
+                     * - **A conflicting block.** ADR-0009 is intact: the
+                     *   hatch appears the instant the conflict exists.
+                     * - **The lattice, the day column, and the grid root.**
+                     *   The lattice is the scroll container that mounts the
+                     *   portalled menu's anchor, and a transform or an
+                     *   opacity on any ancestor of it re-parents that
+                     *   `position: fixed` menu — tickets 41 and 45.
+                     * - **A block that is already on screen.** The delay is
+                     *   capped in `core/motion.ts`, so a full grid finishes
+                     *   arriving in a few frames rather than in sequence.
+                     */
+                    const blockAnimationClass =
+                      !isConflicting && !isGhost ? "block-land" : "";
+                    const blockAnimationStyle =
+                      !isConflicting && !isGhost
+                        ? staggerStyle(blockIndex)
+                        : undefined;
+
                     // The ghost-to-block handoff is armed for one section at a
                     // time. Every other block stays a plain `div` and never
                     // measures.
                     const sectionKey = `${section.courseId}-${section.sectionId}`;
-                    const isHandingOff = isGhost || handoffKey === sectionKey;
+                    const isHandingOff = handoffKey === sectionKey;
                     const BlockTag = isHandingOff ? m.div : "div";
                     const handoffProps = isHandingOff
                       ? {
@@ -758,8 +785,9 @@ export function WeekGrid({
                             : interactive
                             ? "cursor-pointer focus-visible:ring-2 focus-visible:ring-slate-900 focus-visible:ring-offset-2"
                             : "cursor-default"
-                        } ${theme.bgClass} ${theme.borderClass} ${theme.textClass} ${borderStyleClass} ${visualClass} ${conflictClass}`}
+                        } ${theme.bgClass} ${theme.borderClass} ${theme.textClass} ${borderStyleClass} ${visualClass} ${conflictClass} ${blockAnimationClass}`}
                         style={{
+                          ...blockAnimationStyle,
                           top: `${pos.topPercent}%`,
                           height: `calc(${pos.heightPercent}% - 4px)`,
                           minHeight: "56px",
@@ -1275,14 +1303,6 @@ export function WeekGrid({
                 })()}
               </DialogDescription>
             </DialogHeader>
-
-            <div className="rounded-lg border border-amber-200 bg-amber-50/70 p-3 text-xs text-amber-900 space-y-1">
-              <span className="font-semibold block">About Conflicts (ADR-0009):</span>
-              <p className="leading-relaxed">
-                In Animo Plan, conflicts are displayed and never prevented. You can keep conflicting sections
-                while planning, swap one for an alternative in the picker, or remove it from your schedule.
-              </p>
-            </div>
 
             <DialogFooter className="flex flex-row items-center justify-end gap-2 pt-3 border-t border-border">
               {onShowOtherSections && (
