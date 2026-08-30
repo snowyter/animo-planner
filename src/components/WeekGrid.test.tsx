@@ -1179,7 +1179,12 @@ describe("WeekGrid component", () => {
       expect(html).toContain("CSINTSY Z01");
       expect(html).toContain("MON");
       expect(html).toContain("8:00 AM – 9:00 AM");
+      // The amber explainer is gone, but the affordance it carried is not:
+      // a student who is not told that keeping the overlap is allowed reads
+      // the hatch as a refusal (ADR-0009).
       expect(html).not.toContain("About Conflicts (ADR-0009)");
+      expect(html).toContain('data-testid="conflict-is-allowed"');
+      expect(html).toContain("never blocks them");
     });
 
     it("renders Flagged Explanation modal explaining missing status and ADR-0008 invariant", () => {

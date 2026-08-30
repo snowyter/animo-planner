@@ -9,6 +9,7 @@
  * of the suite.
  */
 
+import { readFileSync } from "node:fs";
 import { describe, expect, it } from "vitest";
 import React from "react";
 import { renderToStaticMarkup } from "react-dom/server";
@@ -67,5 +68,17 @@ describe("SpotlightCard", () => {
     const html = render({ className: "enter-rise rounded-panel" });
     expect(html).toContain("enter-rise");
     expect(html).toContain("rounded-panel");
+  });
+
+  it("moves the glow with a style write, never with React state", () => {
+    // The regression this guards cannot be seen in the output: holding the
+    // pointer position in state renders byte-identical markup while
+    // re-rendering this subtree once a frame for as long as the pointer is
+    // over the card. Only the source says which mechanism is in use.
+    const source = readFileSync("src/components/ui/spotlightCard.tsx", "utf8");
+    expect(source).toContain('setProperty("--spotlight-x"');
+    expect(source).toContain('setProperty("--spotlight-y"');
+    expect(source).not.toMatch(/setPosition|position\.x|position\.y/);
+    expect(render()).toContain("var(--spotlight-x");
   });
 });

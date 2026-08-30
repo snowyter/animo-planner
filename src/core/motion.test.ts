@@ -5,6 +5,8 @@ import {
   MAX_STAGGER_STEPS,
   staggerDelayMs,
   staggerStyle,
+  shouldArmHandoff,
+  shouldLandBlock,
 } from "./motion";
 
 describe("motion tokens", () => {
@@ -45,5 +47,63 @@ describe("staggerDelayMs", () => {
 describe("staggerStyle", () => {
   it("emits the delay as the custom property the .stagger-rise class reads", () => {
     expect(staggerStyle(2)).toEqual({ "--stagger-delay": `${2 * STAGGER_STEP_MS}ms` });
+  });
+});
+
+describe("shouldArmHandoff", () => {
+  it("arms the ghost, which is the end of the transition that is easy to lose", () => {
+    // `handoffKey` is armed only after the ghost has departed, so a ghost can
+    // never match it by key. Dropping the `isGhost` arm leaves the committed
+    // block carrying a `layoutId` with nothing registered under it to
+    // animate from, and the handoff silently stops happening.
+    expect(
+      shouldArmHandoff({ isGhost: true, sectionKey: "564-737", handoffKey: null })
+    ).toBe(true);
+  });
+
+  it("arms the section that just landed", () => {
+    expect(
+      shouldArmHandoff({ isGhost: false, sectionKey: "564-737", handoffKey: "564-737" })
+    ).toBe(true);
+  });
+
+  it("leaves every other block a plain div", () => {
+    // The cost this guards: `layoutId` on forty blocks is layout projection
+    // on forty blocks, every time one of them moves.
+    expect(
+      shouldArmHandoff({ isGhost: false, sectionKey: "1-2", handoffKey: "564-737" })
+    ).toBe(false);
+    expect(
+      shouldArmHandoff({ isGhost: false, sectionKey: "1-2", handoffKey: null })
+    ).toBe(false);
+  });
+});
+
+describe("shouldLandBlock", () => {
+  it("lands an ordinary committed block", () => {
+    expect(
+      shouldLandBlock({ isConflicting: false, isGhost: false, isHandingOff: false })
+    ).toBe(true);
+  });
+
+  it("never eases in a conflict (ADR-0009)", () => {
+    expect(
+      shouldLandBlock({ isConflicting: true, isGhost: false, isHandingOff: false })
+    ).toBe(false);
+  });
+
+  it("never animates a ghost, which would replay on every hover", () => {
+    expect(
+      shouldLandBlock({ isConflicting: false, isGhost: true, isHandingOff: false })
+    ).toBe(false);
+  });
+
+  it("yields to the handoff rather than running alongside it", () => {
+    // Not merely redundant: a CSS animation outranks inline styles in the
+    // cascade, so `block-land` would override the transform the layout
+    // projection writes and replace the handoff with a generic landing.
+    expect(
+      shouldLandBlock({ isConflicting: false, isGhost: false, isHandingOff: true })
+    ).toBe(false);
   });
 });

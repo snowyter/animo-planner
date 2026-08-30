@@ -44,3 +44,48 @@ export function staggerDelayMs(index: number): number {
 export function staggerStyle(index: number): Record<string, string> {
   return { "--stagger-delay": `${staggerDelayMs(index)}ms` };
 }
+
+/**
+ * Whether a grid block takes part in the ghost-to-block handoff.
+ *
+ * The preview and the committed block are the two ends of one shared-element
+ * transition, and it is only a transition if *both* ends carry the
+ * `layoutId`. The ghost is the end that is easy to lose: `handoffKey` is
+ * armed by an effect that deliberately waits until the ghost has departed, so
+ * a ghost can never match it by key and has to be recognised as a ghost.
+ *
+ * This lives here, as a pure decision, because the alternative is a condition
+ * spelled inline in `WeekGrid` that no test can see: `layoutId` is not an
+ * attribute, so a handoff that quietly stops happening renders byte-identical
+ * markup and every static-markup assertion keeps passing.
+ */
+export function shouldArmHandoff(input: {
+  isGhost: boolean;
+  sectionKey: string;
+  handoffKey: string | null;
+}): boolean {
+  return input.isGhost || input.handoffKey === input.sectionKey;
+}
+
+/**
+ * Whether a grid block plays the shared CSS entrance.
+ *
+ * Three exclusions, each for its own reason:
+ *
+ * - A **conflicting** block is shown the instant the conflict exists
+ *   (ADR-0009). A conflict is never eased in.
+ * - A **ghost** is a preview of something that has not happened. It appears
+ *   with the cursor and would be animating on every hover.
+ * - A block **mid-handoff** already has an entrance, and a better one. It
+ *   matters that this is an exclusion rather than a coexistence: a CSS
+ *   animation outranks inline styles in the cascade, so `block-land` would
+ *   override the `transform` the layout projection writes and replace the
+ *   handoff with a generic landing for as long as it runs.
+ */
+export function shouldLandBlock(input: {
+  isConflicting: boolean;
+  isGhost: boolean;
+  isHandingOff: boolean;
+}): boolean {
+  return !input.isConflicting && !input.isGhost && !input.isHandingOff;
+}

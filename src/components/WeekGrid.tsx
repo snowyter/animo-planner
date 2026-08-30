@@ -64,7 +64,12 @@ import {
 import { Button } from "./ui/button";
 import { Badge } from "./ui/badge";
 import { Skeleton } from "./ui/skeleton";
-import { MOTION_DURATION_MS, staggerStyle } from "../core/motion";
+import {
+  MOTION_DURATION_MS,
+  staggerStyle,
+  shouldArmHandoff,
+  shouldLandBlock,
+} from "../core/motion";
 import {
   Dialog,
   DialogContent,
@@ -698,18 +703,28 @@ export function WeekGrid({
                      *   capped in `core/motion.ts`, so a full grid finishes
                      *   arriving in a few frames rather than in sequence.
                      */
-                    const blockAnimationClass =
-                      !isConflicting && !isGhost ? "block-land" : "";
-                    const blockAnimationStyle =
-                      !isConflicting && !isGhost
-                        ? staggerStyle(blockIndex)
-                        : undefined;
-
                     // The ghost-to-block handoff is armed for one section at a
                     // time. Every other block stays a plain `div` and never
-                    // measures.
+                    // measures. Both decisions are pure and live in
+                    // `core/motion.ts`, where they are tested: `layoutId` is
+                    // not an attribute, so a handoff that stops happening
+                    // renders identical markup and no assertion here would
+                    // notice.
                     const sectionKey = `${section.courseId}-${section.sectionId}`;
-                    const isHandingOff = handoffKey === sectionKey;
+                    const isHandingOff = shouldArmHandoff({
+                      isGhost,
+                      sectionKey,
+                      handoffKey,
+                    });
+                    const isLanding = shouldLandBlock({
+                      isConflicting,
+                      isGhost,
+                      isHandingOff,
+                    });
+                    const blockAnimationClass = isLanding ? "block-land" : "";
+                    const blockAnimationStyle = isLanding
+                      ? staggerStyle(blockIndex)
+                      : undefined;
                     const BlockTag = isHandingOff ? m.div : "div";
                     const handoffProps = isHandingOff
                       ? {
@@ -1303,6 +1318,16 @@ export function WeekGrid({
                 })()}
               </DialogDescription>
             </DialogHeader>
+
+            {/* The amber explainer that used to sit here was more panel than
+                the moment warranted, but it carried one thing nothing else on
+                this surface says: that keeping the overlap is a real option.
+                A conflict is displayed and never prevented (ADR-0009), and a
+                student who is not told that reads the hatch as a refusal. One
+                line, in the dialog that is already explaining the conflict. */}
+            <p className="text-xs text-muted-foreground" data-testid="conflict-is-allowed">
+              Keeping both is allowed — Animo Plan shows conflicts and never blocks them.
+            </p>
 
             <DialogFooter className="flex flex-row items-center justify-end gap-2 pt-3 border-t border-border">
               {onShowOtherSections && (

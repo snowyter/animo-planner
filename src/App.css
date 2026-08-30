@@ -208,11 +208,6 @@
     animation: enter-slide-left var(--motion-base) var(--ease-enter) backwards;
   }
 
-  /* A dialog-ish arrival for a card that was not there a moment ago. */
-  .enter-scale {
-    animation: enter-scale var(--motion-base) var(--ease-enter) backwards;
-  }
-
   /* ---- The week grid's blocks --------------------------------------------
      The densest repeated surface in the app (~40 blocks). A CSS animation,
      never a per-element `motion` component: no layout projection, no
@@ -371,19 +366,6 @@
   from {
     opacity: 0;
     transform: translate3d(-12px, 0, 0);
-  }
-  to {
-    opacity: 1;
-    transform: none;
-  }
-}
-
-/* Scale arrives from 0.985, not 0.98, and `transform: none` on arrival —
-   the delta only, so nothing is left composed with a parent's `translate`. */
-@keyframes enter-scale {
-  from {
-    opacity: 0;
-    transform: translate3d(0, 6px, 0) scale(0.985);
   }
   to {
     opacity: 1;

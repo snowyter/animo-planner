@@ -19,3 +19,20 @@ AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
 LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
 OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 SOFTWARE.
+
+---
+
+## Third-party code included in this repository
+
+One file is not covered by the MIT licence above.
+
+`src/components/ui/spotlightCard.tsx` is adapted from React Bits
+(https://reactbits.dev, DavidHDev/react-bits), which is licensed
+**MIT + Commons Clause**. The Commons Clause withholds the right to sell the
+software, and forbids redistributing the components "alone, in a bundle, or as
+a ported version". The file was copied in individually rather than installed —
+React Bits has no npm package and distributes by copying — and it retains its
+attribution header. See `docs/agents/dependencies.md` for the decision and for
+the tiers of that library that are ruled out here.
+
+Everything else in this repository is MIT, as above.

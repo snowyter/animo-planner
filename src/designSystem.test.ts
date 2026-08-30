@@ -134,7 +134,6 @@ describe("design foundation", () => {
       ".enter-fade",
       ".enter-slide-left",
       ".block-land",
-      ".enter-scale",
     ];
     for (const selector of settling) {
       const rule = APP_CSS.slice(APP_CSS.indexOf(selector));

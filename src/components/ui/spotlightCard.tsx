@@ -21,8 +21,10 @@
  *   exactly the per-item cost the design system refuses on repeated elements.
  *   This is used on the plan list's empty state and nowhere else.
  *
- * The spotlight is a radial gradient moved with a CSS custom property, so a
- * move costs one style write and no React render.
+ * The spotlight is a radial gradient whose centre is two CSS custom
+ * properties, written directly to the node on `mousemove`. A move costs one
+ * style write and no React render; only entering and leaving the card
+ * change state.
  */
 
 import { useRef, useState, type ReactNode, type MouseEvent } from "react";
@@ -42,13 +44,25 @@ export function SpotlightCard({
 }: SpotlightCardProps) {
   const ref = useRef<HTMLDivElement>(null);
   const [isFocused, setIsFocused] = useState(false);
-  const [position, setPosition] = useState({ x: 0, y: 0 });
   const [isActive, setIsActive] = useState(false);
 
+  /**
+   * The pointer position is written straight to two custom properties, never
+   * held in state.
+   *
+   * A `mousemove` fires on the order of once a frame for as long as the
+   * pointer is over the card. Routing that through `useState` re-renders this
+   * subtree at the same rate, which is precisely the per-move React cost the
+   * design system refuses — and it would be invisible in review, because the
+   * rendered output is identical either way. Setting the property mutates one
+   * value on one node and lets the compositor do the rest.
+   */
   const handleMouseMove = (event: MouseEvent<HTMLDivElement>) => {
-    if (!ref.current || isFocused) return;
-    const rect = ref.current.getBoundingClientRect();
-    setPosition({ x: event.clientX - rect.left, y: event.clientY - rect.top });
+    const node = ref.current;
+    if (!node || isFocused) return;
+    const rect = node.getBoundingClientRect();
+    node.style.setProperty("--spotlight-x", `${event.clientX - rect.left}px`);
+    node.style.setProperty("--spotlight-y", `${event.clientY - rect.top}px`);
   };
 
   return (
@@ -70,7 +84,9 @@ export function SpotlightCard({
         className="pointer-events-none absolute inset-0 transition-opacity duration-200 ease-out"
         style={{
           opacity: isActive || isFocused ? 1 : 0,
-          background: `radial-gradient(circle at ${position.x}px ${position.y}px, ${spotlightColor}, transparent 70%)`,
+          // The custom properties are set on the card, so this inherits
+          // them; the fallback centres the glow before the first move.
+          background: `radial-gradient(circle at var(--spotlight-x, 50%) var(--spotlight-y, 50%), ${spotlightColor}, transparent 70%)`,
         }}
       />
       {children}

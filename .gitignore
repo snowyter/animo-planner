@@ -24,3 +24,6 @@ docs/ArchersHub-Course-Finder-*.html
 *.key
 *.key.pub
 release-staging/
+
+# Local settings for other agent tooling; per-machine, never shared.
+.codebuddy/

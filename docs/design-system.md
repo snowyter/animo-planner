@@ -178,9 +178,11 @@ Keeping this list short is the point. Anything added to it should be added here 
 | Tool panel fold | 12px slide from the edge it occupies | CSS `.enter-slide-left` |
 | Plan cards | 40ms stagger, capped at 8 steps | CSS `.stagger-rise` |
 | **Every button** | 0.97 scale while pressed | CSS `active:` on the cva base |
-| Empty state (plan list) | Cursor-following glow, one card only | `ui/spotlightCard.tsx`, React Bits |
+| Empty state (plan list) | Cursor-following glow, one card only | `ui/spotlightCard.tsx`, React Bits — two custom properties written on `mousemove`, never React state |
 
 The ghost handoff is the one animation here that carries meaning rather than polish, and the reason `motion` was approved at all. It is armed only for the section that just landed, for one `--motion-slow`, and then disarmed — so the other blocks are never measuring.
+
+It needs **both** ends. A shared-element transition animates from an element that was on screen to one that is, so the ghost carries the `layoutId` too — and the ghost is the end that is easy to lose, because `handoffKey` is armed by an effect that waits until the ghost has departed and so can never match a ghost by key. It is also mutually exclusive with `.block-land`: a CSS animation outranks inline styles in the cascade, so the landing would override the transform the projection writes and replace the handoff with a generic arrival. Both decisions therefore live in `core/motion.ts` as `shouldArmHandoff` and `shouldLandBlock`, where they are tested — `layoutId` is not an attribute, so a handoff that quietly stops happening renders byte-identical markup and no assertion in `WeekGrid.test.tsx` would catch it.
 
 Everything added after it is **CSS**, and that is deliberate: the inventory grew without a single new JS-driven animation, so the `motion` bundle stayed at the deferred 84.83 kB / 27.87 kB gzip that ticket 33 recorded. Re-check `npm run build` if that ever changes.
 
