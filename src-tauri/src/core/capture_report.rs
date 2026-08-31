@@ -21,6 +21,12 @@ pub const ISSUE_URL: &str = "https://github.com/snowyter/animo-planner/issues/ne
 /// Titles stay scannable in the issue list even when the parse error runs long.
 pub const MAX_TITLE_CHARS: usize = 100;
 
+/// The title when the parse error itself fails the privacy audit. The error
+/// can quote site text (`ParseError::SelectedCourseUnreadable` embeds the
+/// dropdown option verbatim), and the title is headed for a public issue
+/// list, so a failing error is named, never quoted.
+const WITHHELD_TITLE: &str = "Broken capture: (parse error withheld by the privacy audit)";
+
 /// Everything [`build_capture_report`] needs. `fragment` is the raw HTML as
 /// retained Rust-side at the failure site; it never leaves this module.
 pub struct CaptureReportInput<'a> {
@@ -42,8 +48,21 @@ impl SelectorConfigSource {
 
 /// Builds the full report: a reviewable body (returned in full so ticket 23
 /// can show it) plus the pre-filled issue URL rendering that exact text.
+///
+/// Both inputs that can carry site text — the parse error and the DOM
+/// fragment — are audited by [`find_scrub_violations`] before they enter,
+/// as a real branch that runs in every build profile. A failed audit
+/// withholds that input with an honest note; a report is never returned
+/// carrying a hazard, because its body goes to the clipboard and on to a
+/// public GitHub issue.
 pub fn build_capture_report(input: CaptureReportInput) -> CaptureReport {
-    let title = build_title(input.error);
+    let error = input.error.trim_end();
+    let error_is_clean = find_scrub_violations(error).is_empty();
+    let title = if error_is_clean {
+        build_title(input.error)
+    } else {
+        WITHHELD_TITLE.to_string()
+    };
 
     let mut body = String::with_capacity(1024);
     body.push_str("## Broken capture\n\n");
@@ -58,35 +77,20 @@ pub fn build_capture_report(input: CaptureReportInput) -> CaptureReport {
         input.selector_config_version,
         input.selector_config_source.label(),
     ));
-    body.push_str("\n### Parse error\n\n```text\n");
-    body.push_str(input.error.trim_end());
-    body.push_str("\n```\n");
+
+    if error_is_clean {
+        body.push_str("\n### Parse error\n\n```text\n");
+        body.push_str(error);
+        body.push_str("\n```\n");
+    } else {
+        body.push_str(
+            "\n### Parse error\n\nThe parse error was withheld: it failed the \
+             privacy audit, so its text is not included.\n\n",
+        );
+    }
 
     if let Some(raw_fragment) = input.fragment {
-        let fragment = diagnostic_fragment(raw_fragment);
-        debug_assert!(find_scrub_violations(&fragment).is_empty());
-        body.push_str("\n### DOM fragment at the failure\n\n");
-        if fragment.contains(REDACTED_FIELD) {
-            body.push_str(
-                "Student-identifying fields were found in the failing DOM and \
-                 have been removed below.\n\n",
-            );
-        } else {
-            body.push_str(
-                "Student-identifying field names (`hdnStudId`, `userID`, \
-                 `IP_ADDRESS`, `MAC_ADDRESS`) and anything shaped like an IP or \
-                 MAC address have been removed.\n\n",
-            );
-        }
-        body.push_str("```html\n");
-        body.push_str(fragment.trim_end());
-        body.push('\n');
-        body.push_str("```\n");
-        if fragment.ends_with(TRUNCATED_MARK) {
-            body.push_str(&format!(
-                "\n(The fragment was longer than the {MAX_DIAGNOSTIC_FRAGMENT_CHARS} characters above.)\n"
-            ));
-        }
+        body.push_str(&fragment_section(&diagnostic_fragment(raw_fragment)));
     }
 
     let issue_url = format!(
@@ -95,6 +99,44 @@ pub fn build_capture_report(input: CaptureReportInput) -> CaptureReport {
         percent_encode(&body),
     );
     CaptureReport { title, body, issue_url }
+}
+
+/// The DOM-fragment section of the report body. The audit here is a real
+/// branch, not a `debug_assert!`: the report goes to the clipboard and on
+/// to a public GitHub issue, so a fragment that still carries a hazard
+/// after the pipeline is withheld — never embedded, and never quoted in
+/// the note, which would carry the hazard itself.
+fn fragment_section(fragment: &str) -> String {
+    let mut section = String::from("\n### DOM fragment at the failure\n\n");
+    if find_scrub_violations(fragment).is_empty() {
+        if fragment.contains(REDACTED_FIELD) {
+            section.push_str(
+                "Student-identifying fields were found in the failing DOM and \
+                 have been removed below.\n\n",
+            );
+        } else {
+            section.push_str(
+                "Student-identifying field names (`hdnStudId`, `userID`, \
+                 `IP_ADDRESS`, `MAC_ADDRESS`) and anything shaped like an IP or \
+                 MAC address have been removed.\n\n",
+            );
+        }
+        section.push_str("```html\n");
+        section.push_str(fragment.trim_end());
+        section.push('\n');
+        section.push_str("```\n");
+        if fragment.ends_with(TRUNCATED_MARK) {
+            section.push_str(&format!(
+                "\n(The fragment was longer than the {MAX_DIAGNOSTIC_FRAGMENT_CHARS} characters above.)\n"
+            ));
+        }
+    } else {
+        section.push_str(
+            "The DOM fragment was withheld: after scrubbing it still failed \
+             the privacy audit, so nothing from the failing page is included.\n\n",
+        );
+    }
+    section
 }
 
 fn build_title(error: &str) -> String {
@@ -203,6 +245,81 @@ mod tests {
     }
 
     #[test]
+    fn a_fragment_the_trim_can_splice_into_a_hazard_never_reaches_the_body() {
+        // Half a field name and half a MAC on either side of a script
+        // block: each half is harmless, but the block-stripping trim splices
+        // them into hazards that did not exist in the raw text. This is a
+        // fragment the shipped path must catch — and in the release build
+        // there is no debug_assert! to do the catching.
+        let splice_fragment = "<table id=\"tblCourseSelection\"><tr>\
+             <td>hdn<script>noise</script>StudId \
+             60:45:BD:1B:5<script>noise</script>5:13</td>\
+             </tr></table>";
+        let input = CaptureReportInput { fragment: Some(splice_fragment), ..input() };
+        let report = build_capture_report(input);
+        assert!(
+            !report.body.contains("hdnStudId") && !report.body.contains("60:45:BD"),
+            "the spliced hazards must not reach the report: {}",
+            report.body
+        );
+        assert!(
+            find_scrub_violations(&report.body).is_empty(),
+            "the assembled body audits clean"
+        );
+        assert!(
+            report.body.contains("tblCourseSelection"),
+            "the diagnostic markup survives: {}",
+            report.body
+        );
+    }
+
+    #[test]
+    fn a_parse_error_quoting_site_text_that_carries_a_hazard_is_withheld() {
+        // SelectedCourseUnreadable embeds the dropdown option text
+        // verbatim, so the error string itself can quote site text — this
+        // hazard enters through the error, not the fragment. Neither the
+        // title nor the parse error section may carry it into a report
+        // headed for a public issue; the rest of the report is unaffected.
+        let error = "selected course cannot be read from the dropdown: option text \
+                     \"BROKEN hdnStudId 2299999\" does not match the CODE - TITLE grammar";
+        let input = CaptureReportInput { error, ..input() };
+        let report = build_capture_report(input);
+        assert!(
+            !report.body.contains("hdnStudId") && !report.title.contains("hdnStudId"),
+            "the hazard must not reach the title or body: {} / {}",
+            report.title,
+            report.body
+        );
+        assert!(
+            find_scrub_violations(&report.body).is_empty(),
+            "the body audits clean: {}",
+            report.body
+        );
+        assert!(
+            report.title.contains("withheld"),
+            "the title says the error was withheld: {}",
+            report.title
+        );
+        assert!(
+            report.body.contains("withheld"),
+            "the body says the error was withheld: {}",
+            report.body
+        );
+        assert!(
+            report.body.contains("Animo Plan version: 0.1.0"),
+            "the header survives: {}",
+            report.body
+        );
+        // The fragment is audited independently: a clean fragment is still
+        // embedded even when the error is withheld.
+        assert!(
+            report.body.contains("tblCourseSelection"),
+            "a clean fragment is unaffected: {}",
+            report.body
+        );
+    }
+
+    #[test]
     fn the_scrubbed_report_text_is_returned_in_full_for_review() {
         let report = build_capture_report(input());
         // The body is what ticket 23 shows the student: it carries the whole
@@ -240,6 +357,26 @@ mod tests {
         let body = pairs.iter().find(|(key, _)| key == "body").expect("prefilled body");
         assert!(body.1.contains("tblCourseSelection"), "fragment included");
         assert!(!body.1.contains("hdnStudId"), "scrubbed before encoding");
+    }
+
+    #[test]
+    fn a_scrubbed_fragment_that_still_fails_the_audit_is_withheld_not_embedded() {
+        // Simulates a scrub regression: a fragment in the form
+        // diagnostic_fragment hands over — nominally scrubbed — that still
+        // carries a field name. The section builder withholds it rather
+        // than embed it, and the note never quotes the violation itself.
+        let section = fragment_section("<td>hdnStudId</td>");
+        assert!(
+            section.contains("withheld"),
+            "the note is honest about the withholding: {section}"
+        );
+        assert!(
+            !section.contains("hdnStudId"),
+            "no hazard in the withheld section: {section}"
+        );
+        // A clean fragment is embedded as before.
+        let clean = fragment_section("<td>S01</td>");
+        assert!(clean.contains("```html") && clean.contains("S01"), "{clean}");
     }
 
     #[test]

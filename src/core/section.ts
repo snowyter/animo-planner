@@ -142,7 +142,8 @@ export function formatCandidateConflictLabel(
     }
   }
 
-  const first = others[0];
+  const [first] = others;
+  if (!first) return null;
   const match = planSections.find(
     (s) => s.courseId === first.courseId && s.sectionId === first.sectionId
   );

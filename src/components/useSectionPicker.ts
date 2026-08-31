@@ -84,8 +84,9 @@ export function useSectionPickerState(options: SectionPickerOptions): SectionPic
         campusId: options.campusId,
         sessionId: options.sessionId,
       });
-      if (courses.length > 0) {
-        await selectCourse(courses[0].courseId);
+      const [firstCourse] = courses;
+      if (firstCourse) {
+        await selectCourse(firstCourse.courseId);
       } else {
         selectedCourseId = null;
         sections = [];
@@ -220,8 +221,9 @@ export function useSectionPickerState(options: SectionPickerOptions): SectionPic
       });
       courses = courses.filter((c) => c.courseId !== courseId);
       if (selectedCourseId === courseId) {
-        if (courses.length > 0) {
-          await selectCourse(courses[0].courseId);
+        const [nextCourse] = courses;
+        if (nextCourse) {
+          await selectCourse(nextCourse.courseId);
         } else {
           selectedCourseId = null;
           sections = [];
@@ -340,8 +342,9 @@ export function useSectionPicker(options: SectionPickerOptions) {
         sessionId: options.sessionId,
       });
       setCourses(result);
-      if (result.length > 0) {
-        const firstId = result[0].courseId;
+      const [firstCourse] = result;
+      if (firstCourse) {
+        const firstId = firstCourse.courseId;
         setSelectedCourseId(firstId);
         setIsLoadingSections(true);
         try {
@@ -371,6 +374,9 @@ export function useSectionPicker(options: SectionPickerOptions) {
   }, [options.campusId, options.sessionId]);
 
   useEffect(() => {
+    // One-shot fetch on mount (and again if the scope changes). The loading
+    // flag is up before the first paint of the fetch; not a cascade.
+    // eslint-disable-next-line react-hooks/set-state-in-effect
     fetchCourses();
   }, [fetchCourses]);
 

@@ -137,3 +137,79 @@ Existing source-level guards to imitate rather than reinvent: `src/components/ui
 Two hazards in `WeekGrid.tsx` are not in scope to change and must survive: the context menu is portalled to `document.body` and positioned `fixed`, so no `transform`, `filter`, or `backdrop-filter` may land on an ancestor; and `.block-land` is mutually exclusive with the shared-element handoff because animations outrank inline `style` in the cascade. Adding a DOM environment will make these testable for the first time — that is a bonus, not the job.
 
 **Do not touch `.scratch/` while implementing.** Findings go in this file's `## Comments` section when the work is done.
+
+## Comments
+
+### 2026-08-31 — implemented
+
+`npm run verify` exits **0**: **723 TS tests across 59 files** (baseline 684/57), **438 Rust tests** (baseline 430), **433 with `--no-default-features`** (baseline 425), clippy clean both ways, `npm audit` 0 vulnerabilities. One environment hiccup at baseline: the first `cargo` link died with `link.exe` exit `0xc0000142` (transient Windows DLL-init fault under parallel linking); retried with `-j 2`, linked clean, and every later build was fine.
+
+#### Finding 1 — the release build audits itself
+
+- Promoted the `debug_assert!` at `capture_report.rs:67` to a **real branch** (over `[profile.release] debug-assertions = true`, which would have kept the tests vacuous and left the failure path undecided). Decided failure path, recorded in the code: **a failed audit withholds the offending input with an honest note; it is never embedded and never quoted** (quoting the violation text would carry the hazard). `fragment_section` is the fragment gate; the parse error — which is *also* site-derived (see below) — gets its own gate, and the title falls back to `WITHHELD_TITLE`.
+- The audit is exercised end-to-end in **both** profiles; the fixture test passes under `cargo test --release`.
+
+**Two holes the ticket did not predict, both fixed:**
+
+1. **The trim can splice a hazard into existence.** `strip_block` removes `<script>…</script>` whole and joins the surviving text, so `hdn` + `<script>x</script>` + `StudId` becomes `hdnStudId`, and `60:45:BD:1B:5` + `5:13` becomes a full MAC — *after* the pre-trim scrub ran. Proven before fixing: test profile → the `debug_assert!` panicked (a live crash in debug builds); **release profile → the report body embedded `hdnStudId` and `60:45:BD:1B:55:13` verbatim**, headed for the clipboard and a public GitHub issue. That run is this finding, demonstrated. Fix: `diagnostic_fragment` is now **scrub → trim → scrub again** (one extra pass over ≤2 KB; the second pass cannot itself manufacture hazards because replacements insert non-word marker text at the splice point).
+2. **The parse error can carry site text.** `ParseError::SelectedCourseUnreadable` (parser.rs:877) embeds the dropdown option text verbatim; that flows into the title and the parse-error section — outside the fragment audit entirely. Fix: the error text is audited like the fragment; on failure the section is withheld and the title is a safe constant, while a clean fragment is still embedded (independent gates).
+
+**Proved to bite:** each guard was broken deliberately and its test went red — post-trim scrub removed (2 red: the splice test on the surviving hazard; the end-to-end test also lost diagnostics to the withhold branch), withhold branch short-circuited (`| true`, red), error gate forced `true ||` (red). All restored.
+
+#### Finding 2 — the two scrub implementations agree
+
+Ran **both implementations over 28 candidate inputs before deciding anything** (throwaway probe harness, deleted afterwards). Results:
+
+- **No bare-MAC divergence exists.** Both flag a bounded 12-hex run identically (`6045BD1B5513` → 1/1; a 12-digit number → 1/1 — a *shared* deliberate over-detection; a 17-digit run and an 18-hex run → 0/0). The Rust false-positive tests pass on the TS side too. Documented as shared behaviour in both files rather than "fixed".
+- **Real divergences: 3, one root cause.** TS counts every regex match; Rust merges hazards sharing one enclosing region into a single span (its spans drive replacement, so they must be disjoint): a field name twice in one tag (TS 2 / RS 1), a hazard-shaped value inside a field-name tag (TS 2 / RS 1), two field names in tag-less text (TS 2 / RS 1). On all 28 inputs the two agree on the *decision* (hazard vs none), which is what the dialog's warning depends on. Documented as deliberate in both `scrub.ts` and `scrub.rs`.
+- My own static predictions were wrong three times; the probe caught each (e.g. TS does *not* flag back-to-back MACs — JS `\b` applies at the match end — so adjacent-hazard semantics agree after all).
+
+Deliverables: `src-tauri/tests/fixtures/scrub-agreement.json` (24 cases + rationale), `the_shared_fixture_holds_for_the_rust_scanner` + committed-captures-audit-clean in `scrub.rs`, `it.each` agreement suite in `scrub.test.ts`, and the module doc on `scrub.ts` naming `scrub.rs` as the authority.
+
+**Proved to bite:** TS bare pattern `{12}`→`{13}` alone → 4 red; Rust leading-zero defence disabled alone → red on `case leading-zero-ip`. Both restored.
+
+#### Finding 3 — the two conflict implementations agree
+
+- Test-first where it fails today: the duplicate-section input (same section twice) — `findConflicts` returned `[]`, `find_conflicts` manufactured a self-conflict → RED, then the `conflicts.ts` guard was added to `find_conflicts`, making the doc comment **true instead of softened**; it now states the skip is enforced and cites the `ORDER BY s.course_id, s.section_id, b.id` + `UNIQUE (campus_id, session_id, course_id, section_id)` caller invariant as the first line of defence → GREEN.
+- Shared fixture `conflict-agreement.json`: one 5-section set, expected conflicts asserted **in order** on both sides (overlap on one day of two, per-block day specificity, back-to-back touch, the duplicate input, pair ordering).
+
+**Proved to bite:** Rust guard removed alone → 2 red; TS guard removed alone → fixture test red (duplicate pair reorders the output). Both restored.
+
+#### Finding 4 — the DOM harness
+
+- **Dependencies approved by the human during dispatch.** `happy-dom` chosen over jsdom: lighter, and everything these tests need is listener/timer/DOM lifecycle work. Recorded in the harness file's header. `eslint-plugin-react-hooks@7.1.1`, `happy-dom@20.12.0`.
+- New file `src/components/effectCleanup.test.tsx` (`@vitest-environment happy-dom` docblock; the 57 `renderToStaticMarkup` suites stay untouched in node). A ~40-line `renderHook` harness (`createRoot` + `act`), client module mocked.
+- Coverage, per the acceptance line "cover the effects that can actually strand a user": `usePlanRefresh` (fetch-on-mount reachable; subscribes once; **unsubscribes on unmount**), `useCapture` (both subscriptions unsubscribed on unmount; scope filter applied), `useSectionPicker` (a capture landing for the active scope re-syncs the course list; a foreign scope does not; unsubscribes on unmount), `WeekGrid` (menu closes on Escape and outside mousedown; all four document/window listeners removed on unmount; the handoff timer is cleared on unmount).
+- **Proved to bite:** dropped `unlistenUpdated` from `useCapture`'s cleanup → the unsubscribe test red. Restored.
+
+#### Finding 5 — the two lint rules
+
+**`eslint-plugin-react-hooks` violation count before fixing: 21** (16 `set-state-in-effect`, 4 `exhaustive-deps`, 1 `refs`) — modest, so no stop-and-ask. Disposition of every violation:
+
+- **12 fixed with documented patterns (no behaviour softening):** prop-sync and reset-on-close effects became **adjust-state-during-render** with prev-comparison (AboutDialog ×2, OnboardingDialog ×2, ReportBrokenCaptureDialog ×2, SolvePanel, SectionPicker, `useCourseRanking`'s guard reset); `ReportBrokenCaptureDialog`'s ref write moved out of render into an effect (the `refs` violation); `PlanWorkspace`'s `currentSections` wrapped in `useMemo` (3 `exhaustive-deps` warnings, one root); `useProfessorPreferences` destructures `scope` so `reload` stops closing over the object identity (stale-closure class, the exact thing this rule exists for).
+- **9 targeted suppressions, each with a one-line justification comment** — all the same shape: a one-shot fetch effect whose *synchronous prefix* raises a loading flag before the first paint (useCapture, usePlanRefresh, useOptions, usePlanDetail, usePlans, useSectionPicker, AboutDialog's app-info fetch, ReportBrokenCaptureDialog's report fetch, useCourseRanking's flags), plus `useProfessorPreferences`' `reload()` call whose setStates all sit after an `await` the rule cannot see through. The rule stays fully active; any new violation errors out.
+
+That work **found and fixed a real bug**: `SectionPicker`'s mount-firing reset defeated `initialConfirmingRemove` — the prop never survived first paint in the running app; it only "worked" in tests because `renderToStaticMarkup` never runs effects (the finding-4 disease in miniature). The reset now fires only on a genuine course change, and the three tests that pin the prop pass again.
+
+- **`noUncheckedIndexedAccess` enabled; all errors resolved with zero `!`.** 105 errors (one fewer than the audit's 106 — the OnboardingDialog restructure above had already removed one). Source fixes narrow or destructure so the guard *is* the proof (`conflicts.ts` now iterates `sections.slice(i + 1)`, mirroring Rust's `&sections[i + 1..]`; `options.ts` regex groups destructured; `palette.ts` throws a loud error if the palette is ever emptied, making the modulo lookup total). Test fixtures get a `mustExist`/`matchGroup` helper per file.
+- **Found contrary to the audit: 46 pre-existing non-null assertions**, all `regexp.exec()![n]` in test files (App, CaptureBar, CapturedCatalog, ExportMenu, PlanWorkspace, SectionPicker, SolutionCard, SolvePanel, visualRevision, WeekGrid). Removed all 46; the "zero `!`" invariant is now actually true.
+
+#### The ignore lists stay in step
+
+- New `src/repoGuardrails.test.ts`: every directory-shaped `.gitignore` entry must be covered by an eslint ignore (syntactic rule documented in the file; it cannot distinguish the directory `.idea` from the file `.env` — noted there). **The test went red on its first run**: `dist-ssr` (and `.vscode`, `release-staging`) were gitignored but eslint-lintable — the finding-0 gap, found before it could bite. `eslint.config.js` now ignores all of them, with a comment naming the test that keeps the lists in step.
+- Second test: `verify` must chain `verify:rust` after the web steps with `&&` and no `||` anywhere; `verify:rust` must run clippy and `cargo test` in both feature configurations.
+
+**Proved to bite:** removed `.codebuddy/**` from eslint ignores → red with the exact finding-0 message; removed `verify:rust` from the verify chain → red. Both restored. (The new flag also bit its own author: `noUncheckedIndexedAccess` flagged `pkg.scripts.verify` in this very test file; guarded.)
+
+#### [lints] for Cargo.toml — considered, closed
+
+Pedantic clippy over ~21k lines of Rust would drown the signal: the default set already runs with `-D warnings` on both feature configurations and the audit found zero `#[allow]` to suggest suppressed noise. The marginal catch (needless_pass_by_value, significant-drop) is not worth a mass of exceptions. **Default set stays; this line is closed rather than left open.**
+
+#### Dependencies
+
+- New (human-approved during dispatch): `happy-dom`, `eslint-plugin-react-hooks` — dev-only, recorded above.
+- `npm audit`: 0 vulnerabilities. 7 packages behind; **majors NOT taken here for a separate ticket**: `vite` 7→8, `typescript` 5.8→7, `@vitejs/plugin-react` 4→6. Patch/minor behind: `@types/react-dom`, `eslint`, `typescript-eslint`, `lucide-react`.
+
+#### Baseline hiccup
+
+The first `npm run verify` of the session died at the Rust link step (`link.exe` exit `0xc0000142`, a transient Windows toolchain fault under parallel linking). It is not a code issue; building with `-j 2` linked clean and the fault never recurred.

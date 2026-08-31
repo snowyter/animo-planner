@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useMemo } from "react";
+import React, { useState, useMemo } from "react";
 import {
   Dialog,
   DialogContent,
@@ -58,7 +58,7 @@ export function OnboardingDialog({
   const [step, setStep] = useState<OnboardingStep>(initialStep);
   const [name, setName] = useState("Target Schedule");
   const [campusId, setCampusId] = useState<number | null>(
-    campusOptions.length > 0 ? campusOptions[0].id : 7
+    campusOptions[0]?.id ?? 7
   );
   const [startYear, setStartYear] = useState<number>(
     () => sessionStructure.defaultStartYear
@@ -118,20 +118,28 @@ export function OnboardingDialog({
     }
   };
 
-  useEffect(() => {
+  // Re-run: reset the wizard when it opens (or when the entry step changes
+  // while open), adjusting state during render instead of resyncing from an
+  // effect.
+  const [wasOpen, setWasOpen] = useState(open);
+  const [lastInitialStep, setLastInitialStep] = useState(initialStep);
+  if (wasOpen !== open || (open && lastInitialStep !== initialStep)) {
+    setWasOpen(open);
+    setLastInitialStep(initialStep);
     if (open) {
       setStep(initialStep);
       setError(null);
       setValidationErrors({});
       setHasOpenedCapture(false);
     }
-  }, [open, initialStep]);
+  }
 
-  useEffect(() => {
-    if (campusId === null && campusOptions.length > 0) {
-      setCampusId(campusOptions[0].id);
-    }
-  }, [campusId, campusOptions]);
+  // Default to the first campus once the options arrive, adjusting during
+  // render; the state guard keeps this convergent.
+  const [firstCampusOption] = campusOptions;
+  if (campusId === null && firstCampusOption) {
+    setCampusId(firstCampusOption.id);
+  }
 
 
 

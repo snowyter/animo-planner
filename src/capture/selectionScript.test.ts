@@ -93,7 +93,8 @@ describe("selection script behavior", () => {
 
     expect(page.dropdown.selectedIndex).toBe(1);
     expect(page.dropdown.dispatched).toHaveLength(1);
-    const event = page.dropdown.dispatched[0];
+    const [event] = page.dropdown.dispatched;
+    if (!event) throw new Error("a change event was dispatched");
     expect(event.type).toBe("change");
     expect(event.bubbles).toBe(true);
   });
@@ -108,7 +109,9 @@ describe("selection script behavior", () => {
 
     expect(page.dropdown.selectedIndex).toBe(1);
     expect(page.dropdown.dispatched).toHaveLength(1);
-    expect(page.dropdown.dispatched[0].type).toBe("change");
+    const [event] = page.dropdown.dispatched;
+    if (!event) throw new Error("a change event was dispatched");
+    expect(event.type).toBe("change");
   });
 
   it("forces the next capture through before firing, so an identical re-render still lands", () => {

@@ -1,0 +1,29 @@
+{
+  "description": "Shared scrub-audit agreement fixture (ticket 51). One contract for the two implementations of the privacy audit: the Rust byte scanner in src-tauri/src/core/scrub.rs (the authority, it redacts) and the TypeScript match scanner in src/core/scrub.ts (the user-facing warning before a report is copied). Both tests assert the same violation count for every input. Inputs are restricted to cases with unambiguous, disjoint hazards: where two hazards share one enclosing region (a field name twice in one tag, a hazard-shaped value inside a field-name tag, two field names in tag-less text) the Rust scanner merges them into one span while the TypeScript scanner reports every regex match - a deliberate, documented divergence that never changes whether text is judged hazardous. A bounded twelve-hex run is flagged by BOTH implementations (twelve-digit-run): over-detection is the safe bias for a privacy audit, and is not a divergence.",
+  "cases": [
+    { "name": "clean-row", "input": "<tr data-key=\"2923%7C384%7C\"><td>S01</td></tr>", "violations": 0 },
+    { "name": "hidden-input-single", "input": "<input type=\"hidden\" name=\"hdnStudId\" value=\"2299999\">", "violations": 1 },
+    { "name": "script-userid", "input": "<script>var userID = 2299999;</script>", "violations": 1 },
+    { "name": "four-separate-inputs", "input": "<input name=\"userID\" value=\"1\"><input name=\"hdnStudId\" value=\"2\"><input name=\"IP_ADDRESS\" value=\"3\"><input name=\"MAC_ADDRESS\" value=\"4\">", "violations": 4 },
+    { "name": "ipv4", "input": "<td>IP: 149.30.146.213</td>", "violations": 1 },
+    { "name": "ipv4-invalid-octet", "input": "<p>256.1.1.1</p>", "violations": 0 },
+    { "name": "ipv4-short", "input": "<p>1.2.3</p>", "violations": 0 },
+    { "name": "version", "input": "<p>fullcalendar@6.1.14</p>", "violations": 0 },
+    { "name": "mac-colon", "input": "<td>60:45:BD:1B:55:13</td>", "violations": 1 },
+    { "name": "mac-hyphen", "input": "<td>60-45-BD-1B-55-13</td>", "violations": 1 },
+    { "name": "mac-bare", "input": "<td>6045BD1B5513</td>", "violations": 1 },
+    { "name": "time", "input": "<td>05:17:36</td>", "violations": 0 },
+    { "name": "datetime", "input": "<td>22/08/2026 05:17:36</td>", "violations": 0 },
+    { "name": "long-digit-run", "input": "<p>08202025065710966</p>", "violations": 0 },
+    { "name": "data-key", "input": "<p data-key=\"2923%7C384%7C\"></p>", "violations": 0 },
+    { "name": "leading-zero-ip", "input": "<p>10.01.2.3</p>", "violations": 0 },
+    { "name": "ip-embedded-run", "input": "<p>1149.30.146.213</p>", "violations": 0 },
+    { "name": "long-hex-run", "input": "<p>deadbeefcafed0e1</p>", "violations": 0 },
+    { "name": "ip-trailing-digit", "input": "<p>149.30.146.2139</p>", "violations": 0 },
+    { "name": "twelve-digit-run", "input": "<p>082025065710</p>", "violations": 1 },
+    { "name": "plain-text-name", "input": "Note: hdnStudId was here", "violations": 1 },
+    { "name": "untagged-then-tagged-names", "input": "x hdnStudId <i>y</i> userID z", "violations": 2 },
+    { "name": "adjacent-macs", "input": "<td>60:45:BD:1B:55:1360:45:BD:1B:55:13</td>", "violations": 0 },
+    { "name": "mac-glued-to-word", "input": "<td>abc60:45:BD:1B:55:13</td>", "violations": 0 }
+  ]
+}

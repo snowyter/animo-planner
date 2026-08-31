@@ -24,11 +24,10 @@ export interface PlannableSection {
 export function findConflicts(sections: PlannableSection[]): Conflict[] {
   const conflicts: Conflict[] = [];
 
-  for (let i = 0; i < sections.length; i++) {
-    const first = sections[i];
-    for (let j = i + 1; j < sections.length; j++) {
-      const second = sections[j];
-
+  for (const [firstIndex, first] of sections.entries()) {
+    // The tail after `first`, mirroring `&sections[first_index + 1..]` in
+    // conflicts.rs — pair order is part of the shared fixture contract.
+    for (const second of sections.slice(firstIndex + 1)) {
       // A section cannot conflict with itself; if IDs match, skip
       if (
         first.courseId === second.courseId &&

@@ -63,18 +63,25 @@ export function useProfessorPreferences(
   >(() => initialPreferencesByCourse ?? new Map());
 
   // `courseIds` is a fresh array on every render of the workspace, so the
-  // effect keys on its contents rather than its identity.
+  // effect keys on its contents rather than its identity. The scope is
+  // destructured for the same reason: the callback must not close over the
+  // object identity, which changes every render.
   const courseKey = courseIds.join(",");
+  const { campusId, sessionId } = scope;
 
   const reload = useCallback(async () => {
-    if (!scope.campusId || !scope.sessionId) {
+    if (!campusId || !sessionId) {
       return;
     }
     const ids = courseKey === "" ? [] : courseKey.split(",").map(Number);
-    setPreferencesByCourse(await fetchPreferencesForCourses(scope, ids));
-  }, [scope.campusId, scope.sessionId, courseKey]);
+    const byCourse = await fetchPreferencesForCourses({ campusId, sessionId }, ids);
+    setPreferencesByCourse(byCourse);
+  }, [campusId, sessionId, courseKey]);
 
   useEffect(() => {
+    // Reload only touches state after its awaits; the rule flags the call
+    // because it cannot see through them. Not a cascade.
+    // eslint-disable-next-line react-hooks/set-state-in-effect
     reload();
   }, [reload]);
 
@@ -111,16 +118,31 @@ export function useCourseRanking(
 
   const { campusId, sessionId } = scope;
 
-  useEffect(() => {
+  // A course (or scope) that stops being selectable leaves no ranking
+  // behind: cleared while rendering as the inputs change, instead of
+  // resynced from an effect.
+  const [lastInputs, setLastInputs] = useState<string>("");
+  const inputKey = `${campusId}-${sessionId}-${courseId ?? ""}`;
+  if (inputKey !== lastInputs) {
+    setLastInputs(inputKey);
     if (!courseId || !campusId || !sessionId) {
       setEntries([]);
+    }
+  }
+
+  useEffect(() => {
+    if (!courseId || !campusId || !sessionId) {
       return;
     }
     let cancelled = false;
     const args = { campusId, sessionId, courseId };
 
+    /* eslint-disable react-hooks/set-state-in-effect -- one-shot fetch when
+       the selected course changes; the loading flag must be up before the
+       first paint of the fetch, and this is not a cascading render. */
     setIsLoading(true);
     setError(null);
+    /* eslint-enable react-hooks/set-state-in-effect */
     Promise.all([
       client.listRankableProfessors(args) as Promise<RankableProfessor[]>,
       client.getCoursePreferences(args) as Promise<ProfessorPreference[]>,

@@ -171,9 +171,11 @@ describe("section core logic", () => {
       ]);
       const conflicts = findCandidateConflicts(conflicting, planSections);
       expect(conflicts.length).toBe(1);
-      expect(conflicts[0].day).toBe("MON");
-      expect(conflicts[0].startMin).toBe(480);
-      expect(conflicts[0].endMin).toBe(540);
+      const [conflict] = conflicts;
+      if (!conflict) throw new Error("one conflict is expected");
+      expect(conflict.day).toBe("MON");
+      expect(conflict.startMin).toBe(480);
+      expect(conflict.endMin).toBe(540);
     });
 
     it("does not conflict with itself if candidate is already in the plan", () => {

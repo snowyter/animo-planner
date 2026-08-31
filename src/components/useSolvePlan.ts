@@ -97,11 +97,8 @@ export function useSolvePlanState(config: SolvePlanOptions): SolvePlanState {
         options,
       });
       result = res;
-      if (res.solutions.length > 0) {
-        selectedSolutionId = res.solutions[0].id;
-      } else {
-        selectedSolutionId = null;
-      }
+      const [firstSolution] = res.solutions;
+      selectedSolutionId = firstSolution?.id ?? null;
       return res;
     } catch (err) {
       error = formatErrorMessage(err);
@@ -127,8 +124,9 @@ export function useSolvePlanState(config: SolvePlanOptions): SolvePlanState {
         selectedSolutionId === null ||
         !res.solutions.some((s) => s.id === selectedSolutionId)
       ) {
-        if (res.solutions.length > 0) {
-          selectedSolutionId = res.solutions[0].id;
+        const [firstSolution] = res.solutions;
+        if (firstSolution) {
+          selectedSolutionId = firstSolution.id;
         }
       }
       return res;
@@ -277,11 +275,8 @@ export function useSolvePlan(config: SolvePlanOptions) {
           options: activeOptions,
         });
         setResult(res);
-        if (res.solutions.length > 0) {
-          setSelectedSolutionId(res.solutions[0].id);
-        } else {
-          setSelectedSolutionId(null);
-        }
+        const [firstSolution] = res.solutions;
+        setSelectedSolutionId(firstSolution?.id ?? null);
         return res;
       } catch (err) {
         const msg = formatErrorMessage(err);
@@ -310,8 +305,9 @@ export function useSolvePlan(config: SolvePlanOptions) {
         selectedSolutionId === null ||
         !res.solutions.some((s) => s.id === selectedSolutionId)
       ) {
-        if (res.solutions.length > 0) {
-          setSelectedSolutionId(res.solutions[0].id);
+        const [firstSolution] = res.solutions;
+        if (firstSolution) {
+          setSelectedSolutionId(firstSolution.id);
         }
       }
       return res;

@@ -60,7 +60,8 @@ export function getNextOnboardingStep(current: OnboardingStep): OnboardingStep |
   if (index === -1 || index >= STEP_ORDER.length - 1) {
     return null;
   }
-  return STEP_ORDER[index + 1];
+  // The bounds check above proves this index is in range.
+  return STEP_ORDER[index + 1] ?? null;
 }
 
 export function getPreviousOnboardingStep(current: OnboardingStep): OnboardingStep | null {
@@ -68,5 +69,6 @@ export function getPreviousOnboardingStep(current: OnboardingStep): OnboardingSt
   if (index <= 0) {
     return null;
   }
-  return STEP_ORDER[index - 1];
+  // The bounds check above proves this index is in range.
+  return STEP_ORDER[index - 1] ?? null;
 }

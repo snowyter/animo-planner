@@ -1,0 +1,49 @@
+{
+  "description": "Shared conflict-agreement fixture (ticket 51). The same set of planned sections goes through findConflicts in src/core/conflicts.ts and find_conflicts in src-tauri/src/core/conflicts.rs; both must report exactly these conflicts, in this order. The set covers: an overlap on one day of two (S1 x S2, Monday only), per-block day specificity (S2 x S3 clash on Friday, S3 x S4 on Saturday), back-to-back blocks that merely touch (S1 x S4 on Monday, S4 x S5 on Monday), and the duplicate-section input: S5 repeats S1's identity (2923/384) with an overlapping block, which must yield no self-conflict on either side. Order comes from the shared pair loop: sections in input order, pairs as (i, j>i), blocks in section order.",
+  "sections": [
+    {
+      "courseId": 2923,
+      "sectionId": 384,
+      "blocks": [
+        { "day": "MON", "startMin": 450, "endMin": 540 },
+        { "day": "THU", "startMin": 450, "endMin": 540 }
+      ]
+    },
+    {
+      "courseId": 564,
+      "sectionId": 737,
+      "blocks": [
+        { "day": "MON", "startMin": 480, "endMin": 570 },
+        { "day": "FRI", "startMin": 480, "endMin": 570 }
+      ]
+    },
+    {
+      "courseId": 564,
+      "sectionId": 738,
+      "blocks": [
+        { "day": "FRI", "startMin": 450, "endMin": 540 },
+        { "day": "SAT", "startMin": 615, "endMin": 705 }
+      ]
+    },
+    {
+      "courseId": 795,
+      "sectionId": 900,
+      "blocks": [
+        { "day": "MON", "startMin": 540, "endMin": 630 },
+        { "day": "SAT", "startMin": 615, "endMin": 660 }
+      ]
+    },
+    {
+      "courseId": 2923,
+      "sectionId": 384,
+      "blocks": [{ "day": "MON", "startMin": 450, "endMin": 540 }]
+    }
+  ],
+  "expectedConflicts": [
+    { "aCourseId": 2923, "aSectionId": 384, "bCourseId": 564, "bSectionId": 737, "day": "MON", "startMin": 480, "endMin": 540 },
+    { "aCourseId": 564, "aSectionId": 737, "bCourseId": 564, "bSectionId": 738, "day": "FRI", "startMin": 480, "endMin": 540 },
+    { "aCourseId": 564, "aSectionId": 737, "bCourseId": 795, "bSectionId": 900, "day": "MON", "startMin": 540, "endMin": 570 },
+    { "aCourseId": 564, "aSectionId": 737, "bCourseId": 2923, "bSectionId": 384, "day": "MON", "startMin": 480, "endMin": 540 },
+    { "aCourseId": 564, "aSectionId": 738, "bCourseId": 795, "bSectionId": 900, "day": "SAT", "startMin": 615, "endMin": 660 }
+  ]
+}

@@ -32,8 +32,8 @@ function eventsSection(text: string): string {
 function declaredCommands(text: string): Set<string> {
   const names = new Set<string>();
   for (const line of commandsSection(text).split("\n")) {
-    const match = /^\| `([a-z_0-9]+)` \|/.exec(line);
-    if (match) names.add(match[1]);
+    const name = /^\| `([a-z_0-9]+)` \|/.exec(line)?.[1];
+    if (name) names.add(name);
   }
   expect(names.size, "no commands found in the contract file").toBeGreaterThan(0);
   return names;
@@ -42,8 +42,8 @@ function declaredCommands(text: string): Set<string> {
 function declaredEvents(text: string): Set<string> {
   const names = new Set<string>();
   for (const line of eventsSection(text).split("\n")) {
-    const match = /^\| `([a-z_:0-9]+)` \|/.exec(line);
-    if (match) names.add(match[1]);
+    const name = /^\| `([a-z_:0-9]+)` \|/.exec(line)?.[1];
+    if (name) names.add(name);
   }
   expect(names.size, "no events found in the contract file").toBeGreaterThan(0);
   return names;

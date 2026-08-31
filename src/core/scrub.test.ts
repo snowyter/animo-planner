@@ -7,6 +7,30 @@ const fixtures = import.meta.glob("../../src-tauri/tests/fixtures/*.html", {
   eager: true,
 }) as Record<string, string>;
 
+const agreementFixture = JSON.parse(
+  import.meta.glob("../../src-tauri/tests/fixtures/scrub-agreement.json", {
+    query: "?raw",
+    import: "default",
+    eager: true,
+  })["../../src-tauri/tests/fixtures/scrub-agreement.json"] as string
+) as {
+  description: string;
+  cases: { name: string; input: string; violations: number }[];
+};
+
+describe("scrub agreement with scrub.rs (ticket 51)", () => {
+  it("carries the shared fixture", () => {
+    expect(agreementFixture.cases.length).toBeGreaterThan(0);
+  });
+
+  it.each(agreementFixture.cases.map((c) => [c.name, c.input, c.violations] as const))(
+    "%s",
+    (_name, input, violations) => {
+      expect(findScrubViolations(input)).toHaveLength(violations);
+    }
+  );
+});
+
 describe("findScrubViolations", () => {
   it("returns no violations for clean HTML", () => {
     expect(findScrubViolations("<p>fine</p>")).toEqual([]);

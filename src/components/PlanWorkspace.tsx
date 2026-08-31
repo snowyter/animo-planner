@@ -185,7 +185,9 @@ export function PlanWorkspace({
   const [isClearing, setIsClearing] = useState<boolean>(false);
   const [isApplyingPreview, setIsApplyingPreview] = useState<boolean>(false);
 
-  const currentSections = plan?.sections ?? [];
+  // Memoised so a null plan yields a stable empty list: a fresh `[]` every
+  // render would change the conflict memo's dependencies each time.
+  const currentSections = useMemo(() => plan?.sections ?? [], [plan]);
 
   const conflicts = useMemo(() => {
     return findConflicts(currentSections);

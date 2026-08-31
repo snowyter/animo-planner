@@ -39,7 +39,20 @@ export function ReportBrokenCaptureDialog({
 }: ReportBrokenCaptureDialogProps) {
   const [loadedInfo, setLoadedInfo] = useState<AppInfo | null>(() => appInfo ?? null);
   const infoRef = useRef<AppInfo | null>(loadedInfo);
-  infoRef.current = loadedInfo;
+
+  // Latest committed appInfo, for the async fallback below to read without
+  // subscribing its effect to it. Written in an effect, never during render.
+  useEffect(() => {
+    infoRef.current = loadedInfo;
+  }, [loadedInfo]);
+
+  const [lastAppInfo, setLastAppInfo] = useState(appInfo);
+  if (appInfo !== lastAppInfo) {
+    setLastAppInfo(appInfo);
+    if (open && appInfo) {
+      setLoadedInfo(appInfo);
+    }
+  }
 
   const [title, setTitle] = useState<string>(() => {
     if (initialReport) return initialReport.title;
@@ -67,13 +80,44 @@ export function ReportBrokenCaptureDialog({
   const [reportError, setReportError] = useState<string | null>(null);
   const [copied, setCopied] = useState<boolean>(false);
 
+  // Synchronize the editable draft with its inputs (initialReport wins over
+  // captureFailure wins over an empty default) while rendering, instead of
+  // resyncing from an effect.
+  const [lastOpen, setLastOpen] = useState(open);
+  const [lastInitialReport, setLastInitialReport] = useState(initialReport);
+  const [lastCaptureFailure, setLastCaptureFailure] = useState(captureFailure);
+  if (
+    lastOpen !== open ||
+    lastInitialReport !== initialReport ||
+    lastCaptureFailure !== captureFailure
+  ) {
+    setLastOpen(open);
+    setLastInitialReport(initialReport);
+    setLastCaptureFailure(captureFailure);
+    if (open) {
+      if (initialReport) {
+        setTitle(initialReport.title);
+        setBody(initialReport.body);
+        setReportError(null);
+        setIsLoadingReport(false);
+      } else if (!captureFailure) {
+        setTitle(buildIssueTitle("Unrecognized Course Finder layout"));
+        setBody(
+          buildDraftReportBody({
+            appVersion: loadedInfo?.appVersion ?? "0.1.0",
+            selectorConfigVersion: loadedInfo?.selectorConfigVersion ?? "1",
+            selectorConfigSource: loadedInfo?.selectorConfigSource ?? "bundled",
+            error: "Describe what went wrong during capture...",
+          })
+        );
+        setIsLoadingReport(false);
+      }
+    }
+  }
+
   // Fetch appInfo if not provided
   useEffect(() => {
-    if (!open) return;
-    if (appInfo) {
-      setLoadedInfo(appInfo);
-      return;
-    }
+    if (!open || appInfo) return;
     let active = true;
     client
       .getAppInfo()
@@ -88,67 +132,47 @@ export function ReportBrokenCaptureDialog({
     };
   }, [open, appInfo]);
 
-  // Synchronize when initialReport or captureFailure changes on open
+  // Assemble the report for a capture failure over IPC
   useEffect(() => {
-    if (!open) return;
+    if (!open || initialReport || !captureFailure) return;
 
-    if (initialReport) {
-      setTitle(initialReport.title);
-      setBody(initialReport.body);
-      setReportError(null);
-      setIsLoadingReport(false);
-      return;
-    }
+    // The loading flag must be up before the first paint of the fetch; a
+    // one-shot assembly on open, not a cascade.
+    // eslint-disable-next-line react-hooks/set-state-in-effect
+    setIsLoadingReport(true);
+    setReportError(null);
+    let active = true;
 
-    if (captureFailure) {
-      setIsLoadingReport(true);
-      setReportError(null);
-      let active = true;
+    client
+      .buildCaptureReport({ error: captureFailure })
+      .then((report) => {
+        if (active) {
+          setTitle(report.title);
+          setBody(report.body);
+          setIsLoadingReport(false);
+        }
+      })
+      .catch(() => {
+        // If backend couldn't find a retained failure matching this exact string,
+        // assemble a clean local draft report from available info.
+        if (active) {
+          const currentInfo = infoRef.current;
+          const fallbackTitle = buildIssueTitle(captureFailure);
+          const fallbackBody = buildDraftReportBody({
+            appVersion: currentInfo?.appVersion ?? "0.1.0",
+            selectorConfigVersion: currentInfo?.selectorConfigVersion ?? "1",
+            selectorConfigSource: currentInfo?.selectorConfigSource ?? "bundled",
+            error: captureFailure,
+          });
+          setTitle(fallbackTitle);
+          setBody(fallbackBody);
+          setIsLoadingReport(false);
+        }
+      });
 
-      client
-        .buildCaptureReport({ error: captureFailure })
-        .then((report) => {
-          if (active) {
-            setTitle(report.title);
-            setBody(report.body);
-            setIsLoadingReport(false);
-          }
-        })
-        .catch(() => {
-          // If backend couldn't find a retained failure matching this exact string,
-          // assemble a clean local draft report from available info.
-          if (active) {
-            const currentInfo = infoRef.current;
-            const fallbackTitle = buildIssueTitle(captureFailure);
-            const fallbackBody = buildDraftReportBody({
-              appVersion: currentInfo?.appVersion ?? "0.1.0",
-              selectorConfigVersion: currentInfo?.selectorConfigVersion ?? "1",
-              selectorConfigSource: currentInfo?.selectorConfigSource ?? "bundled",
-              error: captureFailure,
-            });
-            setTitle(fallbackTitle);
-            setBody(fallbackBody);
-            setIsLoadingReport(false);
-          }
-        });
-
-      return () => {
-        active = false;
-      };
-    }
-
-    // Default empty draft if opened without a specific error
-    const currentInfo = infoRef.current;
-    const defaultTitle = buildIssueTitle("Unrecognized Course Finder layout");
-    const defaultBody = buildDraftReportBody({
-      appVersion: currentInfo?.appVersion ?? "0.1.0",
-      selectorConfigVersion: currentInfo?.selectorConfigVersion ?? "1",
-      selectorConfigSource: currentInfo?.selectorConfigSource ?? "bundled",
-      error: "Describe what went wrong during capture...",
-    });
-    setTitle(defaultTitle);
-    setBody(defaultBody);
-    setIsLoadingReport(false);
+    return () => {
+      active = false;
+    };
   }, [open, initialReport, captureFailure]);
 
   // Real-time privacy audit of the editable text

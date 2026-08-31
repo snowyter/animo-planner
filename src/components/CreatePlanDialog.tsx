@@ -47,7 +47,7 @@ export function CreatePlanDialog({
 
   const [name, setName] = useState("");
   const [campusId, setCampusId] = useState<number | null>(
-    campusOptions.length > 0 ? campusOptions[0].id : null
+    campusOptions[0]?.id ?? null
   );
   const [startYear, setStartYear] = useState<number>(
     () => sessionStructure.defaultStartYear

@@ -37,6 +37,13 @@ const preference = (
   ...fields,
 });
 
+
+/** Unwraps a fixture value the literals above guarantee exists. */
+function mustExist<T>(value: T | undefined): T {
+  if (value === undefined) throw new Error("fixture value must exist");
+  return value;
+}
+
 describe("buildRankingList", () => {
   it("places a ranked professor, an avoided professor, and an unmentioned one in their own zones", () => {
     const entries = buildRankingList(
@@ -75,7 +82,7 @@ describe("an inactive preference", () => {
       ["Nina Cruz", "ranked", 2, true],
       ["Left Entirely", "avoided", null, false],
     ]);
-    expect(entries[0].sectionIds).toEqual([]);
+    expect(mustExist(entries[0]).sectionIds).toEqual([]);
   });
 });
 

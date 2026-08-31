@@ -32,13 +32,23 @@ pub struct PlannedSection {
 ///
 /// Two blocks overlap when they share a day and their time ranges intersect
 /// with positive length; blocks that merely touch (`a.end == b.start`) are
-/// clear. A section is never compared with itself, so it cannot conflict
-/// with itself. Sections are visited in order and blocks in order, so the
-/// output is deterministic.
+/// clear. A section is never compared with itself: pairs sharing a course
+/// and section id are skipped, so a section passed twice — or one whose own
+/// blocks overlap — cannot conflict with itself. Sections are visited in
+/// order and blocks in order, so the output is deterministic.
+///
+/// The store's fold cannot hand this scanner a split section (its query
+/// orders by `s.course_id, s.section_id, b.id` and `sections` carries
+/// `UNIQUE (campus_id, session_id, course_id, section_id)`), so the skip
+/// below is a second line of defence, matching the guard `findConflicts`
+/// has always had in `src/core/conflicts.ts`.
 pub fn find_conflicts(sections: &[PlannedSection]) -> Vec<Conflict> {
     let mut conflicts = Vec::new();
     for (i, first) in sections.iter().enumerate() {
         for second in &sections[i + 1..] {
+            if first.course_id == second.course_id && first.section_id == second.section_id {
+                continue;
+            }
             for block_a in &first.blocks {
                 for block_b in &second.blocks {
                     if block_a.day != block_b.day {
@@ -152,6 +162,109 @@ mod tests {
             block(Day::Thu, 450, 540),
         ])];
         assert!(find_conflicts(&sections).is_empty());
+    }
+
+    #[test]
+    fn the_same_section_passed_twice_never_conflicts_with_itself() {
+        // The duplicate-section input: the store's UNIQUE constraint keeps a
+        // plan to one row per section, but the scanner must not manufacture
+        // a conflict if that ever changes. `findConflicts` in
+        // src/core/conflicts.ts returns no conflict for this input; the
+        // shared fixture pins that both sides agree.
+        let sections = vec![
+            planned(2923, 384, vec![block(Day::Mon, 450, 540)]),
+            planned(2923, 384, vec![block(Day::Mon, 450, 540)]),
+        ];
+        assert!(find_conflicts(&sections).is_empty());
+    }
+
+    // ---------- agreement with the TypeScript scanner (ticket 51) ----------
+
+    /// The shared contract with `src/core/conflicts.ts`: the same planned
+    /// sections through both scanners must produce the same conflicts in
+    /// the same order. The fixture's `description` names what the set
+    /// covers, including the duplicate-section input.
+    #[test]
+    fn the_shared_fixture_holds_for_the_rust_scanner() {
+        let fixture = include_str!("../../tests/fixtures/conflict-agreement.json");
+        let parsed: serde_json::Value = serde_json::from_str(fixture).expect("valid fixture json");
+
+        let sections: Vec<PlannedSection> = parsed["sections"]
+            .as_array()
+            .expect("sections array")
+            .iter()
+            .map(|section| PlannedSection {
+                course_id: section["courseId"].as_i64().expect("courseId"),
+                section_id: section["sectionId"].as_i64().expect("sectionId"),
+                blocks: section["blocks"]
+                    .as_array()
+                    .expect("blocks array")
+                    .iter()
+                    .map(|block| PlannedBlock {
+                        day: day_from_fixture(block["day"].as_str().expect("day")),
+                        start_min: block["startMin"].as_i64().expect("startMin"),
+                        end_min: block["endMin"].as_i64().expect("endMin"),
+                    })
+                    .collect(),
+            })
+            .collect();
+
+        let expected: Vec<ExpectedConflict> = parsed["expectedConflicts"]
+            .as_array()
+            .expect("expectedConflicts array")
+            .iter()
+            .map(|conflict| ExpectedConflict {
+                a_course_id: conflict["aCourseId"].as_i64().expect("aCourseId"),
+                a_section_id: conflict["aSectionId"].as_i64().expect("aSectionId"),
+                b_course_id: conflict["bCourseId"].as_i64().expect("bCourseId"),
+                b_section_id: conflict["bSectionId"].as_i64().expect("bSectionId"),
+                day: day_from_fixture(conflict["day"].as_str().expect("day")),
+                start_min: conflict["startMin"].as_i64().expect("startMin"),
+                end_min: conflict["endMin"].as_i64().expect("endMin"),
+            })
+            .collect();
+
+        let actual = find_conflicts(&sections);
+        assert_eq!(
+            actual.len(),
+            expected.len(),
+            "conflict count must agree: {actual:?}"
+        );
+        for (actual, expected) in actual.iter().zip(&expected) {
+            assert_eq!(
+                actual.a.course_id, expected.a_course_id,
+                "a.courseId, day {:?}",
+                actual.day
+            );
+            assert_eq!(actual.a.section_id, expected.a_section_id, "a.sectionId");
+            assert_eq!(actual.b.course_id, expected.b_course_id, "b.courseId");
+            assert_eq!(actual.b.section_id, expected.b_section_id, "b.sectionId");
+            assert_eq!(actual.day, expected.day, "day");
+            assert_eq!(actual.start_min, expected.start_min, "startMin");
+            assert_eq!(actual.end_min, expected.end_min, "endMin");
+        }
+    }
+
+    struct ExpectedConflict {
+        a_course_id: i64,
+        a_section_id: i64,
+        b_course_id: i64,
+        b_section_id: i64,
+        day: Day,
+        start_min: i64,
+        end_min: i64,
+    }
+
+    fn day_from_fixture(day: &str) -> Day {
+        match day {
+            "MON" => Day::Mon,
+            "TUE" => Day::Tue,
+            "WED" => Day::Wed,
+            "THU" => Day::Thu,
+            "FRI" => Day::Fri,
+            "SAT" => Day::Sat,
+            other => panic!("unknown fixture day {other}"),
+        }
     }
 
     #[test]
