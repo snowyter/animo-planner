@@ -132,14 +132,21 @@ export function moveProfessor(
   const zones = new Map<RankingZone, RankingEntry[]>(
     RANKING_ZONES.map((z) => [z, entries.filter((entry) => entry.zone === z && entry.key !== key)])
   );
-  const target = zones.get(zone)!;
+  // `zones` is keyed by every RANKING_ZONES member, so a typed zone always
+  // resolves. The throw makes that the guard rather than an assertion, and
+  // names the bad value instead of failing later on a property of undefined.
+  const target = zones.get(zone);
+  if (!target) {
+    throw new Error(`unknown ranking zone: ${zone}`);
+  }
   const at = Math.max(0, Math.min(index, target.length));
   target.splice(at, 0, { ...moving, zone });
 
   return RANKING_ZONES.flatMap((z) =>
-    zones
-      .get(z)!
-      .map((entry, position) => ({ ...entry, rank: z === "ranked" ? position + 1 : null }))
+    (zones.get(z) ?? []).map((entry, position) => ({
+      ...entry,
+      rank: z === "ranked" ? position + 1 : null,
+    }))
   );
 }
 

@@ -164,14 +164,8 @@ export function buildAcademicSessionStructure(
       continue;
     }
 
-    if (!termsByYear[parsed.year]) {
-      termsByYear[parsed.year] = [];
-      years.push(parsed.year);
-      if (years.length === 1) {
-        defaultStartYear = parsed.startYear;
-      }
-    }
-
+    // First sighting of a year opens its term list and records the order the
+    // years were published in; the first one seen is the default.
     let terms = termsByYear[parsed.year];
     if (!terms) {
       terms = [];
