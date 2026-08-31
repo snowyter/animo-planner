@@ -113,6 +113,16 @@ function solution(id: string, score: number): Solution {
   };
 }
 
+
+/**
+ * Unwraps a capture group an assertion above guarantees was matched —
+ * the proof that no non-null assertion is needed anywhere in this suite.
+ */
+function matchGroup(match: RegExpExecArray | RegExpMatchArray | null, index: number): string {
+  if (!match?.[index]) throw new Error("expected a regexp match");
+  return match[index] as string;
+}
+
 describe("ambient surfaces", () => {
   it("gives the plan list an ambient wash behind opaque content", () => {
     const html = renderToStaticMarkup(
@@ -559,8 +569,8 @@ describe("Clear schedule sits with the thing it clears", () => {
     const button = /<button[^>]*data-testid="clear-schedule-button"[^>]*>/.exec(html);
 
     expect(button, "the clear control must render").not.toBeNull();
-    expect(button![0]).toMatch(/text-red-700/);
-    expect(button![0]).toMatch(/border-red-200/);
+    expect(matchGroup(button, 0)).toMatch(/text-red-700/);
+    expect(matchGroup(button, 0)).toMatch(/border-red-200/);
   });
 
   it("appears exactly once", () => {
@@ -796,7 +806,7 @@ describe("pinned columns clear the app header", () => {
     for (const cls of sticky) {
       const offset = cls.match(/lg:top-(\d+)/);
       expect(offset, `a pinned column must declare an offset: ${cls}`).not.toBeNull();
-      expect(Number(offset![1])).toBeGreaterThanOrEqual(16);
+      expect(Number(matchGroup(offset, 1))).toBeGreaterThanOrEqual(16);
     }
   });
 });

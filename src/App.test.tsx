@@ -38,6 +38,16 @@ vi.mock("./adapters/ipc/client", () => ({
   onCaptureFailed: vi.fn().mockResolvedValue(() => {}),
 }));
 
+
+/**
+ * Unwraps a capture group an assertion above guarantees was matched —
+ * the proof that no non-null assertion is needed anywhere in this suite.
+ */
+function matchGroup(match: RegExpExecArray | RegExpMatchArray | null, index: number): string {
+  if (!match?.[index]) throw new Error("expected a regexp match");
+  return match[index] as string;
+}
+
 describe("App shell and navigation", () => {
   beforeEach(() => {
     vi.clearAllMocks();
@@ -229,8 +239,8 @@ describe("a plan reload does not remount the workspace", () => {
     expect(key, "the screen wrapper must carry an explicit key").not.toBeNull();
     // `activePlanSummary.id` is stable across a reload; the loaded plan detail
     // is a fresh object every time and would remount on each mutation.
-    expect(key![1]).toContain("activePlanSummary");
-    expect(key![1]).not.toContain("activePlanDetail");
-    expect(key![1]).not.toContain("sections");
+    expect(matchGroup(key, 1)).toContain("activePlanSummary");
+    expect(matchGroup(key, 1)).not.toContain("activePlanDetail");
+    expect(matchGroup(key, 1)).not.toContain("sections");
   });
 });

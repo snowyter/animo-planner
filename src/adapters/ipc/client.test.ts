@@ -199,7 +199,9 @@ describe("ipc client", () => {
     const result = await client.onCaptureUpdated(handler);
     expect(listenMock).toHaveBeenCalledWith("capture:updated", expect.any(Function));
 
-    const registered = listenMock.mock.calls[0][1] as (event: {
+    const [firstCall] = listenMock.mock.calls;
+    if (!firstCall) throw new Error("a listener was registered");
+    const registered = firstCall[1] as (event: {
       payload: unknown;
     }) => void;
     const payload = { campusId: 7, sessionId: 155, sectionCount: 42, courseCount: 8 };

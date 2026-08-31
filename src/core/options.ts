@@ -65,9 +65,9 @@ export interface ParsedAcademicSession {
  */
 export function parseAcademicSessionName(name: string): ParsedAcademicSession | null {
   const match = /^AY\s*(\d{4})-(\d{2,4})\s*(?:T|Term\s*)(\d+)$/i.exec(name.trim());
-  if (!match) return null;
-  const startYear = parseInt(match[1], 10);
-  const endYearRaw = match[2];
+  const [, startYearRaw, endYearRaw, termRaw] = match ?? [];
+  if (!startYearRaw || !endYearRaw || !termRaw) return null;
+  const startYear = parseInt(startYearRaw, 10);
   let endYear: number;
   if (endYearRaw.length === 2) {
     const century = Math.floor(startYear / 100) * 100;
@@ -75,7 +75,7 @@ export function parseAcademicSessionName(name: string): ParsedAcademicSession | 
   } else {
     endYear = parseInt(endYearRaw, 10);
   }
-  const term = parseInt(match[3], 10);
+  const term = parseInt(termRaw, 10);
   const year = formatFullAcademicYear(startYear, endYear);
 
   return {
@@ -172,7 +172,17 @@ export function buildAcademicSessionStructure(
       }
     }
 
-    termsByYear[parsed.year].push({
+    let terms = termsByYear[parsed.year];
+    if (!terms) {
+      terms = [];
+      termsByYear[parsed.year] = terms;
+      years.push(parsed.year);
+      if (years.length === 1) {
+        defaultStartYear = parsed.startYear;
+      }
+    }
+
+    terms.push({
       term: parsed.term,
       termLabel: `Term ${parsed.term}`,
       sessionId: option.id,
@@ -180,14 +190,15 @@ export function buildAcademicSessionStructure(
   }
 
   for (const yr of years) {
-    termsByYear[yr].sort((a, b) => a.term - b.term);
+    termsByYear[yr]?.sort((a, b) => a.term - b.term);
   }
 
-  const defaultYear = years.length > 0 ? years[0] : null;
-  const defaultTerms = defaultYear ? termsByYear[defaultYear] : [];
+  const [firstYear] = years;
+  const defaultYear = firstYear ?? null;
+  const defaultTerms = defaultYear ? (termsByYear[defaultYear] ?? []) : [];
   const defaultSessionId =
-    defaultTerms.length > 0 ? defaultTerms[0].sessionId : (sessionOptions[0]?.id ?? null);
-  const defaultTerm = defaultTerms.length > 0 ? defaultTerms[0].term : 1;
+    defaultTerms[0]?.sessionId ?? sessionOptions[0]?.id ?? null;
+  const defaultTerm = defaultTerms[0]?.term ?? 1;
 
   return {
     years,

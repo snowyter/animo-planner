@@ -12,6 +12,22 @@ import type {
 } from "../adapters/ipc/types";
 import { isAbortError } from "../core/export";
 
+
+/** Unwraps a fixture value the literals above guarantee exists. */
+function mustExist<T>(value: T | undefined): T {
+  if (value === undefined) throw new Error("fixture value must exist");
+  return value;
+}
+
+/**
+ * Unwraps a capture group an assertion above guarantees was matched —
+ * the proof that no non-null assertion is needed anywhere in this suite.
+ */
+function matchGroup(match: RegExpExecArray | RegExpMatchArray | null, index: number): string {
+  if (!match?.[index]) throw new Error("expected a regexp match");
+  return match[index] as string;
+}
+
 describe("ExportMenu", () => {
   const mockPlanSummary: PlanSummary = {
     id: "plan-123",
@@ -213,7 +229,7 @@ describe("ExportMenu", () => {
     expect(canvasHtml).toContain("1 conflict");
 
     const multiConflicts: Conflict[] = [
-      mockConflicts[0],
+      mustExist(mockConflicts[0]),
       {
         a: { courseId: 1, sectionId: 2 },
         b: { courseId: 3, sectionId: 4 },
@@ -286,7 +302,7 @@ describe("ExportMenu", () => {
     // but NO off-screen positioning or negative coordinates so cloned computed styles stay in frame
     const canvasMatch = html.match(/<div[^>]*data-testid="export-canvas"[^>]*style="([^"]*)"/);
     expect(canvasMatch).not.toBeNull();
-    const canvasStyle = canvasMatch![1];
+    const canvasStyle = matchGroup(canvasMatch, 1);
     expect(canvasStyle).toMatch(/width:\s*1200px/);
     expect(canvasStyle).toMatch(/background-color:\s*#ffffff/);
     expect(canvasStyle).not.toContain("fixed");
@@ -359,7 +375,7 @@ describe("ExportMenu", () => {
 
     await onSaveFile({
       suggestedName: "T1 Target Schedule - AY2026-27 T1.png",
-      blob: blob!,
+      blob:       mustExist(blob),
       types: [{ description: "PNG Image (.png)", accept: { "image/png": [".png"] } }],
     });
 

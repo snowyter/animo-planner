@@ -9,6 +9,9 @@
 //!
 //! Scrubbing always runs before trimming: truncation could otherwise cut a
 //! hazard in half, leaving a partial token that no shape rule recognizes.
+//! It also runs again *after* trimming, because stripping a block whole
+//! splices its surroundings together and can join two harmless halves into
+//! a hazard that never existed in the raw text.
 
 /// Visible marker replacing a student-identifying *field name*.
 pub const REDACTED_FIELD: &str = "[redacted-field]";
@@ -310,15 +313,58 @@ fn collapse_whitespace(text: &str) -> String {
     out
 }
 
-/// The full failure-site pipeline: scrub, then trim. This is the only form
-/// in which a failing fragment may travel anywhere near the webview.
+/// The full failure-site pipeline: scrub, trim, and scrub again. This is
+/// the only form in which a failing fragment may travel anywhere near the
+/// webview. The second scrub exists because trimming strips blocks *whole*:
+/// splicing the surviving text can join two harmless halves into a hazard —
+/// a field name or a MAC split across a stripped `<script>` block — so the
+/// pre-trim scrub alone cannot prove the result clean.
 pub fn diagnostic_fragment(raw_html: &str) -> String {
-    trim_fragment(&scrub_fragment(raw_html))
+    scrub_fragment(&trim_fragment(&scrub_fragment(raw_html)))
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    // ---------- agreement with the TypeScript scanner (ticket 51) ----------
+
+    /// The shared contract with `src/core/scrub.ts`: same inputs, same
+    /// violation counts. See the fixture's `description` for what is
+    /// deliberately out of contract (overlapping-hazard counts) and what is
+    /// shared behaviour rather than divergence (the bounded twelve-hex run).
+    #[test]
+    fn the_shared_fixture_holds_for_the_rust_scanner() {
+        let fixture = include_str!("../../tests/fixtures/scrub-agreement.json");
+        let parsed: serde_json::Value = serde_json::from_str(fixture).expect("valid fixture json");
+        let cases = parsed["cases"].as_array().expect("cases array");
+        assert!(!cases.is_empty(), "the fixture carries cases");
+        for case in cases {
+            let name = case["name"].as_str().expect("case name");
+            let input = case["input"].as_str().expect("case input");
+            let expected = case["violations"].as_u64().expect("case count") as usize;
+            assert_eq!(
+                find_scrub_violations(input).len(),
+                expected,
+                "case {name}: {input}"
+            );
+        }
+    }
+
+    /// The TypeScript suite audits the committed captures through its glob;
+    /// this is the same input on the Rust side of the contract.
+    #[test]
+    fn the_committed_captures_audit_clean_on_the_rust_side_too() {
+        for capture in [
+            include_str!("../../tests/fixtures/ArchersHub-Course-Finder-CSINTSY.html"),
+            include_str!("../../tests/fixtures/ArchersHub-Course-Finder-GEARTAP.html"),
+        ] {
+            assert!(
+                find_scrub_violations(capture).is_empty(),
+                "a committed capture must audit clean"
+            );
+        }
+    }
 
     // ---------- the four student-identifying field names ----------
 
@@ -523,5 +569,30 @@ mod tests {
             "no hazard survives the full pipeline: {fragment}"
         );
         assert!(!fragment.contains("60:45:BD"), "not even partially");
+    }
+
+    #[test]
+    fn trimming_can_splice_a_hazard_back_together_so_the_pipeline_scrubs_again() {
+        // Each half here is harmless on its own and the script blocks
+        // between them are exactly what the trim removes — splicing the
+        // halves into a field name and a MAC that never existed in the raw
+        // text, so the pre-trim scrub cannot see them. The pipeline
+        // therefore scrubs once more after trimming, and the diagnostic
+        // markup survives.
+        let raw = "<table id=\"tblCourseSelection\"><tr>\
+                   <td>hdn<script>noise</script>StudId \
+                   60:45:BD:1B:5<script>noise</script>5:13</td>\
+                   </tr></table>";
+        let fragment = diagnostic_fragment(raw);
+        assert!(
+            find_scrub_violations(&fragment).is_empty(),
+            "no hazard may survive the full pipeline: {fragment}"
+        );
+        assert!(!fragment.contains("hdnStudId"), "{fragment}");
+        assert!(!fragment.contains("60:45:BD:1B:55:13"), "{fragment}");
+        assert!(
+            fragment.contains("tblCourseSelection"),
+            "diagnostics survive the second scrub: {fragment}"
+        );
     }
 }

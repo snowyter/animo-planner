@@ -134,6 +134,9 @@ export function usePlans() {
   }, []);
 
   useEffect(() => {
+    // One-shot fetch on mount. The loading flag is up before the first
+    // paint of the fetch; not a cascade.
+    // eslint-disable-next-line react-hooks/set-state-in-effect
     fetchPlans();
   }, [fetchPlans]);
 

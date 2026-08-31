@@ -85,8 +85,12 @@ export function formatUnsatisfiableCoursesMessage(
     return "No conflict-free schedules found matching your constraints.";
   }
   if (unsatisfiableCourses.length === 1) {
+    const [only] = unsatisfiableCourses;
+    if (!only) {
+      return "No conflict-free schedules found matching your constraints.";
+    }
     return `No conflict-free schedules found. Course ${unsatisfiableCourseLabel(
-      unsatisfiableCourses[0]
+      only
     )} could not be satisfied with the current constraints.`;
   }
   const codes = unsatisfiableCourses.map(unsatisfiableCourseLabel).join(", ");

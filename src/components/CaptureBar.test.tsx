@@ -4,6 +4,16 @@ import { renderToStaticMarkup } from "react-dom/server";
 import { CaptureBar } from "./CaptureBar";
 import type { CaptureSummary } from "../adapters/ipc/types";
 
+
+/**
+ * Unwraps a capture group an assertion above guarantees was matched —
+ * the proof that no non-null assertion is needed anywhere in this suite.
+ */
+function matchGroup(match: RegExpExecArray | RegExpMatchArray | null, index: number): string {
+  if (!match?.[index]) throw new Error("expected a regexp match");
+  return match[index] as string;
+}
+
 describe("CaptureBar", () => {
   const defaultProps = {
     campusId: 7,
@@ -151,6 +161,6 @@ describe("the capture panel in a narrow column", () => {
     // share the row under it and are allowed to wrap.
     const actions = /<div[^>]*data-testid="capture-actions"[^>]*>/.exec(html);
     expect(actions).not.toBeNull();
-    expect(actions![0]).toMatch(/flex-wrap/);
+    expect(matchGroup(actions, 0)).toMatch(/flex-wrap/);
   });
 });

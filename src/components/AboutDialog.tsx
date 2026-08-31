@@ -64,27 +64,41 @@ export function AboutDialog({
   const isChecking = externalIsChecking ?? internalIsChecking;
   const isInstalling = externalIsInstalling ?? internalIsInstalling;
 
-  useEffect(() => {
-    if (initialUpdateCheck !== undefined) {
-      setUpdateCheck(initialUpdateCheck);
-    }
-  }, [initialUpdateCheck]);
+  // Adjust state during render when the incoming props change, instead of
+  // resyncing from an effect: the values land before anything paints.
+  // `initialUpdateCheck === undefined` means the parent is not managing the
+  // check state and it is left alone.
+  const [lastInitialUpdateCheck, setLastInitialUpdateCheck] = useState(initialUpdateCheck);
+  if (
+    initialUpdateCheck !== undefined &&
+    initialUpdateCheck !== lastInitialUpdateCheck
+  ) {
+    setLastInitialUpdateCheck(initialUpdateCheck);
+    setUpdateCheck(initialUpdateCheck);
+  }
 
-  useEffect(() => {
+  const [wasOpen, setWasOpen] = useState(open);
+  const [lastInitialAppInfo, setLastInitialAppInfo] = useState(initialAppInfo);
+  if (wasOpen !== open || lastInitialAppInfo !== initialAppInfo) {
+    setWasOpen(open);
+    setLastInitialAppInfo(initialAppInfo);
     if (!open) {
       setIsConfirmingClear(false);
       setClearStatus(null);
       setClearError(null);
       setInstallError(null);
-      return;
-    }
-
-    if (initialAppInfo) {
+    } else if (initialAppInfo) {
       setAppInfo(initialAppInfo);
-      return;
     }
+  }
+
+  useEffect(() => {
+    if (!open || initialAppInfo) return;
 
     let active = true;
+    // The loading flag must be up before the first paint of the fetch; a
+    // one-shot fetch on open, not a cascade.
+    // eslint-disable-next-line react-hooks/set-state-in-effect
     setIsLoadingInfo(true);
     client
       .getAppInfo()

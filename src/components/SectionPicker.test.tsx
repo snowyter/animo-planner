@@ -4,6 +4,16 @@ import { renderToStaticMarkup } from "react-dom/server";
 import { SectionPicker } from "./SectionPicker";
 import type { CapturedCourse, PlanSection, ScheduleBlock, Section } from "../adapters/ipc/types";
 
+
+/**
+ * Unwraps a capture group an assertion above guarantees was matched —
+ * the proof that no non-null assertion is needed anywhere in this suite.
+ */
+function matchGroup(match: RegExpExecArray | RegExpMatchArray | null, index: number): string {
+  if (!match?.[index]) throw new Error("expected a regexp match");
+  return match[index] as string;
+}
+
 describe("SectionPicker", () => {
   const mockCourses: CapturedCourse[] = [
     {
@@ -868,7 +878,7 @@ describe("SectionPicker", () => {
       const html = renderToStaticMarkup(React.createElement(SectionPicker, listProps));
       const select = html.match(/<select[^>]*data-testid="course-select"[^>]*>/);
       expect(select).not.toBeNull();
-      expect(select![0]).toMatch(/aria-label="[^"]+"/);
+      expect(matchGroup(select, 0)).toMatch(/aria-label="[^"]+"/);
     });
   });
 
@@ -907,8 +917,8 @@ describe("SectionPicker", () => {
       const list = /<div[^>]*data-testid="section-list"[^>]*>/.exec(html);
 
       expect(list).not.toBeNull();
-      expect(list![0]).not.toMatch(/max-h-/);
-      expect(list![0]).not.toMatch(/overflow-y-auto/);
+      expect(matchGroup(list, 0)).not.toMatch(/max-h-/);
+      expect(matchGroup(list, 0)).not.toMatch(/overflow-y-auto/);
     });
 
     it("still bounds the list itself when the page is what scrolls", () => {
@@ -917,8 +927,8 @@ describe("SectionPicker", () => {
       );
       const list = /<div[^>]*data-testid="section-list"[^>]*>/.exec(html);
 
-      expect(list![0]).toMatch(/max-h-/);
-      expect(list![0]).toMatch(/overflow-y-auto/);
+      expect(matchGroup(list, 0)).toMatch(/max-h-/);
+      expect(matchGroup(list, 0)).toMatch(/overflow-y-auto/);
     });
   });
 });

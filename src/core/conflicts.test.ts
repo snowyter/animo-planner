@@ -1,6 +1,59 @@
 import { describe, expect, it } from "vitest";
 import type { Day, PlanSection, ScheduleBlock } from "../adapters/ipc/types";
-import { findConflicts, isBlockConflicting } from "./conflicts";
+import { findConflicts, isBlockConflicting, type PlannableSection } from "./conflicts";
+
+const conflictFixture = JSON.parse(
+  import.meta.glob("../../src-tauri/tests/fixtures/conflict-agreement.json", {
+    query: "?raw",
+    import: "default",
+    eager: true,
+  })["../../src-tauri/tests/fixtures/conflict-agreement.json"] as string
+) as {
+  description: string;
+  sections: { courseId: number; sectionId: number; blocks: { day: Day; startMin: number; endMin: number }[] }[];
+  expectedConflicts: {
+    aCourseId: number;
+    aSectionId: number;
+    bCourseId: number;
+    bSectionId: number;
+    day: Day;
+    startMin: number;
+    endMin: number;
+  }[];
+};
+
+describe("conflict agreement with conflicts.rs (ticket 51)", () => {
+  it("carries the shared fixture", () => {
+    expect(conflictFixture.sections.length).toBeGreaterThan(0);
+    expect(conflictFixture.expectedConflicts.length).toBeGreaterThan(0);
+  });
+
+  it("findConflicts reports exactly the fixture's conflicts, in order", () => {
+    const sections: PlannableSection[] = conflictFixture.sections.map((s) => ({
+      courseId: s.courseId,
+      sectionId: s.sectionId,
+      blocks: s.blocks.map(
+        (b): ScheduleBlock => ({
+          day: b.day,
+          startMin: b.startMin,
+          endMin: b.endMin,
+          modality: "F2F",
+          location: "L226",
+        })
+      ),
+    }));
+
+    expect(findConflicts(sections)).toEqual(
+      conflictFixture.expectedConflicts.map((c) => ({
+        a: { courseId: c.aCourseId, sectionId: c.aSectionId },
+        b: { courseId: c.bCourseId, sectionId: c.bSectionId },
+        day: c.day,
+        startMin: c.startMin,
+        endMin: c.endMin,
+      }))
+    );
+  });
+});
 
 describe("findConflicts", () => {
   const makeBlock = (

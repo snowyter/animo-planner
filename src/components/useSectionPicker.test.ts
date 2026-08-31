@@ -5,6 +5,13 @@ import type { CapturedCourse, Plan, Section } from "../adapters/ipc/types";
 
 vi.mock("../adapters/ipc/client");
 
+
+/** Unwraps a fixture value the literals above guarantee exists. */
+function mustExist<T>(value: T | undefined): T {
+  if (value === undefined) throw new Error("fixture value must exist");
+  return value;
+}
+
 describe("useSectionPickerState", () => {
   const mockCourses: CapturedCourse[] = [
     {
@@ -156,7 +163,7 @@ describe("useSectionPickerState", () => {
       planId: "p1",
     });
 
-    const updatedPlan = await state.addSection(mockGeartapSections[0]);
+    const updatedPlan = await state.addSection(mustExist(mockGeartapSections[0]));
 
     expect(client.addSectionToPlan).toHaveBeenCalledWith({
       planId: "p1",
@@ -175,7 +182,7 @@ describe("useSectionPickerState", () => {
       planId: "p1",
     });
 
-    const updatedPlan = await state.removeSection(mockGeartapSections[0]);
+    const updatedPlan = await state.removeSection(mustExist(mockGeartapSections[0]));
 
     expect(client.removeSectionFromPlan).toHaveBeenCalledWith({
       planId: "p1",
@@ -194,7 +201,7 @@ describe("useSectionPickerState", () => {
       planId: "p1",
     });
 
-    const updatedPlan = await state.togglePin(mockGeartapSections[0], true);
+    const updatedPlan = await state.togglePin(mustExist(mockGeartapSections[0]), true);
 
     expect(client.setSectionPinned).toHaveBeenCalledWith({
       planId: "p1",
@@ -209,7 +216,7 @@ describe("useSectionPickerState", () => {
   // course captured in Course Finder stayed invisible in the dropdown until
   // the picker was remounted while the counter updated correctly.
   it("syncCourses picks up a newly captured course without a remount", async () => {
-    vi.mocked(client.listCapturedCourses).mockResolvedValueOnce([mockCourses[0]]);
+    vi.mocked(client.listCapturedCourses).mockResolvedValueOnce([mustExist(mockCourses[0])]);
     vi.mocked(client.listCapturedSections).mockResolvedValue(mockGeartapSections);
 
     const state = useSectionPickerState({ campusId: 7, sessionId: 155, planId: "p1" });
@@ -251,7 +258,7 @@ describe("useSectionPickerState", () => {
     await state.fetchCourses();
     await state.selectCourse(564);
 
-    vi.mocked(client.listCapturedCourses).mockResolvedValue([mockCourses[0]]);
+    vi.mocked(client.listCapturedCourses).mockResolvedValue([mustExist(mockCourses[0])]);
     await state.syncCourses();
 
     expect(state.selectedCourseId).toBe(2923);
@@ -310,7 +317,7 @@ describe("useSectionPickerState", () => {
     expect(returnedOutcome).toEqual(mockOutcome);
     expect(onCaptureUpdated).toHaveBeenCalledWith(mockSummary);
     expect(state.courses).toHaveLength(1);
-    expect(state.courses[0].courseId).toBe(564);
+    expect(mustExist(state.courses[0]).courseId).toBe(564);
     expect(state.selectedCourseId).toBe(564);
     expect(client.listCapturedSections).toHaveBeenCalledWith({
       campusId: 7,
@@ -320,7 +327,7 @@ describe("useSectionPickerState", () => {
   });
 
   it("removing the last course leaves ordinary empty state and no error", async () => {
-    vi.mocked(client.listCapturedCourses).mockResolvedValue([mockCourses[0]]);
+    vi.mocked(client.listCapturedCourses).mockResolvedValue([mustExist(mockCourses[0])]);
     vi.mocked(client.listCapturedSections).mockResolvedValue(mockGeartapSections);
     const mockOutcome = {
       summary: {

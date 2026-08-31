@@ -11,6 +11,16 @@ vi.mock("../adapters/ipc/client", () => ({
   applySolution: vi.fn(),
 }));
 
+
+/**
+ * Unwraps a capture group an assertion above guarantees was matched —
+ * the proof that no non-null assertion is needed anywhere in this suite.
+ */
+function matchGroup(match: RegExpExecArray | RegExpMatchArray | null, index: number): string {
+  if (!match?.[index]) throw new Error("expected a regexp match");
+  return match[index] as string;
+}
+
 describe("SolvePanel", () => {
   const planId = "plan-1";
 
@@ -507,8 +517,8 @@ describe("the solve panel in a narrow column", () => {
       html
     );
     expect(label).not.toBeNull();
-    expect(label![0]).toContain("Exclude full sections");
-    expect(label![0]).not.toContain("(enrolled");
+    expect(matchGroup(label, 0)).toContain("Exclude full sections");
+    expect(matchGroup(label, 0)).not.toContain("(enrolled");
     expect(html).toContain("Enrolled is at or over capacity");
   });
 

@@ -25,9 +25,10 @@ const APP_CSS = readFileSync("src/App.css", "utf8");
 const SOURCE_FILES = Object.keys(SOURCES).sort();
 
 function offenders(pattern: RegExp, isExempt: (path: string) => boolean = () => false) {
-  return SOURCE_FILES.filter(
-    (path) => !isExempt(path) && pattern.test(SOURCES[path])
-  );
+  return SOURCE_FILES.filter((path) => {
+    const source = SOURCES[path];
+    return source !== undefined && !isExempt(path) && pattern.test(source);
+  });
 }
 
 const isTest = (path: string) => /\.test\.tsx?$/.test(path);

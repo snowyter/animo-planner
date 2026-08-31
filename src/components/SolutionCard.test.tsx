@@ -5,6 +5,16 @@ import { SolutionCard } from "./SolutionCard";
 import solutionCardSource from "./SolutionCard.tsx?raw";
 import type { Solution } from "../adapters/ipc/types";
 
+
+/**
+ * Unwraps a capture group an assertion above guarantees was matched —
+ * the proof that no non-null assertion is needed anywhere in this suite.
+ */
+function matchGroup(match: RegExpExecArray | RegExpMatchArray | null, index: number): string {
+  if (!match?.[index]) throw new Error("expected a regexp match");
+  return match[index] as string;
+}
+
 describe("SolutionCard", () => {
   const mockSolution: Solution = {
     id: "solution-0",
@@ -358,8 +368,8 @@ describe("SolutionCard", () => {
       // in a narrow card, "Best match" and "Previewing" rode over the button.
       const header = /<div[^>]*data-testid="solution-header"[^>]*>/.exec(html);
       expect(header).not.toBeNull();
-      expect(header![0]).toMatch(/flex-col/);
-      expect(header![0]).not.toMatch(/justify-between/);
+      expect(matchGroup(header, 0)).toMatch(/flex-col/);
+      expect(matchGroup(header, 0)).not.toMatch(/justify-between/);
     });
 
     it("lets a move row wrap instead of squeezing the section codes", () => {
@@ -392,7 +402,7 @@ describe("SolutionCard", () => {
 
       const move = /<li[^>]*data-testid="moved-section"[^>]*>/.exec(html);
       expect(move).not.toBeNull();
-      expect(move![0]).toMatch(/flex-wrap/);
+      expect(matchGroup(move, 0)).toMatch(/flex-wrap/);
     });
   });
 
@@ -449,10 +459,10 @@ describe("SolutionCard", () => {
       );
 
       const bar = /<div[^>]*data-testid="week-shape-bar"[^>]*style="([^"]*)"/.exec(html);
-      expect(bar).not.toBeNull();
-      const minHeight = /min-height:\s*(\d+)px/.exec(bar![1]);
-      expect(minHeight, "a bar carrying a word needs a floor").not.toBeNull();
-      expect(Number(minHeight![1])).toBeGreaterThanOrEqual(16);
+      if (!bar?.[1]) throw new Error("the bar carries an inline style");
+      const minHeight = /min-height:\s*(\d+)px/.exec(bar[1]);
+      if (!minHeight?.[1]) throw new Error("a bar carrying a word needs a floor");
+      expect(Number(minHeight[1])).toBeGreaterThanOrEqual(16);
     });
 
     it("still names the days, because which day is the whole question", () => {
@@ -485,7 +495,7 @@ describe("SolutionCard", () => {
         html
       );
       expect(preview, "previewing must be something you press").not.toBeNull();
-      expect(preview![0]).toContain("Preview");
+      expect(matchGroup(preview, 0)).toContain("Preview");
     });
 
     it("says it is the one on the grid while it is", () => {
@@ -502,7 +512,7 @@ describe("SolutionCard", () => {
       const preview = /<button[^>]*data-testid="preview-solution"[^>]*>[\s\S]*?<\/button>/.exec(
         html
       );
-      expect(preview![0]).toContain("Previewing");
+      expect(matchGroup(preview, 0)).toContain("Previewing");
     });
 
     it("never makes the card body itself change what is on the grid", () => {

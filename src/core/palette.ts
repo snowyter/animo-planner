@@ -204,6 +204,13 @@ export function getCourseTheme(
   courseIdentifier: number | string,
   allCourseIdentifiers?: (number | string)[]
 ): CourseTheme {
+  // The palette is a fixed non-empty literal; the guard makes that
+  // invariant visible to the compiler so the modulo lookup below can fall
+  // back to a theme it has actually proven exists.
+  const [firstTheme] = COURSE_PALETTE;
+  if (!firstTheme) {
+    throw new Error("the course palette must carry at least one theme");
+  }
   const index = getCourseColorIndex(courseIdentifier, allCourseIdentifiers);
-  return COURSE_PALETTE[index];
+  return COURSE_PALETTE[index] ?? firstTheme;
 }

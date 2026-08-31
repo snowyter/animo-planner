@@ -120,11 +120,16 @@ export function SolvePanel({
     () => planSections ?? []
   );
 
-  useEffect(() => {
+  // The plan's sections arrive as a prop and stay locally editable (pin
+  // toggles below), so new prop values are adopted while rendering rather
+  // than resynced from an effect.
+  const [lastIncomingSections, setLastIncomingSections] = useState(planSections);
+  if (planSections !== lastIncomingSections) {
+    setLastIncomingSections(planSections);
     if (planSections) {
       setCurrentPlanSections(planSections);
     }
-  }, [planSections]);
+  }
 
   const handleTogglePinSection = async (section: PlanSection, pinned: boolean) => {
     setCurrentPlanSections((prev) =>
@@ -730,7 +735,7 @@ export function SolvePanel({
                     key={solution.id}
                     solution={solution}
                     rank={index + 1}
-                    topScore={result.solutions[0].score}
+                    topScore={result.solutions[0]?.score}
                     planSections={currentPlanSections}
                     isApplying={isApplying}
                     isSelected={selectedSolutionId === solution.id}

@@ -166,9 +166,13 @@ describe("gridMenu core domain logic", () => {
         },
       ];
 
+      const [blockA] = sectionA.blocks;
+      const [blockB] = sectionB.blocks;
+      if (!blockA || !blockB) throw new Error("fixtures must carry their blocks");
+
       const descA = describeBlockConflict(
         sectionA,
-        sectionA.blocks[0],
+        blockA,
         conflicts,
         [sectionA, sectionB]
       );
@@ -185,7 +189,7 @@ describe("gridMenu core domain logic", () => {
 
       const descB = describeBlockConflict(
         sectionB,
-        sectionB.blocks[0],
+        blockB,
         conflicts,
         [sectionA, sectionB]
       );
@@ -202,9 +206,12 @@ describe("gridMenu core domain logic", () => {
         [makeBlock("MON", 450, 540, "F2F", "L226")]
       );
 
+      const [block] = sectionA.blocks;
+      if (!block) throw new Error("fixture must carry its block");
+
       const desc = describeBlockConflict(
         sectionA,
-        sectionA.blocks[0],
+        block,
         [],
         [sectionA]
       );

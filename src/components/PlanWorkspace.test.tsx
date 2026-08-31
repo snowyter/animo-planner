@@ -31,6 +31,16 @@ vi.mock("../adapters/ipc/client", () => ({
   writeCoursePreferences: vi.fn().mockResolvedValue([]),
 }));
 
+
+/**
+ * Unwraps a capture group an assertion above guarantees was matched —
+ * the proof that no non-null assertion is needed anywhere in this suite.
+ */
+function matchGroup(match: RegExpExecArray | RegExpMatchArray | null, index: number): string {
+  if (!match?.[index]) throw new Error("expected a regexp match");
+  return match[index] as string;
+}
+
 describe("PlanWorkspace", () => {
   beforeEach(() => {
     vi.clearAllMocks();
@@ -441,7 +451,7 @@ describe("PlanWorkspace", () => {
     expect(html).toContain("Clear schedule");
     const match = html.match(/<button[^>]*data-testid="clear-schedule-button"[^>]*>/);
     expect(match).not.toBeNull();
-    expect(match![0]).toContain('disabled=""');
+    expect(matchGroup(match, 0)).toContain('disabled=""');
   });
 
   it("renders Clear schedule action enabled when plan has sections", () => {
@@ -473,7 +483,7 @@ describe("PlanWorkspace", () => {
     expect(html).toContain("Clear schedule");
     const match = html.match(/<button[^>]*data-testid="clear-schedule-button"[^>]*>/);
     expect(match).not.toBeNull();
-    expect(match![0]).not.toContain('disabled=""');
+    expect(matchGroup(match, 0)).not.toContain('disabled=""');
   });
 
   it("renders Clear schedule confirmation dialog naming section count and plan name", () => {
@@ -1305,7 +1315,7 @@ describe("the tool panel and the permanent week grid", () => {
       // between the bar's own opening tag and the cluster pushes the cluster
       // out of line with it — which is the bug this guards.
       const between = bar.slice(
-        opening![0].length,
+        matchGroup(opening, 0).length,
         bar.indexOf('data-testid="tool-cluster"')
       );
       expect(between).not.toMatch(/<(div|button|span|h3)\b/);
@@ -1317,7 +1327,7 @@ describe("the tool panel and the permanent week grid", () => {
 
       expect(bar, "the bar must render").not.toBeNull();
       // A card's padding is the offset that broke the alignment once.
-      expect(bar![0]).not.toMatch(/\bp-\d|\bpx-\d|\bpl-\d/);
+      expect(matchGroup(bar, 0)).not.toMatch(/\bp-\d|\bpx-\d|\bpl-\d/);
     });
 
     it("sizes the tool cluster to the panel it sits over", () => {
@@ -1332,9 +1342,9 @@ describe("the tool panel and the permanent week grid", () => {
       expect(cluster, "the tool cluster must render").not.toBeNull();
       expect(panel, "the tool panel must render").not.toBeNull();
 
-      const width = /lg:w-\[(\d+)px\]/.exec(panel![0]);
+      const width = /lg:w-\[(\d+)px\]/.exec(matchGroup(panel, 0));
       expect(width, "the panel must have a fixed column width").not.toBeNull();
-      expect(cluster![0]).toContain(`lg:w-[${width![1]}px]`);
+      expect(matchGroup(cluster, 0)).toContain(`lg:w-[${matchGroup(width, 1)}px]`);
     });
 
     it("folds the panel in and out rather than cutting it", () => {
@@ -1373,18 +1383,18 @@ describe("the tool panel and the permanent week grid", () => {
     it("aligns Weekly Schedule to the grid column when tools are open", () => {
       const openHtml = render({ initialToolsOpen: true });
       const openBar = /<div[^>]*data-testid="workspace-bar"[^>]*>/.exec(openHtml);
-      expect(openBar![0]).toContain("gap-x-6");
+      expect(matchGroup(openBar, 0)).toContain("gap-x-6");
 
       const closedHtml = render({ initialToolsOpen: false });
       const closedBar = /<div[^>]*data-testid="workspace-bar"[^>]*>/.exec(closedHtml);
-      expect(closedBar![0]).toContain("gap-x-4");
+      expect(matchGroup(closedBar, 0)).toContain("gap-x-4");
     });
 
     it("keeps panel scroll area flush so cards align with the tool cluster", () => {
       const html = render({ initialToolsOpen: true });
       const scrollArea = /<div[^>]*data-testid="tool-panel-scroll"[^>]*>/.exec(html);
       expect(scrollArea, "tool-panel-scroll must render").not.toBeNull();
-      expect(scrollArea![0]).not.toContain("lg:pr-1");
+      expect(matchGroup(scrollArea, 0)).not.toContain("lg:pr-1");
     });
 
     it("shows no tab strip while the tools are folded away", () => {
@@ -1440,9 +1450,9 @@ describe("the tool panel and the permanent week grid", () => {
       const scroll = /<div[^>]*data-testid="tool-panel-scroll"[^>]*>/.exec(html);
 
       expect(panel, "the tool panel must be findable").not.toBeNull();
-      expect(panel![0]).toMatch(/max-h-/);
+      expect(matchGroup(panel, 0)).toMatch(/max-h-/);
       expect(scroll, "the tool must have its own scroll region").not.toBeNull();
-      expect(scroll![0]).toMatch(/overflow-y-auto/);
+      expect(matchGroup(scroll, 0)).toMatch(/overflow-y-auto/);
     });
 
     it("keeps the tab strip still while the tool under it scrolls", () => {
@@ -1516,8 +1526,8 @@ describe("the tool panel and the permanent week grid", () => {
       const trigger = /data-empty-catalog="true"[\s\S]*?<\/button>/.exec(html);
 
       expect(trigger, "the Capture trigger must carry the signal").not.toBeNull();
-      expect(trigger![0]).toContain("Capture");
-      expect(trigger![0]).toContain("Empty");
+      expect(matchGroup(trigger, 0)).toContain("Capture");
+      expect(matchGroup(trigger, 0)).toContain("Empty");
     });
 
     it("points an empty Pick tab at the tab that fixes it", () => {
@@ -1728,8 +1738,8 @@ describe("the tool panel and the permanent week grid", () => {
       const region = /<div[^>]*data-testid="grid-region"[^>]*>/.exec(html);
       expect(region).not.toBeNull();
       // No fixed column beside it to leave room for.
-      expect(region![0]).not.toMatch(/lg:sticky/);
-      expect(region![0]).toMatch(/w-full/);
+      expect(matchGroup(region, 0)).not.toMatch(/lg:sticky/);
+      expect(matchGroup(region, 0)).toMatch(/w-full/);
     });
 
     it("names the way back, so the tools are never merely gone", () => {
@@ -1750,8 +1760,8 @@ describe("the tool panel and the permanent week grid", () => {
       expect(show, "a folded panel must say how to unfold it").not.toBeNull();
       // The control is a hamburger, so the name it is announced by has to
       // live in text rather than in the glyph.
-      expect(show![0]).toMatch(/Show tools/);
-      expect(show![0]).toMatch(/aria-expanded="false"/);
+      expect(matchGroup(show, 0)).toMatch(/Show tools/);
+      expect(matchGroup(show, 0)).toMatch(/aria-expanded="false"/);
     });
 
     it("offers the way to fold them again once they are open", () => {
@@ -1778,7 +1788,7 @@ describe("the tool panel and the permanent week grid", () => {
       const show = /<button[^>]*data-testid="show-tools"[^>]*>[\s\S]*?<\/button>/.exec(
         html
       );
-      expect(show![0]).toContain("Empty");
+      expect(matchGroup(show, 0)).toContain("Empty");
     });
 
     it("keeps global notices visible while the tools are folded", async () => {

@@ -15,6 +15,12 @@ import {
 } from "./solver";
 import type { PlanSection, Solution, TransitionWarning, UnsatisfiableCourse } from "../adapters/ipc/types";
 
+/** Unwraps a fixture value the surrounding literals guarantee exists. */
+function mustExist<T>(value: T | undefined): T {
+  if (value === undefined) throw new Error("fixture value must exist");
+  return value;
+}
+
 describe("core/solver", () => {
 
   it("provides complete preset information for the three presets", () => {
@@ -72,12 +78,12 @@ describe("core/solver", () => {
       },
     ]);
 
-    expect(groups[0].label).toContain("F2F");
-    expect(groups[0].label).toContain("Online");
-    expect(groups[0].occurrences).toEqual(["MON 09:00–09:15"]);
+    expect(mustExist(groups[0]).label).toContain("F2F");
+    expect(mustExist(groups[0]).label).toContain("Online");
+    expect(mustExist(groups[0]).occurrences).toEqual(["MON 09:00–09:15"]);
 
-    expect(groups[1].label).toContain("different buildings");
-    expect(groups[1].occurrences).toEqual(["THU 11:00–11:15"]);
+    expect(mustExist(groups[1]).label).toContain("different buildings");
+    expect(mustExist(groups[1]).occurrences).toEqual(["THU 11:00–11:15"]);
   });
 
   it("formats unsatisfiable course messages naming the unsatisfied courses", () => {
@@ -249,9 +255,9 @@ describe("core/solver", () => {
       expect(diff.moved).toHaveLength(0);
       expect(diff.kept).toHaveLength(2);
       expect(diff.pinned).toHaveLength(1);
-      expect(diff.pinned[0].sectionCode).toBe("S11");
+      expect(mustExist(diff.pinned[0]).sectionCode).toBe("S11");
       expect(diff.unpinnedKept).toHaveLength(1);
-      expect(diff.unpinnedKept[0].sectionCode).toBe("S12");
+      expect(mustExist(diff.unpinnedKept[0]).sectionCode).toBe("S12");
 
       const summary = formatDiffSummary(diff);
       expect(summary).toMatch(/keeps all 2 sections/i);
@@ -281,7 +287,7 @@ describe("core/solver", () => {
         toSectionCode: "S12",
       });
       expect(diff.pinned).toHaveLength(1);
-      expect(diff.pinned[0].courseCode).toBe("GEARTAP");
+      expect(mustExist(diff.pinned[0]).courseCode).toBe("GEARTAP");
 
       const summary = formatDiffSummary(diff);
       expect(summary).toBe("Moves 1 section, keeps 1");
@@ -374,6 +380,7 @@ describe("previewing a solution on the week grid", () => {
 
   it("carries the identity and blocks the grid draws a block from", () => {
     const [section] = solutionToPreviewSections(previewSolution, []);
+    if (!section) throw new Error("the preview carries one section");
 
     expect(section.courseId).toBe(2923);
     expect(section.courseCode).toBe("GEARTAP");
@@ -384,11 +391,13 @@ describe("previewing a solution on the week grid", () => {
 
   it("derives modality per block rather than reading it as a field (ADR-0007)", () => {
     const [section] = solutionToPreviewSections(previewSolution, []);
+    if (!section) throw new Error("the preview carries one section");
     expect(section.modality).toBe("HYBRID");
   });
 
   it("borrows the course title the plan already knows, so the preview is not anonymous", () => {
     const [section] = solutionToPreviewSections(previewSolution, [planSection]);
+    if (!section) throw new Error("the preview carries one section");
     expect(section.courseTitle).toBe("Art Appreciation");
   });
 
@@ -396,11 +405,11 @@ describe("previewing a solution on the week grid", () => {
     const pinned = solutionToPreviewSections(
       {
         ...previewSolution,
-        sections: [{ ...previewSolution.sections[0], pinned: true }],
+        sections: [{ ...mustExist(previewSolution.sections[0]), pinned: true }],
       },
       []
     );
-    expect(pinned[0].pinned).toBe(true);
+    expect(mustExist(pinned[0]).pinned).toBe(true);
   });
 
   it("names the schedule being previewed by its rank", () => {
@@ -441,14 +450,14 @@ describe("grouping transition warnings", () => {
     ]);
 
     expect(groups).toHaveLength(2);
-    expect(groups[0].label).toContain("different buildings");
-    expect(groups[0].occurrences).toEqual([
+        expect(mustExist(groups[0]).label).toContain("different buildings");
+    expect(mustExist(groups[0]).occurrences).toEqual([
       "MON 12:30–12:45",
       "THU 12:30–12:45",
       "THU 14:15–14:30",
     ]);
-    expect(groups[1].label).toContain("back-to-back");
-    expect(groups[1].occurrences).toEqual(["MON 16:00–16:15"]);
+    expect(mustExist(groups[1]).label).toContain("back-to-back");
+    expect(mustExist(groups[1]).occurrences).toEqual(["MON 16:00–16:15"]);
   });
 
   it("keeps the advice free of the day it happened on", () => {
@@ -457,6 +466,7 @@ describe("grouping transition warnings", () => {
     const [group] = groupTransitionWarnings([
       warning("f2f_online_back_to_back", "TUE", 555, 570),
     ]);
+    if (!group) throw new Error("one warning yields one group");
 
     expect(group.label).not.toContain("TUE");
     expect(group.label).not.toContain("(");
@@ -478,6 +488,7 @@ describe("grouping transition warnings", () => {
     const [group] = groupTransitionWarnings([
       warning("something_new" as never, "SAT", 555, 570),
     ]);
+    if (!group) throw new Error("one warning yields one group");
 
     expect(group.label.length).toBeGreaterThan(0);
     expect(group.occurrences).toEqual(["SAT 09:15–09:30"]);

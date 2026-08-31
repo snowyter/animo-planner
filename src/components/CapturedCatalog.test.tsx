@@ -4,6 +4,16 @@ import { renderToStaticMarkup } from "react-dom/server";
 import { CapturedCatalog } from "./CapturedCatalog";
 import type { CapturedCourse } from "../adapters/ipc/types";
 
+
+/**
+ * Unwraps a capture group an assertion above guarantees was matched —
+ * the proof that no non-null assertion is needed anywhere in this suite.
+ */
+function matchGroup(match: RegExpExecArray | RegExpMatchArray | null, index: number): string {
+  if (!match?.[index]) throw new Error("expected a regexp match");
+  return match[index] as string;
+}
+
 describe("CapturedCatalog", () => {
   const now = new Date("2026-08-22T12:00:00Z");
 
@@ -29,6 +39,11 @@ describe("CapturedCatalog", () => {
       lastRefreshedAt: null,
     },
   ];
+
+  // Destructured once so the fixture's members are proven to exist for
+  // every use below.
+  const [geartap, csintsy] = courses;
+  if (!geartap || !csintsy) throw new Error("fixtures must carry two courses");
 
   it("names every captured course with its section count", () => {
     const html = renderToStaticMarkup(
@@ -110,11 +125,11 @@ describe("CapturedCatalog", () => {
       // makes it the later act and therefore the one worth naming.
       const refreshed: CapturedCourse[] = [
         {
-          ...courses[0],
+          ...geartap,
           lastSeenAt: "2026-08-22T10:00:00Z",
           lastRefreshedAt: "2026-08-22T10:00:00Z",
         },
-        courses[1],
+        csintsy,
       ];
 
       const html = renderToStaticMarkup(
@@ -158,22 +173,22 @@ describe("CapturedCatalog", () => {
 
       const box = /<input[^>]*data-testid="include-course-2923"[^>]*>/.exec(html);
       expect(box).not.toBeNull();
-      expect(box![0]).toContain('type="checkbox"');
-      expect(box![0]).toContain('checked=""');
-      expect(box![0]).toMatch(/aria-label="[^"]*GEARTAP[^"]*"/);
+      expect(matchGroup(box, 0)).toContain('type="checkbox"');
+      expect(matchGroup(box, 0)).toContain('checked=""');
+      expect(matchGroup(box, 0)).toMatch(/aria-label="[^"]*GEARTAP[^"]*"/);
     });
 
     it("leaves an excluded course unchecked but still listed", () => {
       const html = renderToStaticMarkup(
         React.createElement(CapturedCatalog, {
-          courses: [{ ...courses[0], included: false }, courses[1]],
+          courses: [{ ...geartap, included: false }, csintsy],
           now,
           onSetIncluded: vi.fn(),
         })
       );
 
       const box = /<input[^>]*data-testid="include-course-2923"[^>]*>/.exec(html);
-      expect(box![0]).not.toContain('checked=""');
+      expect(matchGroup(box, 0)).not.toContain('checked=""');
       // Excluding is not forgetting: it is still in the catalog, still counted.
       expect(html).toContain("GEARTAP");
       expect(html).toContain("42 sections");

@@ -5,6 +5,27 @@ import { WeekGrid, blockTooltip } from "./WeekGrid";
 import type { PlanSection, ScheduleBlock } from "../adapters/ipc/types";
 import { findConflicts } from "../core/conflicts";
 
+/**
+ * Unwraps a fixture section's first block: every makeSection call in this
+ * file carries at least one, and the guard makes that visible to the
+ * compiler without a non-null assertion.
+ */
+function firstBlock(section: { blocks: ScheduleBlock[] }): ScheduleBlock {
+  const [block] = section.blocks;
+  if (!block) throw new Error("fixture sections always carry a block");
+  return block;
+}
+
+
+/**
+ * Unwraps a capture group an assertion above guarantees was matched —
+ * the proof that no non-null assertion is needed anywhere in this suite.
+ */
+function matchGroup(match: RegExpExecArray | RegExpMatchArray | null, index: number): string {
+  if (!match?.[index]) throw new Error("expected a regexp match");
+  return match[index] as string;
+}
+
 describe("WeekGrid component", () => {
   // The professor lives on the latest snapshot and appeared nowhere on the grid,
   // so choosing between two sections of one course meant leaving it.
@@ -942,7 +963,7 @@ describe("WeekGrid component", () => {
       const html = renderToStaticMarkup(
         React.createElement(WeekGrid, {
           sections: [section],
-          initialMenu: { section, block: section.blocks[0] },
+          initialMenu: { section, block: firstBlock(section) },
         })
       );
 
@@ -972,7 +993,7 @@ describe("WeekGrid component", () => {
       const html = renderToStaticMarkup(
         React.createElement(WeekGrid, {
           sections: [pinnedSection],
-          initialMenu: { section: pinnedSection, block: pinnedSection.blocks[0] },
+          initialMenu: { section: pinnedSection, block: firstBlock(pinnedSection) },
         })
       );
 
@@ -1002,7 +1023,7 @@ describe("WeekGrid component", () => {
         React.createElement(WeekGrid, {
           sections: [sectionA, sectionB],
           conflicts,
-          initialMenu: { section: sectionA, block: sectionA.blocks[0] },
+          initialMenu: { section: sectionA, block: firstBlock(sectionA) },
         })
       );
 
@@ -1022,7 +1043,7 @@ describe("WeekGrid component", () => {
       const html = renderToStaticMarkup(
         React.createElement(WeekGrid, {
           sections: [missingSection],
-          initialMenu: { section: missingSection, block: missingSection.blocks[0] },
+          initialMenu: { section: missingSection, block: firstBlock(missingSection) },
         })
       );
 
@@ -1171,7 +1192,7 @@ describe("WeekGrid component", () => {
         React.createElement(WeekGrid, {
           sections: [sectionA, sectionB],
           conflicts,
-          initialConflictDetails: { section: sectionA, block: sectionA.blocks[0] },
+          initialConflictDetails: { section: sectionA, block: firstBlock(sectionA) },
         })
       );
 
@@ -1223,7 +1244,7 @@ describe("WeekGrid component", () => {
       const html = renderToStaticMarkup(
         React.createElement(WeekGrid, {
           sections: [section],
-          initialMenu: { section, block: section.blocks[0] },
+          initialMenu: { section, block: firstBlock(section) },
         })
       );
 
@@ -1267,7 +1288,7 @@ describe("WeekGrid component", () => {
       const html = renderToStaticMarkup(
         React.createElement(WeekGrid, {
           sections: [sectionA, sectionB],
-          initialMenu: { section: sectionA, block: sectionA.blocks[0] },
+          initialMenu: { section: sectionA, block: firstBlock(sectionA) },
         })
       );
 
@@ -1291,7 +1312,7 @@ describe("WeekGrid component", () => {
       const html = renderToStaticMarkup(
         React.createElement(WeekGrid, {
           sections: [section],
-          initialMenu: { section, block: section.blocks[0] },
+          initialMenu: { section, block: firstBlock(section) },
         })
       );
 
@@ -1311,7 +1332,7 @@ describe("WeekGrid component", () => {
       const html = renderToStaticMarkup(
         React.createElement(WeekGrid, {
           sections: [section],
-          initialMenu: { section, block: section.blocks[0] },
+          initialMenu: { section, block: firstBlock(section) },
         })
       );
 
@@ -1325,7 +1346,7 @@ describe("WeekGrid component", () => {
 
       const lattice = /<div[^>]*data-testid="week-grid-lattice"[^>]*>/.exec(html);
       expect(lattice, "the lattice must render").not.toBeNull();
-      expect(lattice![0]).toMatch(/opacity-40/);
+      expect(matchGroup(lattice, 0)).toMatch(/opacity-40/);
       expect(html).toContain('data-testid="week-grid-empty"');
     });
 
@@ -1346,7 +1367,7 @@ describe("WeekGrid component", () => {
       );
 
       const lattice = /<div[^>]*data-testid="week-grid-lattice"[^>]*>/.exec(html);
-      expect(lattice![0]).not.toMatch(/opacity-/);
+      expect(matchGroup(lattice, 0)).not.toMatch(/opacity-/);
     });
   });
 
@@ -1416,7 +1437,7 @@ describe("WeekGrid component", () => {
       const html = renderToStaticMarkup(
         React.createElement(WeekGrid, {
           sections: [section],
-          initialMenu: { section, block: section.blocks[0] },
+          initialMenu: { section, block: firstBlock(section) },
         })
       );
 
@@ -1429,7 +1450,7 @@ describe("WeekGrid component", () => {
           beforeMenu
         );
         expect(el, `${testid} must render`).not.toBeNull();
-        expect(el![0]).not.toMatch(
+        expect(matchGroup(el, 0)).not.toMatch(
           /block-land|enter-|transform|opacity|filter:|backdrop|will-change/
         );
       }
@@ -1460,7 +1481,7 @@ describe("WeekGrid component", () => {
       const html = renderToStaticMarkup(
         React.createElement(WeekGrid, {
           sections: [section],
-          initialMenu: { section, block: section.blocks[0] },
+          initialMenu: { section, block: firstBlock(section) },
         })
       );
 

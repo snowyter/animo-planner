@@ -19,7 +19,7 @@
  * shadow — a 42-section course is 42 of these.
  */
 
-import { useState, useEffect, useMemo } from "react";
+import { useState, useMemo } from "react";
 import { Building2, Globe, AlertTriangle } from "lucide-react";
 import { Button } from "./ui/button";
 import { Badge } from "./ui/badge";
@@ -148,9 +148,16 @@ export function SectionPicker({
     () => initialConfirmingRemove
   );
 
-  useEffect(() => {
+  // The confirmation resets whenever the course selection *changes* —
+  // adjusting state during render rather than resyncing from an effect. The
+  // previous effect also fired on mount, which reset the very confirmation
+  // `initialConfirmingRemove` had just opened, so the prop never survived
+  // first paint in the running app.
+  const [lastCourseId, setLastCourseId] = useState<number | null>(selectedCourseId);
+  if (lastCourseId !== selectedCourseId) {
+    setLastCourseId(selectedCourseId);
     setIsConfirmingRemove(false);
-  }, [selectedCourseId]);
+  }
 
   const selectedCourse = useMemo(() => {
     return courses.find((c) => c.courseId === selectedCourseId) ?? null;

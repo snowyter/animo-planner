@@ -287,9 +287,10 @@ export function WeekGrid({
     // Only a single-section preview hands off. A solution preview is a whole
     // schedule, and arming a shared-element transition on every block of it
     // would put layout measurement on the entire grid.
+    const [singlePreview] = preview;
     const currentKey =
-      preview.length === 1
-        ? `${preview[0].courseId}-${preview[0].sectionId}`
+      preview.length === 1 && singlePreview
+        ? `${singlePreview.courseId}-${singlePreview.sectionId}`
         : null;
     const departedKey = previousGhostKey.current;
     previousGhostKey.current = currentKey;
