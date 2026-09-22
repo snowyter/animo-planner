@@ -44,13 +44,13 @@ A spec at `.scratch/card-ui/spec.md` and a numbered set of **implementation tick
 - [Can Tauri 2 give us a unified title bar and Mica, and what does it cost?](issues/01-window-chrome-in-tauri-2.md) — custom Windows header via `decorations: false`, no new dependency; Snap Layouts hover flyout is lost; Mica deferred; macOS later uses the overlay style with a traffic-light inset.
 - [What is the smallest type stack that reads like SF on both platforms?](issues/02-an-sf-like-type-stack.md) — official Inter 4.1 variable, roman, Latin-1 subset (72 kB), no alternates, `tabular-nums` on times/counts; stack `-apple-system, "Inter Animo", system-ui`; Inter runs ~10% wider than Segoe at 10px.
 - [What does app-wide `motion` with springs cost, and are springs interruptible?](issues/03-springs-app-wide-cost.md) — keep lazy `domMax` (0 kB extra for springs/exit/layoutId/drag); physics springs only, since duration springs drop velocity; smooth/snappy presets at 0.3 s; reversible motion is JS, one-shot entrances CSS; board drag is dnd-kit.
+- [Which visual direction does Animo Plan take?](issues/04-visual-direction.md) — "Glass + cards": B's macOS shell (collapsible sidebar of plans and courses, one glass toolbar, tools panel on the right) wearing C's cards (week-thumbnail plan cards, three-step empty card, chipped section cards, green next-step strip); no dock; flat grid; "clean" keeps card structure.
 
 ## Not yet specified
 
 - **Dialogs as sheets.** Whether Create Plan, About, Report, Clear Schedule, and the section-details modal become iOS-style sheets or stay centred dialogs — hangs on the visual direction.
 - **Onboarding and the sign-in moment.** A redesign of the first run and of the Archer's Hub popup's framing: "sign in once, you stay signed in"; Google sign-in is unavailable in an embedded webview (`spec.md` §2), so say so before the student reaches for it.
-- **Section-card anatomy.** Exactly what a section card shows at rest vs on hover/expand (code, professor, remark, blocks, modality, fill bar, conflict, pin) across the picker and the board.
-- **A floating dock.** Whether the ≤3 top-level destinations live in a floating bottom dock, a sidebar, or the title bar.
+- **Section-card anatomy.** The rest state is set by ticket 04 (code, professor, state pill, day/time/room chips, remark, fill bar, conflict line); still open: what a section card shows on hover/expand, and how the same card reads on the board.
 - **Where settings live.** The app has no settings surface; Appearance is the first setting. May fold into the dark-mode ticket or become its own.
 
 ## Out of scope
