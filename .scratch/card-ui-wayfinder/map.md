@@ -45,17 +45,17 @@ A spec at `.scratch/card-ui/spec.md` and a numbered set of **implementation tick
 - [What is the smallest type stack that reads like SF on both platforms?](issues/02-an-sf-like-type-stack.md) — official Inter 4.1 variable, roman, Latin-1 subset (72 kB), no alternates, `tabular-nums` on times/counts; stack `-apple-system, "Inter Animo", system-ui`; Inter runs ~10% wider than Segoe at 10px.
 - [What does app-wide `motion` with springs cost, and are springs interruptible?](issues/03-springs-app-wide-cost.md) — keep lazy `domMax` (0 kB extra for springs/exit/layoutId/drag); physics springs only, since duration springs drop velocity; smooth/snappy presets at 0.3 s; reversible motion is JS, one-shot entrances CSS; board drag is dnd-kit.
 - [Which visual direction does Animo Plan take?](issues/04-visual-direction.md) — "Glass + cards": B's macOS shell (collapsible sidebar of plans and courses, one glass toolbar, tools panel on the right) wearing C's cards (week-thumbnail plan cards, three-step empty card, chipped section cards, green next-step strip); no dock; flat grid; "clean" keeps card structure.
+- [What folds away in the calm workspace, and what does the next-step card say?](issues/05-calm-workspace-and-next-step-card.md) — banners fold into the next-step strip as one priority queue (warn / quiet / go / done tones, "Then:" + "+N more", shrinks when its target is open); per-state copy and a control-by-control inventory recorded; three destinations (Plans · a plan · About, which holds Tour and Report); tools panel open and remembered; below 1280px the sidebar floats and the tools stay docked.
 
 ## Not yet specified
 
-- **Dialogs as sheets.** Whether Create Plan, About, Report, Clear Schedule, and the section-details modal become iOS-style sheets or stay centred dialogs — hangs on the visual direction.
+- **Dialogs as sheets.** Whether Create Plan, About (now the third destination, holding Tour and Report — ticket 05), Report, Clear Schedule, and the section-details modal become iOS-style sheets or stay centred dialogs.
 - **Onboarding and the sign-in moment.** A redesign of the first run and of the Archer's Hub popup's framing: "sign in once, you stay signed in"; Google sign-in is unavailable in an embedded webview (`spec.md` §2), so say so before the student reaches for it.
 - **Section-card anatomy.** The rest state is set by ticket 04 (code, professor, state pill, day/time/room chips, remark, fill bar, conflict line); still open: what a section card shows on hover/expand, and how the same card reads on the board.
-- **Where settings live.** The app has no settings surface; Appearance is the first setting. May fold into the dark-mode ticket or become its own.
 
 ## Out of scope
 
 - **Login friction and keeping the Archer's Hub session alive.** The human wants a student to sign in once per app launch and never be timed out while the app is open. Archer's Hub times sessions out server-side, and holding one open would take background keep-alive requests, which ADR-0001 forbids; credential autofill is forbidden by ADR-0002. A capture-path question — its own future map.
-- **Reading every course on open (bulk capture).** Changes what the capture path requests; governed by ADR-0001/0003. Its own future map.
+- **Reading every course on open (bulk capture).** The human's intended future flow: once the student signs in to Archer's Hub, the app reads every course and section for the term, so the student doesn't have to search each course. It changes what the capture path requests and is governed by ADR-0001/0003, so it needs its own future map. What in this design would change when it lands is recorded in [ticket 05](issues/05-calm-workspace-and-next-step-card.md) § "The capture flow this assumes".
 - **Mobile, touch, and narrow-screen layouts.**
 - **The macOS build itself** — only the rule that nothing here precludes it.
